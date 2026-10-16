@@ -17,7 +17,7 @@ constexpr int kHeight = 200;
 constexpr int kSpriteRows = 21;
 constexpr int kSpriteCols = 24;
 constexpr int kFrameBytes = kSpriteRows * 3;
-constexpr int kFrames = 4;
+constexpr int kFrames = 7;
 
 // Pepto. Stored as 0xAARRGGBB, which is BGRA in memory on this machine.
 // The title viewer used the same packing for light blue #6C5EB5.
@@ -42,6 +42,7 @@ struct App {
     int y = 0;
     int vy = 0;
     int facing = 1;
+    int pose = 0;
     int tick = 0;
     bool jumpHeld = false;
 };
@@ -133,28 +134,33 @@ bool SolidPixel(int x, int y) {
     return PixelColor(x, y) >= 0;
 }
 
-// Pose 0 is the standing figure. Poses 1 and 2 are the two strides.
-// Pose 3 is the kick, shown while he is off the ground.
-const uint8_t* PoseBytes(int plane) {
-    int frame = 0;
-    if (g.vy != 0) {
-        frame = 3;
-    } else if (g.tick > 0) {
-        frame = 1 + (g.tick / 6) % 2;
-    }
-    return g.frames.data() + static_cast<size_t>(frame * 2 + plane) * kFrameBytes;
+// Poses follow the animation selector at $A780.
+// 0 right stand (base 2), 1 left stand (base 0),
+// 2/3 left walk ($0E, $10), 4/5 right walk ($12, $14), 6 air (base 8).
+// Each direction is its own drawing. Mirroring the other side slides the
+// solid pixels off the wall and leaves him inside the graphic.
+int StandPose() {
+    return g.facing < 0 ? 1 : 0;
+}
+
+int WalkPose() {
+    const int step = (g.tick / 6) & 1;
+    return g.facing < 0 ? (2 + step) : (4 + step);
+}
+
+const uint8_t* PoseBytes(int pose, int plane) {
+    return g.frames.data() + static_cast<size_t>(pose * 2 + plane) * kFrameBytes;
 }
 
 bool SpritePixel(const uint8_t* frame, int x, int y) {
-    const int src = g.facing < 0 ? (kSpriteCols - 1 - x) : x;
-    const uint8_t bits = frame[y * 3 + src / 8];
-    return (bits & static_cast<uint8_t>(0x80 >> (src & 7))) != 0;
+    const uint8_t bits = frame[y * 3 + x / 8];
+    return (bits & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
 }
 
-// The game ANDs Bruce's sprite with the character bitmaps under him.
-bool Overlaps(int sx, int sy) {
+// The game ANDs the current sprite with the character bitmaps under it.
+bool PoseHits(int pose, int sx, int sy) {
     for (int plane = 0; plane < 2; ++plane) {
-        const uint8_t* frame = g.frames.data() + static_cast<size_t>(plane) * kFrameBytes;
+        const uint8_t* frame = PoseBytes(pose, plane);
         for (int y = 0; y < kSpriteRows; ++y) {
             for (int x = 0; x < kSpriteCols; ++x) {
                 if (!SpritePixel(frame, x, y)) {
@@ -167,6 +173,20 @@ bool Overlaps(int sx, int sy) {
         }
     }
     return false;
+}
+
+// While he is walking, both strides have to fit. Otherwise the wider
+// stride of the pair plants him in the graphic and the next stride
+// cannot step back out.
+bool Blocked(int sx, int sy) {
+    if (g.vy != 0) {
+        return PoseHits(6, sx, sy);
+    }
+    if (g.tick > 0) {
+        const int base = g.facing < 0 ? 2 : 4;
+        return PoseHits(base, sx, sy) || PoseHits(base + 1, sx, sy);
+    }
+    return PoseHits(StandPose(), sx, sy);
 }
 
 // The score line is the ROM charset, copied to $8800 at startup. These are
@@ -251,7 +271,7 @@ void Compose() {
     // in the reference picture.
     const int spriteColor[2] = {7, 0};
     for (int plane = 0; plane < 2; ++plane) {
-        const uint8_t* frame = PoseBytes(plane);
+        const uint8_t* frame = PoseBytes(g.pose, plane);
         for (int y = 0; y < kSpriteRows; ++y) {
             for (int x = 0; x < kSpriteCols; ++x) {
                 if (!SpritePixel(frame, x, y)) {
@@ -272,7 +292,7 @@ void MoveVertical(int dy) {
     const int step = dy > 0 ? 1 : -1;
     const int n = dy > 0 ? dy : -dy;
     for (int i = 0; i < n; ++i) {
-        if (Overlaps(g.x, g.y + step)) {
+        if (Blocked(g.x, g.y + step)) {
             g.vy = 0;
             return;
         }
@@ -291,14 +311,16 @@ void Tick() {
         g.facing = 1;
     }
     const int dx = (right ? 2 : 0) - (left ? 2 : 0);
-    if (dx != 0 && !Overlaps(g.x + dx, g.y)) {
-        g.x += dx;
+    if (dx != 0) {
         g.tick += 1;
-    } else if (dx == 0) {
+    } else {
         g.tick = 0;
     }
+    if (dx != 0 && !Blocked(g.x + dx, g.y)) {
+        g.x += dx;
+    }
 
-    const bool grounded = Overlaps(g.x, g.y + 1);
+    const bool grounded = Blocked(g.x, g.y + 1);
     if (up && grounded && g.vy == 0 && !g.jumpHeld) {
         g.vy = -8;
     }
@@ -308,6 +330,26 @@ void Tick() {
             g.vy += 1;
         }
         MoveVertical(g.vy);
+    }
+    if (g.vy != 0) {
+        g.pose = 6;
+    } else if (g.tick > 0) {
+        g.pose = WalkPose();
+    } else {
+        g.pose = StandPose();
+    }
+    // A new pose can overlap a graphic the previous pose cleared.
+    // $1CC7 pushes him back out when that collision bit is set.
+    if (PoseHits(g.pose, g.x, g.y)) {
+        const int prefer = g.facing < 0 ? 1 : -1;
+        const int start = g.x;
+        for (int i = 1; i <= kSpriteCols && PoseHits(g.pose, g.x, g.y); ++i) {
+            if (!PoseHits(g.pose, start + prefer * i, g.y)) {
+                g.x = start + prefer * i;
+            } else if (!PoseHits(g.pose, start - prefer * i, g.y)) {
+                g.x = start - prefer * i;
+            }
+        }
     }
     Compose();
 }
@@ -403,7 +445,7 @@ void PlaceBruce() {
     // Just to the right of the lamp, feet on the red line at the bottom.
     g.x = 36;
     g.y = 194 - kSpriteRows;
-    for (int n = 0; n < 48 && Overlaps(g.x, g.y); ++n) {
+    for (int n = 0; n < 48 && PoseHits(g.pose, g.x, g.y); ++n) {
         g.y -= 1;
     }
 }
