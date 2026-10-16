@@ -10,7 +10,8 @@ struct Contact {
 };
 
 // Test the picture he would actually be showing at (sx, sy):
-// the air pose while vy != 0, both walk strides while a direction is held,
+// the jump, sideways jump, kick, or punch already chosen while that move runs,
+// both walk strides while a direction is held,
 // otherwise the stand pose for g.facing.
 Contact Probe(int sx, int sy);
 

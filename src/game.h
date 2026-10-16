@@ -6,9 +6,10 @@
 constexpr int kWidth = 320;
 constexpr int kHeight = 200;
 constexpr int kSpriteRows = 21;
-constexpr int kSpriteCols = 24;
-constexpr int kFrameBytes = kSpriteRows * 3;
-constexpr int kFrames = 7;
+constexpr int kSpriteCols = 32;
+constexpr int kSpriteRowBytes = kSpriteCols / 8;
+constexpr int kFrameBytes = kSpriteRows * kSpriteRowBytes;
+constexpr int kFrames = 19;
 
 // Pepto C64 colors, packed as 0xAARRGGBB. Index 0 is black. See DESIGN.md.
 extern const uint32_t kPalette[16];
@@ -28,7 +29,11 @@ struct Game {
     int facing = 1;         // -1 left, +1 right
     int pose = 0;           // which bruce.bin pose Compose draws
     int tick = 0;           // frames a direction has been held; 0 means standing
-    bool jumpHeld = false;  // up is still down, so landing does not jump again
+    int jumpTimer = 0;  // state $05, counts down from 15; 0 means he is not in that jump
+    int action = 0;     // 0 none, 6/7 sideways jump, $0C/$0D flying kick, $11 punch
+    int actionTimer = 0;  // counts down across g.action; the picture follows it
+    bool jumpHeld = false;    // up is still down, so landing does not jump again
+    bool attackHeld = false;  // space is still down, so the attack does not repeat
 };
 
 extern Game g;

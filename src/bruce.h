@@ -3,9 +3,25 @@
 #include <cstdint>
 
 // Pose numbers index bruce.bin. See DESIGN.md for the bytes.
-// 0 stand right, 1 stand left, 2/3 walk left, 4/5 walk right, 6 in the air.
+// 0 stand right, 1 stand left, 2/3 walk left, 4/5 walk right.
+// 6 legs together (the fall, and the first and last jump counts).
+// 7 jump tuck, 8 the jump with the arms out.
+// 9/10 sideways jump left, 11/12 sideways jump right.
+// 13 punch left, 14 punch right.
+// 15/16 flying kick left, 17/18 flying kick right.
 // Each direction is its own drawing. Mirroring would put the solid pixels
 // on the wrong side of a wall.
+
+// Original state numbers stored in g.action.
+constexpr int kSideLeft = 6;
+constexpr int kSideRight = 7;
+constexpr int kFlyLeft = 0x0C;
+constexpr int kFlyRight = 0x0D;
+constexpr int kPunch = 0x11;
+
+constexpr int kPosePunchLeft = 13;
+constexpr int kPosePunchRight = 14;
+constexpr int kPoseFlyLeftExtended = 16;
 
 // The stand picture for g.facing.
 int StandPose();
@@ -13,14 +29,20 @@ int StandPose();
 // The current stride. g.tick / 6 alternates the two frames for g.facing.
 int WalkPose();
 
+// Screen pixels added to g.x when this plane is drawn or tested.
+// Punch left, and the black plane of the extended flying kick left, are
+// shifted 16 pixels left. That is the original $9E adjustment of -8.
+int PlaneShift(int pose, int plane);
+
 // Pointer to one plane of a pose. Plane 0 is the yellow body, plane 1 is
-// the black detail. Each plane is 21 rows of 3 bytes.
+// the black detail. Each plane is 21 rows of 4 bytes.
 const uint8_t* PoseBytes(int pose, int plane);
 
 // Stand him on the floor just to the right of the lamp. Lifts him if that
 // stand picture is already inside a wall.
 void PlaceBruce();
 
-// One frame: read the arrows, step, jump or fall, pick the pose, shove him
-// out of a wall if the new picture overlaps one, then paint.
+// One frame: read the arrows and space, step, jump, kick, punch, or fall,
+// pick the pose, shove him out of a wall if the new picture overlaps one,
+// then paint.
 void Tick();

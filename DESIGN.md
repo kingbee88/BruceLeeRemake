@@ -2,16 +2,16 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. Arrow keys move Bruce. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. Arrow keys move Bruce. Up jumps. Space punches while he is standing and flying-kicks while he is moving. Escape closes the window.
 
 ## How a frame runs
 
 1. `main.cpp` loads the four playable data files into `g` and calls `PlaceBruce`, which stands him on the floor to the right of the lamp.
 2. Each frame, `Tick` reads the arrow keys.
 3. Left and right change `g.facing` and try a two-pixel step. The step is kept when `Probe` does not report a wall.
-4. Up starts a jump when he is on the ground and the key was not already held. Vertical speed starts at -8 (up) and increases by 1 each frame until it reaches 4 (down).
-5. Moving down stops on a floor or a wall. Moving up stops only on a wall, so he can leave the floor.
-6. The picture is then chosen: the air pose while `g.vy` is not zero, a walk pose while a direction is held, otherwise a stand pose.
+4. Up on its own, while he is on the ground and the key was not already held, starts the standing jump (state `$05`). He rises 4 pixels, then 2 pixels on each of the next four counts, and comes back down 2 pixels on each of six counts. The top of the hop is 12 pixels. Up while left or right is held starts the sideways jump (states `$06` and `$07`): 4 pixels sideways every count, rising 11 pixels, then dropping.
+5. Space while left or right is held starts the flying kick (states `$0C` and `$0D`). He hops 3 pixels, travels flat, then drops. Space with neither direction held is the punch (state `$11`), a short picture with no step. Moving down stops on a floor or a wall. Moving up stops only on a wall, so he can leave the floor.
+6. The picture is then chosen. The standing jump counts down from 15 the way state `$05` does: legs together, then the tuck, then the arms-out jump. The sideways jump counts down from 15 the way states `$06` and `$07` do, tucked at the ends and the leg extended in between. The flying kick counts down from 12 the way states `$0C` and `$0D` do. Otherwise a walk pose while a direction is held, or a stand pose. Walking off a ledge uses the legs-together picture.
 7. If that new picture sits inside a wall, he is pushed sideways until it does not.
 8. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
 
@@ -124,15 +124,17 @@ The low three bits are the collision property. Bit 3 turns multicolor on. The va
 
 The drawn ink is the low three bits. `$08` is black and `$0E` is light blue.
 
-### `data/bruce.bin` — 882 bytes
+### `data/bruce.bin` — 3192 bytes
 
-Seven poses. Each pose is two planes, and each plane is 21 rows of 3 bytes (24 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
+Nineteen poses. Each pose is two planes, and each plane is 21 rows of 4 bytes (32 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
+
+The walk and the standing jump use one source byte per row (library mode 0). After the VIC doubles it, the ink is 16 pixels and the other 16 in the row are empty. The punch, and the black plane of each extended flying kick, use two source bytes per row (mode 1), so the ink can reach all 32 pixels.
 
 ```
-offset = (pose * 2 + plane) * 63
+offset = (pose * 2 + plane) * 84
 plane 0 = yellow body
 plane 1 = black hair, eyes, and legs
-row byte = offset + y * 3 + (x / 8)
+row byte = offset + y * 4 + (x / 8)
 ```
 
 | Pose | Picture |
@@ -141,11 +143,21 @@ row byte = offset + y * 3 + (x / 8)
 | 1 | stand, facing left |
 | 2, 3 | walk left, the two strides |
 | 4, 5 | walk right, the two strides |
-| 6 | in the air |
+| 6 | legs together: the fall, and jump count 15 |
+| 7 | jump tuck, counts 12–14 and 1 |
+| 8 | jump, arms out, counts 2–11 |
+| 9, 10 | sideways jump left, tucked then extended |
+| 11, 12 | sideways jump right, tucked then extended |
+| 13 | punch left |
+| 14 | punch right |
+| 15, 16 | flying kick left, tucked then extended |
+| 17, 18 | flying kick right, tucked then extended |
 
-`g.tick / 6` alternates the two strides. While he is walking, both strides are tested, so the wider one cannot step into a wall that the next stride could not leave.
+`g.tick / 6` alternates the two strides. While he is walking, both strides are tested, so the wider one cannot step into a wall that the next stride could not leave. In the air, and during a punch or a kick, the test uses the picture chosen for this frame.
 
-These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9. The even library index is the body and the next index is the detail.
+Punch left is drawn 16 pixels left of `g.x`. The black plane of flying kick left, extended, is shifted the same way. That is the original adjustment of `$9E` by -8, so the torso stays where the stand picture was and the fist or the leg reaches past it.
+
+These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9, `$1E`/`$1F`, `$20`/`$21`, `$22`/`$23`, `$24`/`$25`, `$26`/`$27`, `$28`/`$29`, 4/5, 6/7, `$16`/`$17`, `$18`/`$19`, `$1A`/`$1B`, `$1C`/`$1D`. The even library index is the body and the next index is the detail. Library 8 is the fall. The jump the player sees for most of the arc is library `$20`. The sideways jump is libraries `$22`–`$29`. The punch is libraries 4–7. The flying kick is libraries `$16`–`$1D`.
 
 ### `data/title.bin` — 8000 bytes
 

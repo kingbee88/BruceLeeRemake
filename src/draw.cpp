@@ -7,7 +7,7 @@
 namespace {
 
 bool SpritePixel(const uint8_t* frame, int x, int y) {
-    const uint8_t bits = frame[y * 3 + x / 8];
+    const uint8_t bits = frame[y * kSpriteRowBytes + x / 8];
     return (bits & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
 }
 
@@ -101,7 +101,7 @@ void Compose() {
                 if (!SpritePixel(frame, x, y)) {
                     continue;
                 }
-                const int px = g.x + x;
+                const int px = g.x + PlaneShift(g.pose, plane) + x;
                 const int py = g.y + y;
                 if (px >= 0 && py >= 0 && px < kWidth && py < kHeight) {
                     g.pixels[static_cast<size_t>(py * kWidth + px)] = kPalette[spriteColor[plane]];
