@@ -48,6 +48,29 @@ A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g
 
 Screen y 0 is raster line 50. `BandAt` changes colors at raster `$78` and `$97`.
 
+## Character cells
+
+The screen is 40 columns by 25 rows of cells. Each cell is 8 by 8 screen pixels. `charset.bin` holds the pictures. `room0.bin` holds a tile number for every cell, and that number picks a picture.
+
+One tile number is written into two cells, one above the other, so that number covers 8 by 16 pixels. The two cells use different glyphs:
+
+- The odd row draws glyph N, the primary half.
+- The even row under it draws glyph N+128, the shadow half.
+
+Each of those glyphs is its own 8 by 8 picture. Tile 11, the floor, is the clear case: glyph 11 is empty, so row 23 is blank, and glyph 139 is the stripe, so row 24 is the line you see.
+
+The shadow name comes from the original loader. It writes the tile into the top cell and the same number with bit 7 set into the bottom cell. Bit 7 selects the upper 1KB of the character set, which is the other half of that picture. Each row keeps its own byte and its own 8 pixel rows. The next pair starts on the following row.
+
+The pairs in this room are (3, 4), (5, 6), and so on through (23, 24). Both bytes of a pair hold the same tile number. Rows 0–2 are the score area and are empty (`$DC`) in `room0.bin`. The score text is drawn over row 0.
+
+The packed game data stored each tile once. This file is the expanded screen, so the number is already in both cells. Rendering just reads the cell.
+
+A hardware cell is only 8 pixels tall, so a taller picture is two cells stacked. In multicolor mode one colored dot is two screen dots wide and one screen dot tall, which makes it look flat. The artwork is 8 of those rows. Painting each row twice makes the dot square and the picture 16 screen lines tall: 8 in the primary cell and 8 in the shadow cell.
+
+Multicolor mode is on for the whole screen, and a cell can still opt out. Bit 3 of its color byte selects the wide dots. The room bytes are `$08` and `$0E`, so the level is 160 dots across. The score digits leave that bit clear. Each bit is one screen dot, and a digit is 8 dots wide. Those shapes are the ordinary Commodore font.
+
+The level art is 22 character rows, 176 screen lines. With every art row painted twice, that is 88 unique rows. The level is 160 by 88 dots. The other 24 screen lines are the score row and the two blank rows under it.
+
 ## Data files
 
 The running game loads the first four. `title.bin` is the original title picture and is not drawn by this room.
@@ -61,7 +84,7 @@ The file is two halves of 1024 bytes:
 - Glyphs 0–127 are the primary half. Odd character rows use these.
 - Glyphs 128–255 are the shadow half. Even character rows use these.
 
-The room file stores a tile number without that extra 128. `PixelColor` and the collision test add 128 on even rows. That matches the original, which stores the same tile on two screen rows and sets bit 7 on the lower of the pair. Each half of a glyph is four source rows, duplicated to eight display rows when the charset was expanded.
+The room file stores a tile number without the extra 128. `PixelColor` and the collision test add 128 on even rows. Each half of a glyph is four source rows, and each of those rows is stored twice, which is the vertical doubling described above.
 
 Pixels are multicolor. A byte holds four dots, two bits each, from the top of the byte:
 
@@ -86,7 +109,7 @@ Tile `$DC` is an empty cell. It has no ink and no collision.
 
 ### `data/room0.bin` — 1000 bytes
 
-The first room's screen, 25 rows by 40 columns, row by row. Byte `row * 40 + col` is the tile number described above. The same tile is stored on an even row and the odd row under it; the charset half, not this byte, makes those two rows look different.
+The expanded screen, 25 rows by 40 columns, one byte per cell. Byte `row * 40 + col` is the tile number. In each pair, the odd row and the even row under it store the same number. Rows 0–2 are `$DC`.
 
 ### `data/room0.col` — 1000 bytes
 

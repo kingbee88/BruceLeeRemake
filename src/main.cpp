@@ -130,7 +130,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // IDC_ARROW follows UNICODE, so it is a narrow pointer unless that macro
+    // is set. 32512 is the arrow cursor, passed wide to match LoadCursorW.
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     wc.lpszClassName = L"BruceLeeWindow";
     RegisterClassW(&wc);
 
