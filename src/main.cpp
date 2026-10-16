@@ -127,11 +127,82 @@ int PixelColor(int x, int y) {
     return ink == bg ? -1 : ink;
 }
 
-bool SolidPixel(int x, int y) {
-    if (x < 0 || x >= kWidth || y < 0 || y >= kHeight) {
-        return true;
+// $537E stores each AND nibble, and $5431 packs the watched slots into $B6.
+// Solid patterns 3, 7 and 11-15 become bit 3 while the cell property is 0.
+// $1CC7 undoes the move when bit 3 is set. A nonzero property swaps those
+// patterns into bit 2. Bit 0 is the edge patterns 1, 4, 5, 6, 7, 9 and 13.
+// Falling is skipped when bit 0 or bit 2 is set ($B6 & $05). Statue ink is
+// outside both sets, so walking into it is left as it is.
+struct Contact {
+    bool wall = false;
+    bool ground = false;
+};
+
+const uint8_t* PoseBytes(int pose, int plane);
+
+void AddPose(Contact& hit, int pose, int sx, int sy) {
+    uint8_t mask[kFrameBytes] = {};
+    for (int plane = 0; plane < 2; ++plane) {
+        const uint8_t* frame = PoseBytes(pose, plane);
+        for (int i = 0; i < kFrameBytes; ++i) {
+            mask[i] |= frame[i];
+        }
     }
-    return PixelColor(x, y) >= 0;
+    for (int y = 0; y < kSpriteRows; ++y) {
+        const int py = sy + y;
+        uint8_t cols[40] = {};
+        bool used[40] = {};
+        for (int x = 0; x < kSpriteCols; ++x) {
+            const uint8_t bits = mask[y * 3 + x / 8];
+            if ((bits & static_cast<uint8_t>(0x80 >> (x & 7))) == 0) {
+                continue;
+            }
+            const int px = sx + x;
+            if (px < 0 || px >= kWidth || py < 0 || py >= kHeight) {
+                hit.wall = true;
+                continue;
+            }
+            const int col = px / 8;
+            cols[col] |= static_cast<uint8_t>(0x80 >> (px & 7));
+            used[col] = true;
+        }
+        if (py < 0 || py >= kHeight) {
+            continue;
+        }
+        const int row = py / 8;
+        const int half = (row & 1) == 0 ? 128 : 0;
+        const int rowByte = py & 7;
+        for (int col = 0; col < 40; ++col) {
+            if (!used[col]) {
+                continue;
+            }
+            const int cell = row * 40 + col;
+            const uint8_t tile = g.room[static_cast<size_t>(cell)];
+            if (tile == 0xDC) {
+                continue;
+            }
+            const uint8_t bg = g.charset[static_cast<size_t>(tile + half) * 8 + static_cast<size_t>(rowByte)];
+            const uint8_t overlapped = static_cast<uint8_t>(cols[col] & bg);
+            if (overlapped == 0) {
+                continue;
+            }
+            const int prop = g.color[static_cast<size_t>(cell)] & 7;
+            const int nibbles[2] = {overlapped >> 4, overlapped & 0x0F};
+            for (const int v : nibbles) {
+                if (v == 0) {
+                    continue;
+                }
+                const bool solid = v == 3 || v == 7 || v >= 11;
+                const bool edge = v == 1 || v == 4 || v == 5 || v == 6 || v == 7 || v == 9 || v == 13;
+                if (solid && prop == 0) {
+                    hit.wall = true;
+                }
+                if ((solid && prop != 0) || edge) {
+                    hit.ground = true;
+                }
+            }
+        }
+    }
 }
 
 // Poses follow the animation selector at $A780.
@@ -157,36 +228,26 @@ bool SpritePixel(const uint8_t* frame, int x, int y) {
     return (bits & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
 }
 
-// The game ANDs the current sprite with the character bitmaps under it.
-bool PoseHits(int pose, int sx, int sy) {
-    for (int plane = 0; plane < 2; ++plane) {
-        const uint8_t* frame = PoseBytes(pose, plane);
-        for (int y = 0; y < kSpriteRows; ++y) {
-            for (int x = 0; x < kSpriteCols; ++x) {
-                if (!SpritePixel(frame, x, y)) {
-                    continue;
-                }
-                if (SolidPixel(sx + x, sy + y)) {
-                    return true;
-                }
-            }
-        }
+// Both strides are tested while he is walking, so the wider one cannot
+// step into a wall that the other stride would be unable to leave.
+Contact Probe(int sx, int sy) {
+    Contact hit;
+    if (g.vy != 0) {
+        AddPose(hit, 6, sx, sy);
+    } else if (g.tick > 0) {
+        const int base = g.facing < 0 ? 2 : 4;
+        AddPose(hit, base, sx, sy);
+        AddPose(hit, base + 1, sx, sy);
+    } else {
+        AddPose(hit, StandPose(), sx, sy);
     }
-    return false;
+    return hit;
 }
 
-// While he is walking, both strides have to fit. Otherwise the wider
-// stride of the pair plants him in the graphic and the next stride
-// cannot step back out.
-bool Blocked(int sx, int sy) {
-    if (g.vy != 0) {
-        return PoseHits(6, sx, sy);
-    }
-    if (g.tick > 0) {
-        const int base = g.facing < 0 ? 2 : 4;
-        return PoseHits(base, sx, sy) || PoseHits(base + 1, sx, sy);
-    }
-    return PoseHits(StandPose(), sx, sy);
+bool PoseWall(int pose, int sx, int sy) {
+    Contact hit;
+    AddPose(hit, pose, sx, sy);
+    return hit.wall;
 }
 
 // The score line is the ROM charset, copied to $8800 at startup. These are
@@ -292,7 +353,10 @@ void MoveVertical(int dy) {
     const int step = dy > 0 ? 1 : -1;
     const int n = dy > 0 ? dy : -dy;
     for (int i = 0; i < n; ++i) {
-        if (Blocked(g.x, g.y + step)) {
+        const Contact hit = Probe(g.x, g.y + step);
+        // Down stops on the don't-fall flags as well as a wall. Up is
+        // cancelled only by the solid flag, the same bit $1CC7 pushes out.
+        if (step > 0 ? (hit.wall || hit.ground) : hit.wall) {
             g.vy = 0;
             return;
         }
@@ -316,11 +380,12 @@ void Tick() {
     } else {
         g.tick = 0;
     }
-    if (dx != 0 && !Blocked(g.x + dx, g.y)) {
+    if (dx != 0 && !Probe(g.x + dx, g.y).wall) {
         g.x += dx;
     }
 
-    const bool grounded = Blocked(g.x, g.y + 1);
+    const Contact below = Probe(g.x, g.y + 1);
+    const bool grounded = below.wall || below.ground;
     if (up && grounded && g.vy == 0 && !g.jumpHeld) {
         g.vy = -8;
     }
@@ -338,15 +403,15 @@ void Tick() {
     } else {
         g.pose = StandPose();
     }
-    // A new pose can overlap a graphic the previous pose cleared.
-    // $1CC7 pushes him back out when that collision bit is set.
-    if (PoseHits(g.pose, g.x, g.y)) {
+    // A new pose can overlap a wall the previous pose cleared.
+    // $1CC7 pushes him back out when the solid flag is set.
+    if (PoseWall(g.pose, g.x, g.y)) {
         const int prefer = g.facing < 0 ? 1 : -1;
         const int start = g.x;
-        for (int i = 1; i <= kSpriteCols && PoseHits(g.pose, g.x, g.y); ++i) {
-            if (!PoseHits(g.pose, start + prefer * i, g.y)) {
+        for (int i = 1; i <= kSpriteCols && PoseWall(g.pose, g.x, g.y); ++i) {
+            if (!PoseWall(g.pose, start + prefer * i, g.y)) {
                 g.x = start + prefer * i;
-            } else if (!PoseHits(g.pose, start - prefer * i, g.y)) {
+            } else if (!PoseWall(g.pose, start - prefer * i, g.y)) {
                 g.x = start - prefer * i;
             }
         }
@@ -445,7 +510,7 @@ void PlaceBruce() {
     // Just to the right of the lamp, feet on the red line at the bottom.
     g.x = 36;
     g.y = 194 - kSpriteRows;
-    for (int n = 0; n < 48 && PoseHits(g.pose, g.x, g.y); ++n) {
+    for (int n = 0; n < 48 && PoseWall(g.pose, g.x, g.y); ++n) {
         g.y -= 1;
     }
 }
