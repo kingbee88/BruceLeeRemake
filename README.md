@@ -2,11 +2,15 @@
 
 This project recreates the original *Bruce Lee* on the Commodore 64, written natively for Windows with no emulator. It is a homage to the original game and a way to preserve it for the future.
 
+This is still a work in progress. Current state: the first screen draws and the Bruce Lee character is playable.
+
+![The first screen, with Bruce standing by the lamp](docs/first-room.png)
+
 ## Overview
 
 The game is a C++ rewrite of the original rules. Pictures, the room layout, and the collision test come from the original bytes in `data/`. A Windows window, drawn with Direct2D, shows a 320 by 200 screen scaled up with nearest-neighbor filtering. Nothing is running inside a Commodore 64 emulator.
 
-What plays today is the first room. Bruce stands on the floor to the right of the lamp. Each frame reads the keys, tries a move, keeps it only when the original overlap test allows it, picks the matching pose, and paints the room, Bruce, and the score line.
+Bruce starts on the floor to the right of the lamp. Each frame reads the keys, tries a move, keeps it only when the original overlap test allows it, picks the matching pose, and paints the room, Bruce, and the score line.
 
 | Key | Action |
 | --- | --- |
