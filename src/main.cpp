@@ -109,6 +109,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
+    // The four files are described in DESIGN.md. title.bin is not used here.
     g.charset = LoadFile(L"charset.bin", 2048);
     g.room = LoadFile(L"room0.bin", 1000);
     g.color = LoadFile(L"room0.col", 1000);

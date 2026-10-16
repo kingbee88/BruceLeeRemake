@@ -5,11 +5,12 @@
 
 namespace {
 
-// $537E stores each AND nibble, and $5431 packs the watched slots into $B6.
-// Solid patterns 3, 7 and 11-15 become bit 3 while the cell property is 0.
-// A nonzero property swaps those patterns into bit 2. Bit 0 is the edge
-// patterns 1, 4, 5, 6, 7, 9 and 13. Statue ink is outside both sets, so
-// walking into it is left as it is.
+// Fold one pose into `hit`. Both planes are ORed, then each character
+// column under the sprite is ANDed with that column's glyph byte. The two
+// nibbles of the AND are what the original scan at $537E records.
+// Nibbles 3, 7, and 11-15 are solid: a wall on property 0, a floor on any
+// other property. Nibbles 1, 4, 5, 6, 9, and 13 are the floor edge.
+// Other patterns, including the statue, do not set either flag.
 void AddPose(Contact& hit, int pose, int sx, int sy) {
     uint8_t mask[kFrameBytes] = {};
     for (int plane = 0; plane < 2; ++plane) {

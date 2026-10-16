@@ -4,5 +4,6 @@
 #include <cstdint>
 #include <vector>
 
-// Looks beside the exe, then in data\ next to it and one directory up.
+// Read exactly `bytes` from name. Searches beside the exe, then ..\data\,
+// then data\. Returns an empty vector when the file is missing or short.
 std::vector<uint8_t> LoadFile(const wchar_t* name, size_t bytes);

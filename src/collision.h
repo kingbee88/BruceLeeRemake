@@ -1,12 +1,19 @@
 #pragma once
 
-// $B6 after the scan at $537E and the pack at $5431.
-// wall is bit 3, the solid flag $1CC7 pushes back out.
-// ground is bits 0 and 2, the don't-fall mask $05.
+// Result of the original overlap test at one sprite position.
+// wall: the move would be pushed back out (solid patterns on property 0).
+// ground: he should not fall (edge patterns, or solid patterns on property 6).
+// Statue ink sets neither. The nibble table is in DESIGN.md.
 struct Contact {
     bool wall = false;
     bool ground = false;
 };
 
+// Test the picture he would actually be showing at (sx, sy):
+// the air pose while vy != 0, both walk strides while a direction is held,
+// otherwise the stand pose for g.facing.
 Contact Probe(int sx, int sy);
+
+// Wall flag for one pose, ignoring what the rest of the walk cycle does.
+// PlaceBruce and the end-of-frame shove use this on the picture just chosen.
 bool PoseWall(int pose, int sx, int sy);

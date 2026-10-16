@@ -2,12 +2,25 @@
 
 #include <cstdint>
 
-// Poses follow the animation selector at $A780.
-// 0 right stand (base 2), 1 left stand (base 0),
-// 2/3 left walk ($0E, $10), 4/5 right walk ($12, $14), 6 air (base 8).
+// Pose numbers index bruce.bin. See DESIGN.md for the bytes.
+// 0 stand right, 1 stand left, 2/3 walk left, 4/5 walk right, 6 in the air.
+// Each direction is its own drawing. Mirroring would put the solid pixels
+// on the wrong side of a wall.
+
+// The stand picture for g.facing.
 int StandPose();
+
+// The current stride. g.tick / 6 alternates the two frames for g.facing.
 int WalkPose();
+
+// Pointer to one plane of a pose. Plane 0 is the yellow body, plane 1 is
+// the black detail. Each plane is 21 rows of 3 bytes.
 const uint8_t* PoseBytes(int pose, int plane);
 
+// Stand him on the floor just to the right of the lamp. Lifts him if that
+// stand picture is already inside a wall.
 void PlaceBruce();
+
+// One frame: read the arrows, step, jump or fall, pick the pose, shove him
+// out of a wall if the new picture overlaps one, then paint.
 void Tick();

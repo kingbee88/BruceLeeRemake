@@ -50,6 +50,8 @@ void MoveVertical(int dy) {
 }  // namespace
 
 void Tick() {
+    // Holding both arrows cancels the step. Facing is then to the right,
+    // because that key is applied after left.
     const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
     const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
     const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
