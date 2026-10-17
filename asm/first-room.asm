@@ -2789,6 +2789,8 @@ L_1BDF:
         JSR L_0DA4                      ; $1BF5
         JSR L_0D0F                      ; $1BF8
         JSR L_0DB1                      ; $1BFB
+; $7B flips every logic frame. The room hook sees 1 on the skipped frame
+; and 0 on the frame it runs, so it advances every other tick.
 L_1BFE:
         LDA $7B                         ; $1BFE
         BNE L_1C08                      ; $1C00
@@ -6014,6 +6016,10 @@ L_3A63:
         INC $15                         ; $3A6C
 L_3A6E:
         RTS                             ; $3A6E
+; Once per logic frame, from frame, and once more at the end of enter_room.
+; The word at $4EC4, room*2 is the hook address minus one, because RTS adds
+; one. Room 1's hook opens the trap door. The pictures and the lamp test are
+; in rooms.asm.
 L_3A6F:
         LDA $29                         ; $3A6F
         ASL A                           ; $3A71

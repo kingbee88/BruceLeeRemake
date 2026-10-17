@@ -240,6 +240,52 @@
 ; 18: 37,11,$1E
 ; 19: dummy at 0,0
 
-; $4EC4, room*2 and $4E9C, room*2 are called on the way in and after the
-; lamps are put back. They print the room's caption and watch the lamp
-; counters. They do not build the map. The map is the packed stream.
+; $4E9C, room*2 runs once from L_336E, after the taken lamps are painted.
+; The word is the address minus one. It clears $4E97-$4E9B first. Room 1's
+; hook is $33F6 and stores 3 in $4E97:
+;
+;        LDA #$03                        ; $33F6
+;        STA $4E97                       ; $33F8
+;        RTS                             ; $33FB
+;
+; $4EC4, room*2 is called every logic frame from L_3A6F, after $7B has
+; flipped. Room 1's hook is $3679. It opens the trap door in the floor.
+; $2A, $2B, and $2C have to be zero, which is every lamp in rooms 0, 1, and
+; 2 taken. $30 is room 6's count and has to be nonzero, so the door stays
+; shut once room 6 is clear. $4E97 then counts 3, 2, 1, 0, $FF. Each step
+; prints five tiles at column $11 of tile row $0C. The first step, when the
+; count becomes 2, calls $424F, which plays sound $8A and keeps A.
+
+        LDA $7B                         ; $3679
+        BNE $36A5                       ; $367B
+        LDA $4E97                       ; $367D
+        BMI $36A5                       ; $3680
+        LDA $30                         ; $3682
+        BEQ $36A5                       ; $3684
+        LDA $2A                         ; $3686
+        ORA $2B                         ; $3688
+        ORA $2C                         ; $368A
+        BNE $36A5                       ; $368C
+        DEC $4E97                       ; $368E
+        LDA $4E97                       ; $3691
+        CMP #$02                        ; $3694
+        BNE $369B                       ; $3696
+        JSR $424F                       ; $3698
+        CLC                             ; $369B
+        ADC #$10                        ; $369C
+        LDX #$0C                        ; $369E
+        LDY #$11                        ; $36A0
+        JMP print_string                ; $36A2
+;
+; print_string subtracts $20 from each byte and stops on $A0. The four
+; strings, and the tiles they become, are:
+;
+;   $12 at $45AA: 31 7C 7D 7E 7F A0    tiles 11 5C 5D 5E 5F
+;   $11 at $45B0: 31 42 42 A3 A3 A0    tiles 11 22 22 03 03
+;   $10 at $45B6: 7C 7D 7E A3 A3 A0    tiles 5C 5D 5E 03 03
+;   $0F at $45BC: 42 42 A3 A3 A3 A0    tiles 22 22 03 03 03
+;
+; Tile $03 is the exit in slot 1, so the open hole leads to room 5. The
+; packed stream is still the closed floor: columns $11-$15 of that row are
+; tiles 11 11 22 22 11 until this hook paints over them. Coming back into
+; the room decompresses that floor and arms $4E97 with 3 again.

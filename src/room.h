@@ -26,3 +26,7 @@ bool ClaimLamp(int col, int row, int& mount);
 // since the previous check. falling is state $0E. On success the new room
 // is loaded and g.x / g.y are the arrival spot.
 bool TakeExit(int tile, int xpos, int ypos, bool left, bool right, bool up, bool falling);
+
+// One logic frame of the room hook at $3A6F. Room 1 opens its trap door here
+// once rooms 0, 1, and 2 have no lamps left. Call it before the special scan.
+void AdvanceTrapDoor();

@@ -9,6 +9,7 @@
 #include "draw.h"
 #include "game.h"
 #include "load.h"
+#include "pad.h"
 #include "room.h"
 
 #include <cwchar>
@@ -199,7 +200,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         if (gInTitle) {
             const bool space = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
             const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
-            if (gTitleStart && !space && !enter) {
+            const bool fire = space || enter || ReadPad().fire;
+            if (fire) {
+                gTitleStart = true;
+            }
+            // The picture stays until fire is up, so the first game frame
+            // does not treat the same press as a punch. A is that button
+            // on the pad, the same as Space.
+            if (gTitleStart && !fire) {
                 gInTitle = false;
                 gTitleStart = false;
                 PlaceBruce();

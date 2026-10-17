@@ -7,6 +7,7 @@
 #include "collision.h"
 #include "draw.h"
 #include "game.h"
+#include "pad.h"
 #include "room.h"
 
 int StandPose() {
@@ -601,14 +602,19 @@ void PlaceBruce() {
 }
 
 void Tick() {
-    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
-    const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
-    const bool down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
-    const bool fire = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+    const PadInput pad = ReadPad();
+    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 || pad.left;
+    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0 || pad.right;
+    const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0 || pad.up;
+    const bool down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0 || pad.down;
+    const bool fire = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0 || pad.fire;
 
     // $40BC runs before the overlap, and a held pose still reaches it.
     AnimateLamps();
+
+    // $1BFE flips $7B and $3A6F runs the room hook before the special scan,
+    // so the trap door can be open on the same frame it is tested.
+    AdvanceTrapDoor();
 
     // scan_specials runs before the hold check, so a pose that is sitting
     // still can still claim a lamp or take an exit. The step flags are the

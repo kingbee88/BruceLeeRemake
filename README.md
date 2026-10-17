@@ -2,9 +2,10 @@
 
 This project recreates the original *Bruce Lee* on the Commodore 64, written natively for Windows with no emulator. It is a homage to the original game and a way to preserve it for the future.
 
-This is still a work in progress. Current state: the first screen draws and the Bruce Lee character is playable.
+This is still a work in progress. 
 
 ![The first screen, with Bruce standing by the lamp](docs/first-room.png)
+
 
 ## Overview
 
@@ -23,3 +24,18 @@ The window opens on the title picture. Space or Enter starts the first room, wit
 `build.bat` compiles with the Visual Studio C++ tools and writes `build\BruceLee.exe`. The executable looks for `charset.bin`, `room0.bin`, `room0.col`, `bruce.bin`, and `title.bin` beside itself, in `data\` one directory up, or in `data\` beside the executable. `config.ini` is read beside the exe, then in the parent folder. `ShowTitleScreen=False` in that file, or on the command line, skips the title.
 
 `DESIGN.md` describes how a frame runs, how the character cells and sprite poses are stored, and how collision decides wall and floor.
+
+## Current state
+
+* All 20 screens added - flow not complete yet, but now you can open hatch in room2.
+* All Bruce movement animation added and he can move freely. 
+* Gamepad support
+
+## TODO
+
+* Scene progress all the way through
+* Ninja and Yumi
+* Fullscreen support
+* Trainers
+* Audio
+* Scoring
