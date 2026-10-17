@@ -12,21 +12,28 @@
 ;   xpos,X    $9E   horizontal position. One step here is two screen pixels.
 ;   ypos,X    $A1   vertical position. One step is one screen pixel. Up decrements it.
 ;   facing,X  $A4   0 left, 1 right.
-;   hit,X     $B6   result of the overlap test.
-;                   bits 0 and 2: ground. Do not fall.
-;                   bit 3:       solid. push_out walks the step back out.
+;   hit,X     $B6   result of the overlap test. flags_from_nibbles rolls it in.
+;                   bit 0: ground. Nibbles 1, 4, 5, 6, 7, 9, and 13.
+;                   bit 1: prize ink. Nibbles 2, 6, 8, 9, and 10. The lamp hanger is nibble 2.
+;                   bit 2: ladder, which also holds him. Nibbles 3, 7, and 11-15
+;                          when the cell property is not 0.
+;                   bit 3: wall. Those same nibbles when the property is 0.
+;                          push_out walks the step back out.
 ;   state,X   $BF   which scripted move is running. 0 means none.
 ;   timer,X   $CE   counts down through that script.
 ;   active,X  $95   bit 0 set: this actor is in the room.
 ;   $0106,X          how many frames to hold the picture chosen for the state.
 ;   $98,X            the move he wants. $0E up, $0D down, $0B left, $07 right, $0F none.
+;   $9B              fire. 0 means the button is held. irq_service stores it.
 ;
 ; States used by Bruce:
 ;   1 and 2      climb up, climb down
 ;   5            standing jump
 ;   6 and 7      sideways jump, left and right
 ;   $0C and $0D  flying kick, left and right
+;   $0E          fall
 ;   $11          punch
+;   $1A          duck
 ;
 ; Where to start reading
 ;   start             cold start
@@ -42,6 +49,12 @@
 ;   pose_jump         which picture the standing jump shows
 ;   pose_kick_left    which picture the flying kick shows
 ;   scan_row          the overlap test for one row of his sprite
+;   flags_from_nibbles  nibbles to the hit bits
+;   scan_specials     tiles under him, a 3 by 2 window
+;   take_lamp         replace a lamp and add 125
+;   flicker_lamps     rewrite the lamp glyph rows
+;   raster_irq        the in-game color bands
+;   irq_service       count $48 down and read the stick
 ;
 ; More names
 ;   frame             one frame, then wait for the raster count
@@ -418,7 +431,7 @@ L_0820:
         LDA #$00                        ; $0828
         JMP wake_actor                  ; $082A
 ; Turn off CIA interrupts, enable the raster interrupt, and open the SID noise channel that
-; the effects use.
+; the effects use. The vector is raster_irq and the compare starts at raster $FB.
 arm_raster:
         LDA #$7F                        ; $082D
         STA $DD0D                       ; $082F
@@ -675,10 +688,10 @@ L_0A0E:
         LSR $0300,X                     ; $0A19
         LDA #$07                        ; $0A1C
         LDX #$01                        ; $0A1E
-        JSR L_3175                      ; $0A20
+        JSR add_score                      ; $0A20
         LDA #$D0                        ; $0A23
         LDX #$02                        ; $0A25
-        JSR L_3175                      ; $0A27
+        JSR add_score                      ; $0A27
 L_0A2A:
         LDA #$00                        ; $0A2A
         LDY #$83                        ; $0A2C
@@ -920,14 +933,14 @@ L_0BFA:
         LDX $29                         ; $0C02
         LDA $136F,X                     ; $0C04
         BEQ L_0C17                      ; $0C07
-        JSR L_1159                      ; $0C09
+        JSR noise_byte                      ; $0C09
         CMP #$C0                        ; $0C0C
         BCS L_0C17                      ; $0C0E
         LDA $136F,X                     ; $0C10
         BPL L_0BE7                      ; $0C13
         BMI L_0C1E                      ; $0C15
 L_0C17:
-        JSR L_1159                      ; $0C17
+        JSR noise_byte                      ; $0C17
         AND #$01                        ; $0C1A
         BEQ L_0BE7                      ; $0C1C
 L_0C1E:
@@ -940,7 +953,7 @@ L_0C2A:
         LDX $29                         ; $0C2A
         LDA $1333,X                     ; $0C2C
         BEQ L_0C17                      ; $0C2F
-        JSR L_1159                      ; $0C31
+        JSR noise_byte                      ; $0C31
         CMP #$C0                        ; $0C34
         BCS L_0C17                      ; $0C36
         LDA $136F,X                     ; $0C38
@@ -1161,7 +1174,7 @@ L_0DB1:
         JSR L_10D0                      ; $0DC4
         BVS L_0DD7                      ; $0DC7
         BCS L_0DD7                      ; $0DC9
-        JSR L_1159                      ; $0DCB
+        JSR noise_byte                      ; $0DCB
         CMP #$19                        ; $0DCE
         BCC L_0DD7                      ; $0DD0
         LDA #$10                        ; $0DD2
@@ -1323,7 +1336,7 @@ L_0EED:
         STA $8D4C,X                     ; $0EFA
         DEX                             ; $0EFD
         BPL L_0EED                      ; $0EFE
-        LDA #$A4                     ; $0F00
+        LDA #$A4                        ; $0F00  low byte of between_raster
         STA $0408                       ; $0F02
         LDA #$14                        ; $0F05
         STA $0409                       ; $0F07
@@ -1575,7 +1588,10 @@ L_114C:
         TAX                             ; $1156
         PLA                             ; $1157
         RTS                             ; $1158
-L_1159:
+; One noise byte. While $0104 is 0 the result is 1, and flicker_lamps then
+; rewrites a steady row every frame. In play, $16 advances and ($16),Y is
+; returned. Y belongs to the caller.
+noise_byte:
         LDA $0104                       ; $1159
         BNE L_1161                      ; $115C
         LDA #$01                        ; $115E
@@ -1725,7 +1741,435 @@ L_147E:
         STA $010A                       ; $1484
         RTS                             ; $1487
 
-; $1488  790 bytes of data between routines
+; $1488  28 bytes of data between routines
+
+; between_rooms points the raster here, at line $63. $D022 steps through
+; dark grey, grey, light grey, and white. That flash is this screen's color
+; cycle. flicker_lamps is the routine that changes the lamp glyphs.
+between_raster:
+        LDX #$6D                        ; $14A4
+        LDA #$6E                        ; $14A6
+L_14A8:
+        CMP $D012                       ; $14A8
+        BEQ L_14B7                      ; $14AB
+        CPX $D012                       ; $14AD
+        BNE L_14A8                      ; $14B0
+        LDX #$0A                        ; $14B2
+L_14B4:
+        DEX                             ; $14B4
+        BNE L_14B4                      ; $14B5
+L_14B7:
+        LDA #$FB                        ; $14B7
+        STA $D022                       ; $14B9
+        JSR raster_wait                 ; $14BC
+        JSR raster_wait                 ; $14BF
+        LDA #$FC                        ; $14C2
+        STA $D022                       ; $14C4
+        JSR raster_wait                 ; $14C7
+        JSR raster_wait                 ; $14CA
+        LDA #$FF                        ; $14CD
+        STA $D022                       ; $14CF
+        JSR raster_wait                 ; $14D2
+        JSR raster_wait                 ; $14D5
+        LDA #$F1                        ; $14D8
+        STA $D022                       ; $14DA
+        JSR raster_wait                 ; $14DD
+        LDA #$FF                        ; $14E0
+        STA $D022                       ; $14E2
+        JSR raster_wait                 ; $14E5
+        JSR raster_wait                 ; $14E8
+        LDA #$FC                        ; $14EB
+        STA $D022                       ; $14ED
+        JSR raster_wait                 ; $14F0
+        JSR raster_wait                 ; $14F3
+        LDA #$FB                        ; $14F6
+        STA $D022                       ; $14F8
+        LDA #$30                        ; $14FB
+        STA $D018                       ; $14FD
+        LDA #$18                        ; $1500
+        STA $D016                       ; $1502
+        LDA #$01                        ; $1505
+        STA $D01A                       ; $1507
+        STA $D019                       ; $150A
+        LDA $D011                       ; $150D
+        AND #$7F                        ; $1510
+        STA $D011                       ; $1512
+        LDA #$63                        ; $1515
+        STA $D012                       ; $1517
+        LDA $48                         ; $151A
+        BEQ L_1520                      ; $151C
+        DEC $48                         ; $151E
+L_1520:
+        PLA                             ; $1520
+        TAY                             ; $1521
+        PLA                             ; $1522
+        TAX                             ; $1523
+        PLA                             ; $1524
+        RTI                             ; $1525
+
+; Burn about ten iterations. The between-lives flash pauses on each $D022 color.
+raster_wait:
+        LDX #$0A                        ; $1526
+L_1528:
+        DEX                             ; $1528
+        BNE L_1528                      ; $1529
+        RTS                             ; $152B
+
+; game_over points the raster here. Charset $8000 and multicolor stay on until
+; raster $82, where game_over_late takes over. $48 still counts down.
+game_over_raster:
+        LDA $48                         ; $152C
+        BEQ L_1532                      ; $152E
+        DEC $48                         ; $1530
+L_1532:
+        LDA $49                         ; $1532
+        BEQ L_1542                      ; $1534
+        DEC $49                         ; $1536
+        BNE L_1542                      ; $1538
+        LDA $4A                         ; $153A
+        BEQ L_1542                      ; $153C
+        DEC $4A                         ; $153E
+        DEC $49                         ; $1540
+L_1542:
+        LDA #$30                        ; $1542
+        STA $D018                       ; $1544
+        LDA #$18                        ; $1547
+        STA $D016                       ; $1549
+        JSR $E006                       ; $154C
+        LDA #$74                        ; $154F
+        STA $0408                       ; $1551
+        LDA #$15                        ; $1554
+        STA $0409                       ; $1556
+        LDA #$01                        ; $1559
+        STA $D01A                       ; $155B
+        STA $D019                       ; $155E
+        LDA $D011                       ; $1561
+        AND #$7F                        ; $1564
+        STA $D011                       ; $1566
+        LDA #$82                        ; $1569
+        STA $D012                       ; $156B
+        PLA                             ; $156E
+        TAY                             ; $156F
+        PLA                             ; $1570
+        TAX                             ; $1571
+        PLA                             ; $1572
+        RTI                             ; $1573
+
+; Raster $82 on the game-over screen. Charset $8800 is the score font, and
+; $D016 drops to $16, so the wide dots are off. The vector returns to
+; game_over_raster at raster $FD.
+game_over_late:
+        LDX #$04                        ; $1574
+L_1576:
+        DEX                             ; $1576
+        BNE L_1576                      ; $1577
+        LDA #$32                        ; $1579
+        STA $D018                       ; $157B
+        LDA #$16                        ; $157E
+        STA $D016                       ; $1580
+        LDA #$2C                        ; $1583
+        STA $0408                       ; $1585
+        LDA #$15                        ; $1588
+        STA $0409                       ; $158A
+        LDA #$01                        ; $158D
+        STA $D01A                       ; $158F
+        STA $D019                       ; $1592
+        LDA $D011                       ; $1595
+        AND #$7F                        ; $1598
+        STA $D011                       ; $159A
+        LDA #$FD                        ; $159D
+        STA $D012                       ; $159F
+        PLA                             ; $15A2
+        TAY                             ; $15A3
+        PLA                             ; $15A4
+        TAX                             ; $15A5
+        PLA                             ; $15A6
+        RTI                             ; $15A7
+
+; raster_irq calls this once per frame, from the interrupt at raster $FB.
+; The color splits do not call it, so $48 loses one count per frame. frame
+; waits until that count is 0.
+; While $82 is negative, the twelve band colors copied to $0153 are replaced
+; from the table at $47B4: (byte EOR $83) AND $84. $84 is $F7, which clears
+; bit 3 of the color. $83 is the slow counter in $80. flicker_lamps is the
+; routine that rewrites the lamp glyph bytes.
+; In play, the stick nibble is stored at $98 and the fire button at $9B.
+; $9B is 0 while fire is held.
+irq_service:
+        CLD                             ; $15A8
+        LDA #$00                        ; $15A9
+        STA $44                         ; $15AB
+        LDX $29                         ; $15AD
+        JSR $EB03                       ; $15AF
+        JSR $EF73                       ; $15B2
+        JSR $F073                       ; $15B5
+        INC $16                         ; $15B8
+        JSR $25E2                       ; $15BA
+        LDA $4EEC                       ; $15BD
+        BNE L_15CD                      ; $15C0
+        LDA #$02                        ; $15C2
+        STA $4F45                       ; $15C4
+        STA $4F46                       ; $15C7
+        STA $4F47                       ; $15CA
+L_15CD:
+        DEC $4EEC                       ; $15CD
+        LDA $F2                         ; $15D0
+        CMP #$38                        ; $15D2
+        BNE L_15DA                      ; $15D4
+        LDA #$A0                        ; $15D6
+        BNE L_15EC                      ; $15D8
+L_15DA:
+        CMP #$3A                        ; $15DA
+        BNE L_15E2                      ; $15DC
+        LDA #$A8                        ; $15DE
+        BNE L_15EC                      ; $15E0
+L_15E2:
+        CMP #$3C                        ; $15E2
+        BNE L_15EA                      ; $15E4
+        LDA #$B0                        ; $15E6
+        BNE L_15EC                      ; $15E8
+L_15EA:
+        LDA #$B8                        ; $15EA
+L_15EC:
+        STA $7C                         ; $15EC
+        LDA $1383                       ; $15EE
+        BEQ L_15F7                      ; $15F1
+        LDA #$00                        ; $15F3
+        BEQ L_15F9                      ; $15F5
+L_15F7:
+        LDA #$2C                        ; $15F7
+L_15F9:
+        STA $8C2A                       ; $15F9
+        LDA $42CA                       ; $15FC
+        BNE L_1606                      ; $15FF
+        LDA $42C9                       ; $1601
+        BEQ L_1611                      ; $1604
+L_1606:
+        LDA $1384                       ; $1606
+        BEQ L_160F                      ; $1609
+        LDA #$00                        ; $160B
+        BEQ L_1611                      ; $160D
+L_160F:
+        LDA #$2C                        ; $160F
+L_1611:
+        STA $8C4D                       ; $1611
+        LDA $0104                       ; $1614
+        BEQ L_1628                      ; $1617
+        LDA $0105                       ; $1619
+        BMI L_1628                      ; $161C
+        INC $87                         ; $161E
+        BNE L_1628                      ; $1620
+        LDA $88                         ; $1622
+        BMI L_1628                      ; $1624
+        INC $88                         ; $1626
+L_1628:
+        INC $7F                         ; $1628
+        BNE L_1645                      ; $162A
+        LDA $82                         ; $162C
+        BMI L_163F                      ; $162E
+        INC $82                         ; $1630
+        BPL L_163F                      ; $1632
+        LDA #$86                        ; $1634
+        STA $0105                       ; $1636
+        JSR L_1A42                      ; $1639
+        JSR $102B                       ; $163C
+L_163F:
+        INC $80                         ; $163F
+        BNE L_1645                      ; $1641
+        INC $81                         ; $1643
+L_1645:
+        LDA #$FE                        ; $1645
+        LDX #$00                        ; $1647
+        LDY $82                         ; $1649
+        BPL L_1653                      ; $164B
+        STA $82                         ; $164D
+        LDX $80                         ; $164F
+        LDA #$F7                        ; $1651
+L_1653:
+        STA $84                         ; $1653
+        STX $83                         ; $1655
+        LDA $82                         ; $1657
+        BPL L_166A                      ; $1659
+        LDX #$13                        ; $165B
+L_165D:
+        LDA $47B4,X                     ; $165D
+        EOR $83                         ; $1660
+        AND $84                         ; $1662
+        STA $0153,X                     ; $1664
+        DEX                             ; $1667
+        BPL L_165D                      ; $1668
+L_166A:
+        NOP                             ; $166A
+        NOP                             ; $166B
+        NOP                             ; $166C
+        NOP                             ; $166D
+        NOP                             ; $166E
+        NOP                             ; $166F
+        NOP                             ; $1670
+        NOP                             ; $1671
+        LDA $48                         ; $1672
+        BEQ L_1678                      ; $1674
+        DEC $48                         ; $1676
+L_1678:
+        LDA $49                         ; $1678
+        BEQ L_1681                      ; $167A
+        DEC $49                         ; $167C
+        JMP L_1689                      ; $167E
+L_1681:
+        LDA $4A                         ; $1681
+        BEQ L_1689                      ; $1683
+        DEC $4A                         ; $1685
+        DEC $49                         ; $1687
+L_1689:
+        LDA $DC02                       ; $1689
+        STA $2005                       ; $168C
+        LDA $DC03                       ; $168F
+        STA $2006                       ; $1692
+        LDA #$00                        ; $1695
+        STA $DC02                       ; $1697
+        STA $DC03                       ; $169A
+        LDA $0104                       ; $169D
+        BEQ L_1703                      ; $16A0
+        LDA $DC01                       ; $16A2
+        LDX $03                         ; $16A5
+        BEQ L_16AC                      ; $16A7
+        LDA $DC00                       ; $16A9
+L_16AC:
+        AND #$0F                        ; $16AC
+        LDY $1383,X                     ; $16AE
+        BNE L_16BD                      ; $16B1
+        PHA                             ; $16B3
+        AND #$03                        ; $16B4
+        TAY                             ; $16B6
+        PLA                             ; $16B7
+        LSR A                           ; $16B8
+        LSR A                           ; $16B9
+        ORA $4A85,Y                     ; $16BA
+L_16BD:
+        STA $98                         ; $16BD
+        LDA $03                         ; $16BF
+        EOR #$01                        ; $16C1
+        TAX                             ; $16C3
+        LDA $DC00,X                     ; $16C4
+        LSR A                           ; $16C7
+        LSR A                           ; $16C8
+        LSR A                           ; $16C9
+        LSR A                           ; $16CA
+        AND #$01                        ; $16CB
+        STA $9B                         ; $16CD
+        LDA $42CA                       ; $16CF
+        BEQ L_1703                      ; $16D2
+        LDA $03                         ; $16D4
+        EOR #$01                        ; $16D6
+        TAX                             ; $16D8
+        PHP                             ; $16D9
+        LDA $DC01                       ; $16DA
+        PLP                             ; $16DD
+        BEQ L_16E3                      ; $16DE
+        LDA $DC00                       ; $16E0
+L_16E3:
+        AND #$0F                        ; $16E3
+        LDY $1383,X                     ; $16E5
+        BNE L_16F4                      ; $16E8
+        PHA                             ; $16EA
+        AND #$03                        ; $16EB
+        TAY                             ; $16ED
+        PLA                             ; $16EE
+        LSR A                           ; $16EF
+        LSR A                           ; $16F0
+        ORA $4A85,Y                     ; $16F1
+L_16F4:
+        STA $99                         ; $16F4
+        LDX $03                         ; $16F6
+        LDA $DC00,X                     ; $16F8
+        LSR A                           ; $16FB
+        LSR A                           ; $16FC
+        LSR A                           ; $16FD
+        LSR A                           ; $16FE
+        AND #$01                        ; $16FF
+        STA $9C                         ; $1701
+L_1703:
+        LDA $02                         ; $1703
+        CMP #$32                        ; $1705
+        BEQ L_1717                      ; $1707
+        STA $05                         ; $1709
+L_170B:
+        STA ($04),Y                     ; $170B
+        DEY                             ; $170D
+        BNE L_170B                      ; $170E
+        DEC $05                         ; $1710
+        DEC $0539                       ; $1712
+        BNE L_170B                      ; $1715
+L_1717:
+        LDA $2005                       ; $1717
+        STA $DC02                       ; $171A
+        LDA $2006                       ; $171D
+        STA $DC03                       ; $1720
+        LDA $0104                       ; $1723
+        BEQ L_173B                      ; $1726
+        LDA $0105                       ; $1728
+        BMI L_173F                      ; $172B
+        LDA $98                         ; $172D
+        ORA $99                         ; $172F
+        CMP #$0F                        ; $1731
+        BNE L_173B                      ; $1733
+        LDA $9B                         ; $1735
+        AND $9C                         ; $1737
+        BNE L_173F                      ; $1739
+L_173B:
+        LDA #$00                        ; $173B
+        STA $82                         ; $173D
+L_173F:
+        LDA $7A                         ; $173F
+        BNE L_179D                      ; $1741
+        LDA $0105                       ; $1743
+        BMI L_179D                      ; $1746
+        LDA $0104                       ; $1748
+        BEQ L_179D                      ; $174B
+        LDA $42CA                       ; $174D
+        BEQ L_179D                      ; $1750
+        LDA $99                         ; $1752
+        CMP #$0F                        ; $1754
+        BNE L_1797                      ; $1756
+        LDA $9C                         ; $1758
+        BEQ L_1797                      ; $175A
+        INC $89                         ; $175C
+        BNE L_179D                      ; $175E
+        INC $8A                         ; $1760
+        LDA $8A                         ; $1762
+        CMP #$07                        ; $1764
+        BCC L_179D                      ; $1766
+        LDA #$00                        ; $1768
+        STA $42CA                       ; $176A
+        LDA #$20                        ; $176D
+        STA $88                         ; $176F
+        JSR $424F                       ; $1771
+        LDA $28                         ; $1774
+        CMP #$05                        ; $1776
+        BCC L_177F                      ; $1778
+        SBC #$05                        ; $177A
+        JMP L_1781                      ; $177C
+L_177F:
+        LDA #$00                        ; $177F
+L_1781:
+        STA $28                         ; $1781
+        LDA $439F                       ; $1783
+        CMP #$05                        ; $1786
+        BCC L_178F                      ; $1788
+        SBC #$05                        ; $178A
+        JMP L_1791                      ; $178C
+L_178F:
+        LDA #$00                        ; $178F
+L_1791:
+        STA $439F                       ; $1791
+        JSR lives_to_bcd                ; $1794
+L_1797:
+        LDA #$00                        ; $1797
+        STA $89                         ; $1799
+        STA $8A                         ; $179B
+L_179D:
+        RTS                             ; $179D
+
 
 ; For each active actor, release the pose hold and then choose the picture. X = 0 is Bruce.
 step_actors:
@@ -1875,7 +2319,7 @@ game_over:
         STA $D011                       ; $189A
         LDA #$00                        ; $189D
         STA $D015                       ; $189F
-        LDA #$2C                        ; $18A2
+        LDA #$2C                        ; $18A2  low byte of game_over_raster
         STA $0408                       ; $18A4
         LDA #$15                        ; $18A7
         STA $0409                       ; $18A9
@@ -2302,8 +2746,9 @@ L_1BB6:
         LDX #$01                        ; $1BBB
         LDY #$0F                        ; $1BBD
         JMP L_1BAD                      ; $1BBF
-; One frame. Overlap, sprite collisions, the three actors, then wait until the raster count
-; in $48 reaches 0.
+; One frame. flicker_lamps runs first, then the overlap, then scan_specials,
+; then the three actors. Wait until the raster count in $48 reaches 0.
+; irq_service decrements $48 once per frame, from the interrupt at raster $FB.
 frame:
         LDA #$03                        ; $1BC2
         STA $48                         ; $1BC4
@@ -2324,7 +2769,7 @@ L_1BDF:
         AND #$87                        ; $1BE7
         STA $D3                         ; $1BE9
         JSR timed_caption                      ; $1BEB
-        JSR L_40BC                      ; $1BEE
+        JSR flicker_lamps                      ; $1BEE
         LDA $7A                         ; $1BF1
         BNE L_1BFE                      ; $1BF3
         JSR L_0DA4                      ; $1BF5
@@ -2341,7 +2786,7 @@ L_1C08:
 L_1C0A:
         JSR L_3A6F                      ; $1C0A
         JSR overlap_actors              ; $1C0D
-        JSR L_2E39                      ; $1C10
+        JSR scan_specials                      ; $1C10
         LDA $CF7A                       ; $1C13
         EOR $CF9A                       ; $1C16
         STA $2007                       ; Folded into the byte score_blip tests.
@@ -2350,7 +2795,7 @@ L_1C0A:
         BNE L_1C26                      ; $1C21
         JSR read_sprite_hits                      ; $1C23
 L_1C26:
-        JSR L_3184                      ; $1C26
+        JSR refresh_top                      ; $1C26
         JSR step_actors                      ; $1C29
         JSR blit_sprites                      ; $1C2C
         JSR check_bruce_down                      ; $1C2F
@@ -2546,6 +2991,11 @@ L_1D77:
         JMP move_for_state              ; Timer still running: perform this state's step.
 L_1D7E:
         LDA $C2,X                       ; $1D7E
+; The remembered state is $0E, the fall. The first airborne frame is L_1DC4:
+; $B0,X becomes 2 and he drops one pixel. Later frames drop two. While the
+; shifted $B0,X is still set and the upper body ($A7) shows ground, one xpos
+; step is added toward his facing. Bits 0 or 2 of the full hit land him on
+; that pixel.
         CMP #$0E                        ; $1D80
         BNE on_ground                   ; $1D82
         TXA                             ; $1D84
@@ -2594,6 +3044,10 @@ on_ground:
         AND #$05                        ; Bits 0 and 2. Set means do not fall.
         BEQ L_1DC4                      ; $1DCE
         LDA $98,X                       ; $1DD0
+; $0E: up. Bit 2 climbs. Two calls and the fall through into move_up are three
+; pixels, and $CB,X at 0 adds a fourth. A refused pixel clears the state.
+; With bit 2 clear, bit 3 refuses the standing jump, and a ypos below $2E
+; clears the state. Otherwise state 5 starts, with timer 15.
         CMP #$0E                        ; $0E: climb up.
         BNE L_1E13                      ; $1DD4
         LDA ypos,X                      ; $1DD6
@@ -2633,6 +3087,8 @@ L_1E0C:
         LDA #$05                        ; $1E0E
         JMP set_state_15                ; $1E10
 L_1E13:
+; $0D: down. Bit 2 climbs through move_down, three pixels, or four when $CB,X
+; is 0. With bit 2 clear and bit 0 set, Bruce ducks.
         CMP #$0D                        ; $0D: climb down.
         BNE L_1E59                      ; $1E15
         LDA hit,X                       ; $1E17
@@ -2674,6 +3130,9 @@ L_1E4F:
 L_1E56:
         JMP L_1EEB                      ; $1E56
 L_1E59:
+; $0B: left. Two calls and the fall through into move_left are two xpos steps.
+; $CB,X at 0 adds a third. When the previous state is already 3, $CB,X is
+; below 4, and $9B,X is 0, the step is the flying kick instead.
         CMP #$0B                        ; $0B: step left. A low pose-repeat count starts the kick.
         BNE L_1E9A                      ; $1E5B
         LDA xpos,X                      ; $1E5D
@@ -2711,6 +3170,8 @@ move_left:
         LDA #$03                        ; $1E95
         JMP set_state                   ; $1E97
 L_1E9A:
+; $07: right. The same two or three xpos steps. The kick replaces the step when
+; the previous state is already 4, $CB,X is below 4, and fire is held.
         CMP #$07                        ; $07: step right. A low pose-repeat count starts the kick.
         BNE L_1ED8                      ; $1E9C
         LDA xpos,X                      ; $1E9E
@@ -2746,6 +3207,8 @@ move_right:
         LDA #$04                        ; $1ED3
         JMP set_state                   ; $1ED5
 L_1ED8:
+; $09: down and left. A ladder clears the state. On the ground Bruce ducks,
+; state $1A, facing left, unless xpos has reached $A2.
         CMP #$09                        ; $1ED8
         BNE L_1F0A                      ; $1EDA
         TXA                             ; $1EDC
@@ -2775,6 +3238,7 @@ L_1EFA:
 L_1F07:
         JMP clear_state                 ; $1F07
 L_1F0A:
+; $05: down and right. The duck faces right unless xpos is below $10.
         CMP #$05                        ; $1F0A
         BNE L_1F2C                      ; $1F0C
         TXA                             ; $1F0E
@@ -3867,7 +4331,7 @@ choose_pose:
         STA $4F54,X                     ; $278B
         LDY facing,X                    ; $278E
         LDA state,X                     ; $2790
-        CMP #$0E                        ; $2792
+        CMP #$0E                        ; $2792  fall. Bit 3 is library 8, the legs together. Otherwise library $44.
         BNE L_27A6                      ; $2794
         LDA hit,X                       ; $2796
         AND #$08                        ; $2798
@@ -3878,7 +4342,7 @@ L_27A1:
         LDY #$44                        ; $27A1
         JMP store_pose                  ; $27A3
 L_27A6:
-        CMP #$1A                        ; $27A6
+        CMP #$1A                        ; $27A6  duck. Facing right is library $42, facing left is library $40.
         BNE L_27B8                      ; $27A8
         CPY #$01                        ; $27AA
         BNE L_27B3                      ; $27AC
@@ -4476,7 +4940,7 @@ L_2BB1:
         BPL L_2BC4                      ; $2BB9
         LDA #$64                        ; $2BBB
         LDX #$02                        ; $2BBD
-        JSR L_3175                      ; $2BBF
+        JSR add_score                      ; $2BBF
         LDX $51                         ; $2BC2
 L_2BC4:
         LDA $D1,X                       ; $2BC4
@@ -4496,7 +4960,7 @@ L_2BD5:
         BPL L_2BE8                      ; $2BDD
         LDA #$4B                        ; $2BDF
         LDX #$02                        ; $2BE1
-        JSR L_3175                      ; $2BE3
+        JSR add_score                      ; $2BE3
         LDX $51                         ; $2BE6
 L_2BE8:
         LDA $D1,X                       ; $2BE8
@@ -4517,7 +4981,7 @@ L_2BF9:
         BPL L_2C0C                      ; $2C01
         LDA #$32                        ; $2C03
         LDX #$02                        ; $2C05
-        JSR L_3175                      ; $2C07
+        JSR add_score                      ; $2C07
         LDX $51                         ; $2C0A
 L_2C0C:
         LDA $D1,X                       ; $2C0C
@@ -4544,15 +5008,15 @@ L_2C24:
         BNE L_2C40                      ; $2C2E
         LDA #$01                        ; $2C30
         TAX                             ; $2C32
-        JSR L_3175                      ; $2C33
+        JSR add_score                      ; $2C33
         LDA #$C2                        ; $2C36
         LDX #$02                        ; $2C38
-        JSR L_3175                      ; $2C3A
+        JSR add_score                      ; $2C3A
         JMP L_2C47                      ; $2C3D
 L_2C40:
         LDA #$C8                        ; $2C40
         LDX #$02                        ; $2C42
-        JSR L_3175                      ; $2C44
+        JSR add_score                      ; $2C44
 L_2C47:
         LDX $51                         ; $2C47
         LDA #$13                        ; $2C49
@@ -4737,7 +5201,11 @@ L_2E29:
         TAX                             ; $2E36
         PLA                             ; $2E37
         RTS                             ; $2E38
-L_2E39:
+; For each active actor except state $19, look at his tile row and the row
+; below. cell_of_actor has his column in $E6,X and his tile row in $E9,X.
+; Each of those rows checks that column and the two to the right. Hit bit 1
+; is kept in $53 and gates the prize tiles, the lamps among them.
+scan_specials:
         LDA #$00                        ; $2E39
         STA $0100                       ; $2E3B
         LDX #$02                        ; $2E3E
@@ -4757,16 +5225,18 @@ L_2E55:
         AND #$02                        ; $2E57
         STA $53                         ; $2E59
         JSR cell_of_actor                      ; $2E5B
-        JSR L_2E6E                      ; $2E5E
+        JSR scan_special_row                      ; $2E5E
         LDX $51                         ; $2E61
         INC $E9,X                       ; $2E63
-        JSR L_2E6E                      ; $2E65
+        JSR scan_special_row                      ; $2E65
 L_2E68:
         LDX $51                         ; $2E68
         DEX                             ; $2E6A
         BPL L_2E40                      ; $2E6B
         RTS                             ; $2E6D
-L_2E6E:
+; $4C counts 2, 1, 0, so three columns from $E6,X. Bit 7 of the tile is
+; ignored. A shadow row therefore matches the same number as the row above.
+scan_special_row:
         LDA $E9,X                       ; $2E6E
         TAX                             ; $2E70
         JSR point_at_row                      ; $2E71
@@ -4777,12 +5247,12 @@ L_2E6E:
 L_2E7C:
         LDA ($04),Y                     ; $2E7C
         AND #$7F                        ; $2E7E
-        JSR L_2E89                      ; $2E80
+        JSR match_special                      ; $2E80
         INY                             ; $2E83
         DEC $4C                         ; $2E84
         BPL L_2E7C                      ; $2E86
         RTS                             ; $2E88
-L_2E89:
+match_special:
         CMP #$05                        ; $2E89
         BNE L_2E90                      ; $2E8B
         JMP L_2F7B                      ; $2E8D
@@ -4806,14 +5276,17 @@ L_2EA9:
         BEQ L_2EEA                      ; $2EAB
         CMP #$2E                        ; $2EAD
         BEQ L_2EEA                      ; $2EAF
+; $53 held hit bit 1. The shift leaves zero when that bit was clear, and
+; every prize tile below is then skipped. The tiles compared above, the
+; doors among them, are tested either way.
         ASL $53                         ; $2EB1
         BEQ L_2EE9                      ; $2EB3
         CMP #$13                        ; $2EB5
-        BEQ L_2F04                      ; $2EB7
+        BEQ take_lamp                      ; $2EB7
         CMP #$14                        ; $2EB9
-        BEQ L_2F04                      ; $2EBB
+        BEQ take_lamp                      ; $2EBB
         CMP #$31                        ; $2EBD
-        BEQ L_2F04                      ; $2EBF
+        BEQ take_lamp                      ; $2EBF
         CMP #$64                        ; $2EC1
         BEQ L_2F01                      ; $2EC3
         CMP #$66                        ; $2EC5
@@ -4856,14 +5329,19 @@ L_2EFA:
         RTS                             ; $2F00
 L_2F01:
         JMP L_304B                      ; $2F01
-L_2F04:
+; Tiles $13, $14, and $31. Bruce only: any other actor returns. claim_lamp
+; returns the bare mount, or sets carry when this cell is not in the room's
+; list. The mount is written on this row. The same byte with bit 7 set is
+; written $28 bytes later, the shadow row. $7D is added to the low score
+; byte, which the BCD digits show as 125. Sound $8E plays.
+take_lamp:
         TXA                             ; $2F04
         BNE L_2EE9                      ; $2F05
-        JSR L_330E                      ; $2F07
-        JSR L_331C                      ; $2F0A
+        JSR stash_axy                      ; $2F07
+        JSR claim_lamp                      ; $2F0A
         BCS L_2F39                      ; $2F0D
         PHA                             ; $2F0F
-        JSR L_3315                      ; $2F10
+        JSR restore_axy                      ; $2F10
         PLA                             ; $2F13
         STA ($04),Y                     ; $2F14
         ORA #$80                        ; $2F16
@@ -4881,14 +5359,14 @@ L_2F04:
         SBC #$28                        ; $2F26
         TAY                             ; $2F28
         PLA                             ; $2F29
-        JSR L_330E                      ; $2F2A
+        JSR stash_axy                      ; $2F2A
         LDA #$7D                        ; $2F2D
         LDX #$02                        ; $2F2F
-        JSR L_3175                      ; $2F31
+        JSR add_score                      ; $2F31
         LDY #$8E                        ; $2F34
         JSR play_sound                  ; $2F36
 L_2F39:
-        JMP L_3315                      ; $2F39
+        JMP restore_axy                      ; $2F39
 L_2F3C:
         JSR L_30D4                      ; $2F3C
 L_2F3F:
@@ -5153,7 +5631,11 @@ L_310C:
 L_3127:
         LDA ($04),Y                     ; $3127
         JMP L_2EA9                      ; $3129
-L_312C:
+; Add the three bytes at $25 into the score at $41. $41 is the high byte and
+; $43 is the low byte. Each score byte is then compared with the byte at
+; $4392. When none is below its pair, $28, the lives, is incremented and the
+; bytes at $438E are added into $4392. The score digits are redrawn either way.
+apply_score:
         LDX #$02                        ; $312C
         CLC                             ; $312E
 L_312F:
@@ -5191,7 +5673,9 @@ L_315A:
         LDY #$34                        ; $316D
         LDA $439E                       ; $316F
         JMP draw_split_digits                      ; $3172
-L_3175:
+; Add A to score byte X. X = 2 reaches $43, the low byte. A lamp passes
+; $7D with X = 2.
+add_score:
         PHA                             ; $3175
         LDA #$00                        ; $3176
         STA $25                         ; $3178
@@ -5199,8 +5683,11 @@ L_3175:
         STA $27                         ; $317C
         PLA                             ; $317E
         STA $25,X                       ; $317F
-        JMP L_312C                      ; $3181
-L_3184:
+        JMP apply_score                      ; $3181
+; Every frame. With $0104 clear, redraw the score. In play, copy $41 over
+; the top score at $4388 when the top is smaller, compared from the high
+; byte, and redraw both.
+refresh_top:
         LDA $0104                       ; $3184
         BEQ L_315A                      ; $3187
         LDA $CF7B                       ; $3189
@@ -5325,17 +5812,26 @@ L_32FD:
         BPL L_32F2                      ; $330A
         PLP                             ; $330C
         RTS                             ; $330D
-L_330E:
+; Keep A, X, and Y in $57-$59. take_lamp brackets claim_lamp with these.
+stash_axy:
         STA $57                         ; $330E
         STX $58                         ; $3310
         STY $59                         ; $3312
         RTS                             ; $3314
-L_3315:
+restore_axy:
         LDA $57                         ; $3315
         LDX $58                         ; $3317
         LDY $59                         ; $3319
         RTS                             ; $331B
-L_331C:
+; The room in $29 selects a list through $4CE2. A record is four bytes: a
+; flag (0 means taken, and the high bit means the end), the replacement tile
+; with its high bit set, the column, and the tile row. $5A is the column
+; under the scan and $5B is the tile row. A match stores 0 in the flag,
+; decrements the room's remaining count at $2A,X, and returns the replacement
+; with the high bit clear. Carry set means there was no match. Room 0's list
+; is at $4D0C: columns 31 and 38 of tile row 7, and columns 2, 25, 29, and
+; 38 of tile row 10. The mounts are $1F and $12.
+claim_lamp:
         LDX $51                         ; $331C
         LDA $E9,X                       ; $331E
         STA $5B                         ; $3320
@@ -5518,15 +6014,27 @@ L_407D:
 
 ; $4086  54 bytes of data between routines
 
-L_40BC:
+; Once per logic frame, from frame, before the overlap. $0101, $0102, and
+; $0103 each reload to a count from 1 to 15. The new row comes from
+; noise_byte. The display charset is at $A000.
+; $0101 writes glyph $93, bytes 2 and 3 ($A49A). That is the shadow of tile
+; $13. Noise masked with $30 is combined with $CC, so one dot cycles through
+; the four multicolor pairs. The same byte masked with $B8 goes to glyph $86.
+; $0102 does the $30/$CC write to glyph $B1 ($A58A), the shadow of tile $31.
+; $0103 masks with $0C, combines with $33, and stores glyph $94 ($A4A2), the
+; shadow of tile $14. Masked with $2E, that byte also goes to glyph $E7.
+; The $A800 copies ($AC9A, $AD8A, $ACA2) receive the mask by itself. This
+; room shows charset $A000, and its lamps are tiles $14 and $31, so those
+; two shapes flicker. Lamps of one shape share the glyph and change together.
+flicker_lamps:
         DEC $0101                       ; $40BC
         BNE L_40E6                      ; $40BF
 L_40C1:
-        JSR L_1159                      ; $40C1
+        JSR noise_byte                      ; $40C1
         AND #$0F                        ; $40C4
         BEQ L_40C1                      ; $40C6
         STA $0101                       ; $40C8
-        JSR L_1159                      ; $40CB
+        JSR noise_byte                      ; $40CB
         AND #$30                        ; $40CE
         STA $AC9A                       ; $40D0
         STA $AC9B                       ; $40D3
@@ -5540,11 +6048,11 @@ L_40E6:
         DEC $0102                       ; $40E6
         BNE L_4108                      ; $40E9
 L_40EB:
-        JSR L_1159                      ; $40EB
+        JSR noise_byte                      ; $40EB
         AND #$0F                        ; $40EE
         BEQ L_40EB                      ; $40F0
         STA $0102                       ; $40F2
-        JSR L_1159                      ; $40F5
+        JSR noise_byte                      ; $40F5
         AND #$30                        ; $40F8
         STA $AD8A                       ; $40FA
         STA $AD8B                       ; $40FD
@@ -5555,11 +6063,11 @@ L_4108:
         DEC $0103                       ; $4108
         BNE L_4132                      ; $410B
 L_410D:
-        JSR L_1159                      ; $410D
+        JSR noise_byte                      ; $410D
         AND #$0F                        ; $4110
         BEQ L_410D                      ; $4112
         STA $0103                       ; $4114
-        JSR L_1159                      ; $4117
+        JSR noise_byte                      ; $4117
         AND #$0C                        ; $411A
         STA $ACA2                       ; $411C
         STA $ACA3                       ; $411F
@@ -5646,7 +6154,188 @@ L_4890:
         PLA                             ; $4890
         RTS                             ; $4891
 
-; $4892  2121 bytes of data between routines
+; Double the packed glyphs. Four source bytes are written twice through ($06),
+; and the next four twice through ($08). The caller sets $F3 to the number of
+; groups minus one. Startup at $0480 calls this four times, expanding $9000
+; into the charsets at $A000, $A800, $B000, and $B800. A picture row occupies
+; two charset bytes because of this, which is why flicker_lamps stores its new
+; value into both bytes of the pair.
+expand_charset:
+        LDY #$00                        ; $4892
+        LDX #$03                        ; $4894
+L_4896:
+        LDA ($04),Y                     ; $4896
+        STA ($06),Y                     ; $4898
+        JSR L_478D                      ; $489A
+        STA ($06),Y                     ; $489D
+        JSR L_478D                      ; $489F
+        JSR L_4786                      ; $48A2
+        DEX                             ; $48A5
+        BPL L_4896                      ; $48A6
+        LDX #$03                        ; $48A8
+L_48AA:
+        LDA ($04),Y                     ; $48AA
+        STA ($08),Y                     ; $48AC
+        JSR L_4794                      ; $48AE
+        STA ($08),Y                     ; $48B1
+        JSR L_4794                      ; $48B3
+        JSR L_4786                      ; $48B6
+        DEX                             ; $48B9
+        BPL L_48AA                      ; $48BA
+        DEC $F3                         ; $48BC
+        BPL expand_charset              ; $48BE
+        RTS                             ; $48C0
+
+; In-game raster interrupt. arm_raster points here and compares against raster
+; $FB. This pass selects charset $8800 ($D018 = $32), which is the score font,
+; and arms raster $40. The room index in $29 picks two tables. $480B, room*2
+; is twelve color bytes, copied to $0153: four bands of $D021, $D022, $D023.
+; $4833, room*2 is the split list, and only its first four bytes are copied to
+; $47F5. Room 0's splits are $78, $97, and $FD. $FD ends the chain. irq_service
+; runs before the RTI, and that is the only pass that counts $48 down.
+raster_irq:
+        LDA #$32                        ; $48C1
+        STA $D018                       ; $48C3
+        LDA #$FC                        ; $48C6
+        STA $D021                       ; $48C8
+; The next interrupt is raster_open, at raster $40.
+        LDA #$1E                        ; $48CB
+        STA $0408                       ; $48CD
+        LDA #$49                        ; $48D0
+        STA $0409                       ; $48D2
+        LDA #$01                        ; $48D5
+        STA $D01A                       ; $48D7
+        STA $D019                       ; $48DA
+        LDA $D011                       ; $48DD
+        AND #$7F                        ; $48E0
+        STA $D011                       ; $48E2
+        LDA #$40                        ; $48E5
+        STA $D012                       ; $48E7
+        LDA $29                         ; $48EA
+        ASL A                           ; $48EC
+        TAX                             ; $48ED
+        LDA $480B,X                     ; $48EE
+        STA $0A                         ; $48F1
+        LDA $480C,X                     ; $48F3
+        STA $0B                         ; $48F6
+        LDA $4833,X                     ; $48F8
+        STA $0C                         ; $48FB
+        LDA $4834,X                     ; $48FD
+        STA $0D                         ; $4900
+        LDY #$0B                        ; $4902
+L_4904:
+        LDA ($0A),Y                     ; $4904
+        STA $0153,Y                     ; $4906
+        CPY #$04                        ; $4909
+        BCS L_4912                      ; $490B
+        LDA ($0C),Y                     ; $490D
+        STA $47F5,Y                     ; $490F
+L_4912:
+        DEY                             ; $4912
+        BPL L_4904                      ; $4913
+        JSR $15A8                       ; $4915
+        PLA                             ; $4918
+        TAY                             ; $4919
+        PLA                             ; $491A
+        TAX                             ; $491B
+        PLA                             ; $491C
+        RTI                             ; $491D
+
+; Raster $40, just above the picture. $F2 is restored to $D018. In this room
+; that is $38, charset $A000. The first band is then taken from $0153.
+raster_open:
+        LDA #$41                        ; $491E
+L_4920:
+        CMP $D012                       ; $4920
+        BCS L_4920                      ; $4923
+        LDX #$0A                        ; $4925
+L_4927:
+        DEX                             ; $4927
+        BNE L_4927                      ; $4928
+        LDA $F2                         ; $492A
+        STA $D018                       ; $492C
+        LDA $0153                       ; $492F
+        STA $D021                       ; $4932
+        LDA $0154                       ; $4935
+        STA $D022                       ; $4938
+        LDA $0155                       ; $493B
+        STA $D023                       ; $493E
+        LDA #$00                        ; $4941
+        STA $44                         ; $4943
+        LDA #$03                        ; $4945
+        STA $F4                         ; $4947
+; The splits after this one are raster_split.
+        LDA #$82                        ; $4949
+        STA $0408                       ; $494B
+        LDA #$49                        ; $494E
+        STA $0409                       ; $4950
+
+; Arm the next split from $47F5. A value of $FD points the vector back at
+; raster_irq instead of raster_split.
+raster_arm:
+        LDA #$01                        ; $4953
+        STA $D01A                       ; $4955
+        STA $D019                       ; $4958
+        LDA $D011                       ; $495B
+        AND #$7F                        ; $495E
+        STA $D011                       ; $4960
+        LDX $44                         ; $4963
+        LDA $47F5,X                     ; $4965
+        STA $D012                       ; $4968
+        CMP #$FD                        ; $496B
+        BEQ L_4975                      ; $496D
+L_496F:
+        PLA                             ; $496F
+        TAY                             ; $4970
+        PLA                             ; $4971
+        TAX                             ; $4972
+        PLA                             ; $4973
+        RTI                             ; $4974
+L_4975:
+; The split was $FD. Point the vector back at raster_irq.
+        LDA #$C1                        ; $4975
+        STA $0408                       ; $4977
+        LDA #$48                        ; $497A
+        STA $0409                       ; $497C
+        JMP L_496F                      ; $497F
+
+; A color split. Wait until the raster in the list, then store the next three
+; bytes as $D021, $D022, and $D023. $F4 starts at 3 and advances by 3, so the
+; bytes are band 2, then band 3, then band 4.
+raster_split:
+        LDX $F4                         ; $4982
+        LDY $0153,X                     ; $4984
+        LDX $44                         ; $4987
+        LDA $47F5,X                     ; $4989
+        TAX                             ; $498C
+        INX                             ; $498D
+        INX                             ; $498E
+        TXA                             ; $498F
+        INX                             ; $4990
+L_4991:
+        CPX $D012                       ; $4991
+        BEQ L_49A0                      ; $4994
+        CMP $D012                       ; $4996
+        BNE L_4991                      ; $4999
+        LDX #$0A                        ; $499B
+L_499D:
+        DEX                             ; $499D
+        BNE L_499D                      ; $499E
+L_49A0:
+        STY $D021                       ; $49A0
+        LDX $F4                         ; $49A3
+        LDA $0154,X                     ; $49A5
+        STA $D022                       ; $49A8
+        LDA $0155,X                     ; $49AB
+        STA $D023                       ; $49AE
+        LDA $F4                         ; $49B1
+        CLC                             ; $49B3
+        ADC #$03                        ; $49B4
+        STA $F4                         ; $49B6
+        INC $44                         ; $49B8
+        JMP raster_arm                  ; $49BA
+
+; $49BD  1822 bytes of data between routines
 
 ; Bit 4 of $D011 turns the screen on. Bit 7 stays clear, so the raster compare uses $D012
 ; alone.
@@ -5932,21 +6621,21 @@ L_53E6:
         BEQ L_5406                      ; $53FC
         EOR #$01                        ; $53FE
         STA $4F32                       ; $5400
-        JSR L_55E6                      ; $5403
+        JSR swap_column0                      ; $5403
 L_5406:
         LDA $4F33                       ; $5406
         CMP $4F36                       ; $5409
         BEQ L_5416                      ; $540C
         EOR #$01                        ; $540E
         STA $4F33                       ; $5410
-        JSR L_5658                      ; $5413
+        JSR swap_column1                      ; $5413
 L_5416:
         LDA $4F34                       ; $5416
         CMP $4F37                       ; $5419
         BEQ L_53D4                      ; $541C
         EOR #$01                        ; $541E
         STA $4F34                       ; $5420
-        JSR L_56CA                      ; $5423
+        JSR swap_column2                      ; $5423
         JMP L_53D4                      ; $5426
 L_5429:
         JSR flags_from_nibbles          ; $5429
@@ -5954,8 +6643,13 @@ L_5429:
         PLA                             ; $542D
         JMP L_52A4                      ; $542E
 
-; Turn the marked patterns into flags. A set slot means that pattern occurred on this scan.
-; The two big OR chains are the two groups of patterns the mover treats as solid.
+; Turn the marked patterns into flags. A set slot means that nibble occurred.
+; $4F3C rolls in as bit 0, ground: nibbles 1, 4, 5, 6, 7, 9, and 13.
+; $4F3D rolls in as bit 1, prize ink: nibbles 2, 6, 8, 9, and 10.
+; $4F3E rolls in as bit 2 and $4F3F as bit 3. Bit 3 is the wall, nibbles
+; 3, 7, and 11-15. swap_column0, swap_column1, and swap_column2 run when
+; that column's property is not 0, and they exchange the wall slots with
+; the ladder slots, so those nibbles become bit 2.
 flags_from_nibbles:
         LDA #$00                        ; $5431
         LDX #$04                        ; $5433
@@ -5966,17 +6660,17 @@ L_5435:
         LDA $4F32                       ; $543B
         BEQ L_5446                      ; $543E
         DEC $4F32                       ; $5440
-        JSR L_55E6                      ; $5443
+        JSR swap_column0                      ; $5443
 L_5446:
         LDA $4F33                       ; $5446
         BEQ L_5451                      ; $5449
         DEC $4F33                       ; $544B
-        JSR L_5658                      ; $544E
+        JSR swap_column1                      ; $544E
 L_5451:
         LDA $4F34                       ; $5451
         BEQ L_545C                      ; $5454
         DEC $4F34                       ; $5456
-        JSR L_56CA                      ; $5459
+        JSR swap_column2                      ; $5459
 L_545C:
         LDA $4EEE                       ; $545C
         ORA $4EF1                       ; $545F
@@ -6129,7 +6823,10 @@ L_55D7:
         RTS                             ; $55E2
 L_55E3:
         INC $4F32                       ; $55E3
-L_55E6:
+; This column's property is not 0. Trade its wall nibble slots for its
+; ladder slots, so bit 3 becomes bit 2. The other two columns are
+; swap_column1 and swap_column2.
+swap_column0:
         LDA $4EF0                       ; $55E6
         LDX $4EFD                       ; $55E9
         STX $4EF0                       ; $55EC
@@ -6166,7 +6863,7 @@ L_563D:
         RTS                             ; $5642
 L_5643:
         DEC $4F32                       ; $5643
-        JMP L_55E6                      ; $5646
+        JMP swap_column0                      ; $5646
 L_5649:
         LDA ($12),Y                     ; $5649
         AND #$07                        ; $564B
@@ -6176,7 +6873,7 @@ L_5649:
         RTS                             ; $5654
 L_5655:
         INC $4F33                       ; $5655
-L_5658:
+swap_column1:
         LDA $4F07                       ; $5658
         LDX $4F14                       ; $565B
         STX $4F07                       ; $565E
@@ -6213,7 +6910,7 @@ L_56AF:
         RTS                             ; $56B4
 L_56B5:
         DEC $4F33                       ; $56B5
-        JMP L_5658                      ; $56B8
+        JMP swap_column1                      ; $56B8
 L_56BB:
         LDA ($12),Y                     ; $56BB
         AND #$07                        ; $56BD
@@ -6223,7 +6920,7 @@ L_56BB:
         RTS                             ; $56C6
 L_56C7:
         INC $4F34                       ; $56C7
-L_56CA:
+swap_column2:
         LDA $4F1E                       ; $56CA
         LDX $4F2B                       ; $56CD
         STX $4F1E                       ; $56D0
@@ -6260,7 +6957,7 @@ L_5721:
         RTS                             ; $5726
 L_5727:
         DEC $4F34                       ; $5727
-        JMP L_56CA                      ; $572A
+        JMP swap_column2                      ; $572A
 
 ; $572D  35027 bytes of data between routines
 

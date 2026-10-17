@@ -4,6 +4,8 @@
 #include "game.h"
 #include "scene.h"
 
+#include <cstdio>
+
 namespace {
 
 bool SpritePixel(const uint8_t* frame, int x, int y) {
@@ -55,7 +57,9 @@ uint8_t StatusGlyph(char ch, int row) {
 }
 
 void DrawStatus() {
-    const char* text = "000000  TOP 000000  FALLS 04";
+    char text[40];
+    const int shown = g.score > 999999 ? 999999 : g.score;
+    std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS 04", shown);
     const int origin = 8 * 8;
     for (int i = 0; text[i] != '\0'; ++i) {
         for (int row = 0; row < 8; ++row) {

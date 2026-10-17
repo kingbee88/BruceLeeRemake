@@ -435,6 +435,130 @@ const uint8_t* PoseBytes(int pose, int plane) {
     return g.frames.data() + static_cast<size_t>(pose * 2 + plane) * kFrameBytes;
 }
 
+namespace {
+
+// Room 0's lamp list at $4D0C. Byte 0 stays set until the lamp is taken.
+// Byte 1, with the high bit off, is the tile that replaces it: the mount
+// stays and the hanger is gone. The column and the tile row are the cell
+// $2E6E was scanning.
+struct Lamp {
+    int col;
+    int row;
+    int tile;
+};
+
+constexpr Lamp kLamps[] = {
+    {31, 7, 0x1F},
+    {38, 7, 0x12},
+    {2, 10, 0x1F},
+    {25, 10, 0x1F},
+    {29, 10, 0x12},
+    {38, 10, 0x12},
+};
+
+int TileCharRow(int tileRow) {
+    // The row pointers step over the score rows, then advance two character
+    // rows per tile. Tile row 7 is character row 13. Tile row 10 is 19.
+    if (tileRow <= 1) {
+        return tileRow;
+    }
+    return 3 + (tileRow - 2) * 2;
+}
+
+void TakeLamp(int col, int tileRow) {
+    if (col < 0 || col >= 40 || tileRow < 2 || tileRow > 12) {
+        return;
+    }
+    const int top = TileCharRow(tileRow) * 40 + col;
+    const int tile = g.room[static_cast<size_t>(top)] & 0x7F;
+    if (tile != 0x13 && tile != 0x14 && tile != 0x31) {
+        return;
+    }
+    for (const Lamp& lamp : kLamps) {
+        if (lamp.col != col || lamp.row != tileRow) {
+            continue;
+        }
+        g.room[static_cast<size_t>(top)] = static_cast<uint8_t>(lamp.tile);
+        g.room[static_cast<size_t>(top + 40)] = static_cast<uint8_t>(lamp.tile);
+        if (g.score <= 999999 - 125) {
+            g.score += 125;
+        }
+        return;
+    }
+}
+
+// $40BC. Three counters, one per lamp shape. At zero the counter reloads
+// to 1..15 logic frames and two rows of that shape's shadow glyph are
+// replaced. The new byte keeps the mount and swaps one dot through the
+// four multicolor pairs, so every lamp of that shape flickers together.
+uint16_t lampNoise = 0xA5;
+int lamp13 = 1;
+int lamp31 = 1;
+int lamp14 = 1;
+
+uint8_t LampByte() {
+    lampNoise = static_cast<uint16_t>(lampNoise * 251 + 17);
+    return static_cast<uint8_t>(lampNoise ^ (lampNoise >> 8));
+}
+
+int LampDelay() {
+    int n = 0;
+    while (n == 0) {
+        n = LampByte() & 0x0F;
+    }
+    return n;
+}
+
+void PokeGlyph(int glyph, uint8_t value) {
+    const size_t i = static_cast<size_t>(glyph) * 8 + 2;
+    g.charset[i] = value;
+    g.charset[i + 1] = value;
+}
+
+void AnimateLamps() {
+    if (--lamp13 == 0) {
+        lamp13 = LampDelay();
+        const uint8_t bits = static_cast<uint8_t>(LampByte() & 0x30);
+        const uint8_t row = static_cast<uint8_t>(bits | 0xCC);
+        PokeGlyph(0x93, row);
+        PokeGlyph(0x86, static_cast<uint8_t>(row & 0xB8));
+    }
+    if (--lamp31 == 0) {
+        lamp31 = LampDelay();
+        PokeGlyph(0xB1, static_cast<uint8_t>((LampByte() & 0x30) | 0xCC));
+    }
+    if (--lamp14 == 0) {
+        lamp14 = LampDelay();
+        const uint8_t bits = static_cast<uint8_t>(LampByte() & 0x0C);
+        const uint8_t row = static_cast<uint8_t>(bits | 0x33);
+        PokeGlyph(0x94, row);
+        PokeGlyph(0xE7, static_cast<uint8_t>(row & 0x2E));
+    }
+}
+
+// $2E39. Bit 1 has to be set, then the cells from his column across two
+// more, on his tile row and the row below, are checked. A listed lamp is
+// swapped for the bare mount and $7D is added to the score.
+void CollectLamps() {
+    if (!ProbePose(g.pose, g.x, g.y).bit1) {
+        return;
+    }
+    const int xpos = (g.x + 24) / 2;
+    const int ypos = g.y + 21;
+    if (xpos < 0x0C || ypos < 0x0C) {
+        return;
+    }
+    const int col0 = (xpos - 0x0C) >> 2;
+    const int row0 = (ypos - 0x0C) >> 4;
+    for (int dr = 0; dr < 2; ++dr) {
+        for (int dc = 0; dc < 3; ++dc) {
+            TakeLamp(col0 + dc, row0 + dr);
+        }
+    }
+}
+
+}  // namespace
+
 void PlaceBruce() {
     // Just to the right of the lamp, feet on the red line at the bottom.
     g.x = 36;
@@ -450,6 +574,13 @@ void Tick() {
     const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
     const bool down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
     const bool fire = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+
+    // $40BC runs before the overlap, and a held pose still reaches it.
+    AnimateLamps();
+
+    // overlap_actors has already stored hit. Lamps are taken before the
+    // hold check, so a pose that is sitting still can still claim one.
+    CollectLamps();
 
     // $0106. The picture stays, and this frame does not read the stick.
     if (g.hold > 0) {

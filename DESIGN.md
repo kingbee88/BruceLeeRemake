@@ -21,6 +21,10 @@ A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g
 11. If that new picture sits inside a wall, he is pushed sideways until it does not.
 12. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
 
+Before the move, the overlap is tested for a lamp. Bit 1 of that test is nibble 2, the hanger, and the same bit on a floor. The cells looked at are his column and the two to the right, on his tile row and the row below. A cell tiled `$13`, `$14`, or `$31` that is in this room's lamp list is replaced with the bare mount (`$12` or `$1F` on both rows of the pair) and 125 is added to the score. The six lamps are columns 31 and 38 of tile row 7, and columns 2, 25, 29, and 38 of tile row 10.
+
+The lamp flicker is `$40BC`, once per logic frame, before that test. Three counters each reload to a count from 1 to 15. Tile `$31` rewrites rows 2 and 3 of shadow glyph `$B1`, and tile `$14` does the same to glyph `$94`. The new byte keeps the mount and moves one dot through the four multicolor pairs: background, `$D022`, `$D023`, and the ink. Every lamp that uses that tile changes on the same frame. The bare mount is a different glyph, so a taken lamp stays still. The same pass also writes glyphs `$93` and `$86`, and glyph `$E7`. This room does not show those three.
+
 `g.x` and `g.y` are the top-left of his sprite in screen pixels. The screen is 320 by 200. A character cell is 8 by 8 pixels, and there are 40 columns and 25 rows.
 
 ## Source files
@@ -91,7 +95,7 @@ The file is two halves of 1024 bytes:
 - Glyphs 0–127 are the primary half. Odd character rows use these.
 - Glyphs 128–255 are the shadow half. Even character rows use these.
 
-The room file stores a tile number without the extra 128. `PixelColor` and the collision test add 128 on even rows. Each half of a glyph is four source rows, and each of those rows is stored twice, which is the vertical doubling described above.
+The room file stores a tile number without the extra 128. `PixelColor` and the collision test add 128 on even rows. Each half of a glyph is four source rows, and each of those rows is stored twice, which is the vertical doubling described above. Rows 2 and 3 of glyphs `$93`, `$94`, `$B1`, `$86`, and `$E7` are rewritten each time a lamp timer elapses, so those bytes in memory drift away from the file.
 
 Pixels are multicolor. A byte holds four dots, two bits each, from the top of the byte:
 

@@ -34,6 +34,7 @@ struct Game {
     int repeat = 6;        // $CB. Counts down while the same state continues
     int prevState = 0;     // $C2. State at the start of the previous logic frame
     int fallSlide = 0;     // $B0. One sideways nudge on the second falling frame
+    int score = 0;         // $41..$43, a 24-bit count. A lamp adds 125.
 };
 
 extern Game g;

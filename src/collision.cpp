@@ -85,6 +85,11 @@ void AddPose(Contact& hit, int pose, int sx, int sy, int row0, int row1) {
                         hit.floor = true;
                     }
                 }
+                // $4F3D, rolled into $B6 as bit 1. $2E39 collects a lamp only
+                // while this bit is set. The hanger is nibble 2.
+                if (v == 2 || v == 6 || v == 8 || v == 9 || v == 10) {
+                    hit.bit1 = true;
+                }
             }
         }
     }
@@ -121,6 +126,12 @@ Contact ProbeFeet(int sx, int sy) {
 Contact ProbeUpper(int sx, int sy) {
     Contact hit;
     AddCurrent(hit, sx, sy, 0, kSpriteRows - 6);
+    return hit;
+}
+
+Contact ProbePose(int pose, int sx, int sy) {
+    Contact hit;
+    AddPose(hit, pose, sx, sy, 0, kSpriteRows);
     return hit;
 }
 

@@ -6,12 +6,14 @@
 // ladder: $B6 bit 2. Those same solid nibbles on any other property, including
 // the ladder rails and the black line of a property-6 roof. Up and down climb.
 // floor: bit 0 from a nibble that is not also bit 2.
+// bit1: $B6 bit 1. Nibbles 2, 6, 8, 9, and 10. The lamp hanger is nibble 2.
 // Either ground or ladder stops a fall. Statue ink sets neither.
 struct Contact {
     bool wall = false;
     bool ground = false;
     bool floor = false;
     bool ladder = false;
+    bool bit1 = false;
 };
 
 // Test the picture he would actually be showing at (sx, sy):
@@ -26,6 +28,10 @@ Contact ProbeFeet(int sx, int sy);
 // Rows above the feet. $A7 is this result: the scan saved before the bottom
 // six sprite rows. A fall nudges sideways when this still has ground.
 Contact ProbeUpper(int sx, int sy);
+
+// The overlap of one picture. Lamp checks use the pose already on screen,
+// which is the sprite overlap_actors tested.
+Contact ProbePose(int pose, int sx, int sy);
 
 // Wall flag for one pose, ignoring what the rest of the walk cycle does.
 // PlaceBruce and the end-of-frame shove use this on the picture just chosen.
