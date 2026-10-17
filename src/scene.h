@@ -1,7 +1,7 @@
 #pragma once
 
 // The three multicolor colors for this scanline: background, $D022, $D023.
-// Screen y 0 is raster 50. The colors change at raster $78 and $97.
+// Screen y 0 is raster 50. The splits and the colors come from the room.
 void BandAt(int py, int& bg, int& c01, int& c10);
 
 // Palette index of the room pixel at (x, y). -1 means "draw the background":

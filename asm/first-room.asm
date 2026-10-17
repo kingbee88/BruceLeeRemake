@@ -69,6 +69,8 @@
 ;   silence_sid       clear the SID and the three effect slots
 
 ; Cold start. The screen is turned off until the room is ready.
+; The charset expand at $047A runs before this. It is listed in rooms.asm,
+; along with the per-room pointers this file's enter_room walks.
 start:
         SEI                             ; $050F
         CLD                             ; $0510
@@ -750,6 +752,9 @@ L_0A93:
         STA $0153,Y                     ; $0A95
         DEY                             ; $0A98
         BPL L_0A93                      ; $0A99
+        ; $D018 follows the room. Below $0A the value is $38, charset $A000.
+        ; Room $12 is $3C, charset $B000. Every other room is $3A, charset
+        ; $A800. $B800 is expanded at startup and never selected here.
         LDA #$38                        ; $0A9B
         LDX $29                         ; $0A9D
         CPX #$0A                        ; $0A9F
@@ -781,6 +786,15 @@ L_0AAD:
         LDA #$27                        ; $0AD1
         STA $F3                         ; $0AD3
         LDY #$00                        ; $0AD5
+; One command byte, then its payload. A byte below $80 is a run: the next
+; source byte is written that many times, and a count of 0 writes 256 because
+; the loop is DEX/BNE. A byte at or above $80 is a literal: the low seven bits
+; are the count, $80 ends the stream, and each following source byte is one
+; tile. A payload byte with bit 7 set stores color $F8 on both color rows and
+; the tile is the low seven bits. Otherwise the color stays the room fill
+; from $47A0,X, which was written across $D878 before this loop. Rooms 4, 7,
+; 10, 13, 17, and 18 emit 442 cells. The screen holds 1000, so the last two
+; land past it and are not part of the picture.
 L_0AD7:
         LDA ($06),Y                     ; $0AD7
         BPL L_0B07                      ; $0AD9
@@ -2806,6 +2820,8 @@ wait_for_tick:
         BNE wait_for_tick                      ; $1C34
         JMP frame                      ; $1C36
 ; xpos and ypos of actor X, shifted down to a character cell in $E6,X and $E9,X.
+; Room $0D adds 4 to ypos before the row shift only. The edge test at $30D4
+; still sees the real ypos. scan_specials uses this same pair of cells.
 cell_of_actor:
         LDA xpos,X                      ; $1C39
         SEC                             ; $1C3B
@@ -5252,6 +5268,13 @@ L_2E7C:
         DEC $4C                         ; $2E84
         BPL L_2E7C                      ; $2E86
         RTS                             ; $2E88
+; Tiles 2, 3, 4, and 5 are the four exit slots. The destination room, xpos,
+; and ypos are the parallel tables at $4B5E/$4BFE/$4C12, then $4B72/$4C26/
+; $4C3A, $4B86/$4C4E/$4C62, and $4B9A/$4C76/$4C8A. Tiles 2, 3, and 4 fall
+; through to the next slot when that slot's xpos byte is 0. Tile 5 does not
+; test xpos. The whole table is in rooms.asm. A slot whose xpos is 0 is the
+; unused marker, including the tile 4 and tile 5 records in room 18, which
+; are drawn as part of the boss and are not doors.
 match_special:
         CMP #$05                        ; $2E89
         BNE L_2E90                      ; $2E8B
@@ -5579,6 +5602,11 @@ L_30CC:
         SBC #$4C                        ; $30CF
         STA $05                         ; $30D1
         RTS                             ; $30D3
+; Carry clear means the exit is allowed. Room $0B always is. Otherwise the
+; actor has to be leaving through the edge he is standing on: xpos below $10
+; with $4F5D set, xpos above $A1 with $4F60 set, ypos above $C5 while the
+; state is $0E, or ypos below $31 with $4F57 set. $4F5A, the down counter,
+; is not read here.
 L_30D4:
         LDA $29                         ; $30D4
         CMP #$0B                        ; $30D6
@@ -5828,9 +5856,11 @@ restore_axy:
 ; with its high bit set, the column, and the tile row. $5A is the column
 ; under the scan and $5B is the tile row. A match stores 0 in the flag,
 ; decrements the room's remaining count at $2A,X, and returns the replacement
-; with the high bit clear. Carry set means there was no match. Room 0's list
-; is at $4D0C: columns 31 and 38 of tile row 7, and columns 2, 25, 29, and
-; 38 of tile row 10. The mounts are $1F and $12.
+; with the high bit clear. Carry set means there was no match. The remaining
+; counts copied to $2A are the twenty bytes at $4CCE. Rooms 13 and 19 have a
+; dummy record whose column and row are 0. Room 0's list is at $4D0C: columns
+; 31 and 38 of tile row 7, and columns 2, 25, 29, and 38 of tile row 10. The
+; mounts are $1F and $12. The other lists are in rooms.asm.
 claim_lamp:
         LDX $51                         ; $331C
         LDA $E9,X                       ; $331E
@@ -6023,9 +6053,11 @@ L_407D:
 ; $0102 does the $30/$CC write to glyph $B1 ($A58A), the shadow of tile $31.
 ; $0103 masks with $0C, combines with $33, and stores glyph $94 ($A4A2), the
 ; shadow of tile $14. Masked with $2E, that byte also goes to glyph $E7.
-; The $A800 copies ($AC9A, $AD8A, $ACA2) receive the mask by itself. This
-; room shows charset $A000, and its lamps are tiles $14 and $31, so those
-; two shapes flicker. Lamps of one shape share the glyph and change together.
+; The $A800 copies ($AC9A, $AD8A, $ACA2) receive the mask by itself, and
+; glyphs $86 and $E7 are not written there. Charset $B000, selected for room
+; $12, is not written, so those lamps stay still. This snapshot's room shows
+; charset $A000, and its lamps are tiles $14 and $31, so those two shapes
+; flicker. Lamps of one shape share the glyph and change together.
 flicker_lamps:
         DEC $0101                       ; $40BC
         BNE L_40E6                      ; $40BF
@@ -6156,10 +6188,10 @@ L_4890:
 
 ; Double the packed glyphs. Four source bytes are written twice through ($06),
 ; and the next four twice through ($08). The caller sets $F3 to the number of
-; groups minus one. Startup at $0480 calls this four times, expanding $9000
-; into the charsets at $A000, $A800, $B000, and $B800. A picture row occupies
-; two charset bytes because of this, which is why flicker_lamps stores its new
-; value into both bytes of the pair.
+; groups minus one. Startup at $047A calls this four times. The setups and
+; the fact that $9000 is later overwritten are in rooms.asm. A picture row
+; occupies two charset bytes because of this, which is why flicker_lamps
+; stores its new value into both bytes of the pair.
 expand_charset:
         LDY #$00                        ; $4892
         LDX #$03                        ; $4894
@@ -6191,7 +6223,10 @@ L_48AA:
 ; and arms raster $40. The room index in $29 picks two tables. $480B, room*2
 ; is twelve color bytes, copied to $0153: four bands of $D021, $D022, $D023.
 ; $4833, room*2 is the split list, and only its first four bytes are copied to
-; $47F5. Room 0's splits are $78, $97, and $FD. $FD ends the chain. irq_service
+; $47F5. Room 0's splits are $78, $97, and $FD. $FD ends the chain. Several
+; rooms share one list; the pointers are in rooms.asm. Each color byte is
+; stored with a high nibble of $F, and the VIC uses the low nibble.
+; irq_service
 ; runs before the RTI, and that is the only pass that counts $48 down.
 raster_irq:
         LDA #$32                        ; $48C1

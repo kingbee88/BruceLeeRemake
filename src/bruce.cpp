@@ -7,6 +7,7 @@
 #include "collision.h"
 #include "draw.h"
 #include "game.h"
+#include "room.h"
 
 int StandPose() {
     return g.facing < 0 ? 1 : 0;
@@ -63,6 +64,24 @@ void SetState(int state, int timer) {
     g.hold = HoldFor(state);
 }
 
+// Steps since the last check at $2E39. move_left increments $4F5D,
+// move_right increments $4F60, and move_up increments $4F57. $30D4
+// reads those when it decides an exit is open.
+bool wentLeft = false;
+bool wentRight = false;
+bool wentUp = false;
+
+void StandStill() {
+    g.action = 0;
+    g.actionTimer = 0;
+    g.hold = 0;
+    g.repeat = 6;
+    g.prevState = 0;
+    g.fallSlide = 0;
+    g.tick = 0;
+    g.pose = StandPose();
+}
+
 void Land() {
     SetState(0, 0);
 }
@@ -76,11 +95,13 @@ bool TryStep(int dir) {
             return false;
         }
         g.x -= 2;
+        wentLeft = true;
     } else {
         if (g.x >= kMaxX || Probe(g.x + 2, g.y).wall) {
             return false;
         }
         g.x += 2;
+        wentRight = true;
     }
     return true;
 }
@@ -91,6 +112,7 @@ void Rise(int pixels) {
             return;
         }
         g.y -= 1;
+        wentUp = true;
     }
 }
 
@@ -300,6 +322,11 @@ void Walk(int dir, bool fire) {
         const int next = g.x + dir * 2;
         if (!Probe(next, g.y).wall) {
             g.x = next;
+            if (dir < 0) {
+                wentLeft = true;
+            } else {
+                wentRight = true;
+            }
         }
         g.facing = dir;
         SetState(walk, 0);
@@ -330,6 +357,7 @@ void Climb(int dir) {
                 continue;
             }
             g.y -= 1;
+            wentUp = true;
             SetState(kClimbUp, 0);
         } else {
             if (g.y >= kMaxY) {
@@ -437,53 +465,18 @@ const uint8_t* PoseBytes(int pose, int plane) {
 
 namespace {
 
-// Room 0's lamp list at $4D0C. Byte 0 stays set until the lamp is taken.
-// Byte 1, with the high bit off, is the tile that replaces it: the mount
-// stays and the hanger is gone. The column and the tile row are the cell
-// $2E6E was scanning.
-struct Lamp {
-    int col;
-    int row;
-    int tile;
-};
-
-constexpr Lamp kLamps[] = {
-    {31, 7, 0x1F},
-    {38, 7, 0x12},
-    {2, 10, 0x1F},
-    {25, 10, 0x1F},
-    {29, 10, 0x12},
-    {38, 10, 0x12},
-};
-
-int TileCharRow(int tileRow) {
-    // The row pointers step over the score rows, then advance two character
-    // rows per tile. Tile row 7 is character row 13. Tile row 10 is 19.
-    if (tileRow <= 1) {
-        return tileRow;
-    }
-    return 3 + (tileRow - 2) * 2;
-}
-
 void TakeLamp(int col, int tileRow) {
-    if (col < 0 || col >= 40 || tileRow < 2 || tileRow > 12) {
-        return;
-    }
-    const int top = TileCharRow(tileRow) * 40 + col;
-    const int tile = g.room[static_cast<size_t>(top)] & 0x7F;
+    const int tile = TileAt(col, tileRow);
     if (tile != 0x13 && tile != 0x14 && tile != 0x31) {
         return;
     }
-    for (const Lamp& lamp : kLamps) {
-        if (lamp.col != col || lamp.row != tileRow) {
-            continue;
-        }
-        g.room[static_cast<size_t>(top)] = static_cast<uint8_t>(lamp.tile);
-        g.room[static_cast<size_t>(top + 40)] = static_cast<uint8_t>(lamp.tile);
-        if (g.score <= 999999 - 125) {
-            g.score += 125;
-        }
+    int mount = 0;
+    if (!ClaimLamp(col, tileRow, mount)) {
         return;
+    }
+    ReplaceLamp(col, tileRow, mount);
+    if (g.score <= 999999 - 125) {
+        g.score += 125;
     }
 }
 
@@ -516,53 +509,92 @@ void PokeGlyph(int glyph, uint8_t value) {
 }
 
 void AnimateLamps() {
+    // Charset $A000 keeps the mount and moves one dot. Charset $A800 stores
+    // the mask on its own. Charset $B000, room 18, is not written here.
     if (--lamp13 == 0) {
         lamp13 = LampDelay();
         const uint8_t bits = static_cast<uint8_t>(LampByte() & 0x30);
-        const uint8_t row = static_cast<uint8_t>(bits | 0xCC);
-        PokeGlyph(0x93, row);
-        PokeGlyph(0x86, static_cast<uint8_t>(row & 0xB8));
+        if (g.charsetId == 0) {
+            const uint8_t row = static_cast<uint8_t>(bits | 0xCC);
+            PokeGlyph(0x93, row);
+            PokeGlyph(0x86, static_cast<uint8_t>(row & 0xB8));
+        } else if (g.charsetId == 1) {
+            PokeGlyph(0x93, bits);
+        }
     }
     if (--lamp31 == 0) {
         lamp31 = LampDelay();
-        PokeGlyph(0xB1, static_cast<uint8_t>((LampByte() & 0x30) | 0xCC));
+        const uint8_t bits = static_cast<uint8_t>(LampByte() & 0x30);
+        if (g.charsetId == 0) {
+            PokeGlyph(0xB1, static_cast<uint8_t>(bits | 0xCC));
+        } else if (g.charsetId == 1) {
+            PokeGlyph(0xB1, bits);
+        }
     }
     if (--lamp14 == 0) {
         lamp14 = LampDelay();
         const uint8_t bits = static_cast<uint8_t>(LampByte() & 0x0C);
-        const uint8_t row = static_cast<uint8_t>(bits | 0x33);
-        PokeGlyph(0x94, row);
-        PokeGlyph(0xE7, static_cast<uint8_t>(row & 0x2E));
+        if (g.charsetId == 0) {
+            const uint8_t row = static_cast<uint8_t>(bits | 0x33);
+            PokeGlyph(0x94, row);
+            PokeGlyph(0xE7, static_cast<uint8_t>(row & 0x2E));
+        } else if (g.charsetId == 1) {
+            PokeGlyph(0x94, bits);
+        }
     }
 }
 
-// $2E39. Bit 1 has to be set, then the cells from his column across two
-// more, on his tile row and the row below, are checked. A listed lamp is
-// swapped for the bare mount and $7D is added to the score.
-void CollectLamps() {
-    if (!ProbePose(g.pose, g.x, g.y).bit1) {
-        return;
-    }
+// $2E39. The cells from his column across two more, on his tile row and the
+// row below, are checked. Tiles 2-5 are the exits and are tested either way.
+// A lamp needs bit 1. Room 13 adds 4 to ypos before the row is chosen.
+// True means an exit fired and the caller should not move him this frame.
+bool ScanSpecials() {
     const int xpos = (g.x + 24) / 2;
     const int ypos = g.y + 21;
-    if (xpos < 0x0C || ypos < 0x0C) {
-        return;
+    if (xpos < 0x0C) {
+        return false;
+    }
+    int rowY = ypos;
+    if (g.roomId == 0x0D) {
+        rowY += 4;
+    }
+    if (rowY < 0x0C) {
+        return false;
     }
     const int col0 = (xpos - 0x0C) >> 2;
-    const int row0 = (ypos - 0x0C) >> 4;
+    const int row0 = (rowY - 0x0C) >> 4;
+    const bool prize = ProbePose(g.pose, g.x, g.y).bit1;
+    const bool falling = g.action == kFall;
     for (int dr = 0; dr < 2; ++dr) {
         for (int dc = 0; dc < 3; ++dc) {
-            TakeLamp(col0 + dc, row0 + dr);
+            const int col = col0 + dc;
+            const int row = row0 + dr;
+            const int tile = TileAt(col, row);
+            if (tile >= 2 && tile <= 5) {
+                if (TakeExit(tile, xpos, ypos, wentLeft, wentRight, wentUp, falling)) {
+                    return true;
+                }
+            }
+            if (prize) {
+                TakeLamp(col, row);
+            }
         }
     }
+    return false;
 }
 
 }  // namespace
 
 void PlaceBruce() {
-    // Just to the right of the lamp, feet on the red line at the bottom.
-    g.x = 36;
-    g.y = 194 - kSpriteRows;
+    // wake_actor, with $0104 clear, copies $4BAE and $4BC2. Facing starts
+    // at 1. The lift is only there for a stand picture that is already
+    // inside a wall.
+    RoomSpawn(g.roomId, g.x, g.y);
+    g.facing = 1;
+    StandStill();
+    wentLeft = false;
+    wentRight = false;
+    wentUp = false;
     for (int n = 0; n < 48 && PoseWall(g.pose, g.x, g.y); ++n) {
         g.y -= 1;
     }
@@ -578,9 +610,18 @@ void Tick() {
     // $40BC runs before the overlap, and a held pose still reaches it.
     AnimateLamps();
 
-    // overlap_actors has already stored hit. Lamps are taken before the
-    // hold check, so a pose that is sitting still can still claim one.
-    CollectLamps();
+    // scan_specials runs before the hold check, so a pose that is sitting
+    // still can still claim a lamp or take an exit. The step flags are the
+    // ones left by the previous frame. A hold keeps them, the way $1C62
+    // returns before $1C8F clears the counters.
+    if (ScanSpecials()) {
+        wentLeft = false;
+        wentRight = false;
+        wentUp = false;
+        StandStill();
+        Compose();
+        return;
+    }
 
     // $0106. The picture stays, and this frame does not read the stick.
     if (g.hold > 0) {
@@ -588,6 +629,9 @@ void Tick() {
         Compose();
         return;
     }
+    wentLeft = false;
+    wentRight = false;
+    wentUp = false;
 
     // $CB counts down only on a frame that actually runs, and only while the
     // state is the same one $C2 remembered. A fresh state reloads 6. Walking
@@ -638,6 +682,11 @@ void Tick() {
             } else if (!PoseWall(g.pose, start - prefer * i, g.y)) {
                 g.x = start - prefer * i;
             }
+        }
+        if (g.x < start) {
+            wentLeft = true;
+        } else if (g.x > start) {
+            wentRight = true;
         }
     }
     Compose();

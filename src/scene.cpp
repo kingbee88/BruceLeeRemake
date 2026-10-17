@@ -3,22 +3,24 @@
 #include "game.h"
 
 void BandAt(int py, int& bg, int& c01, int& c10) {
+    // raster_split stores the next three bytes when the raster reaches the
+    // value in $47F5. $FD points the chain back at the top of the screen.
     const int raster = py + 50;
-    if (raster < 0x78) {
-        bg = 0x0B;
-        c01 = 0x01;
-        c10 = 0x0E;
-        return;
+    int band = 0;
+    for (int i = 0; i < 3; ++i) {
+        const int split = g.splits[i];
+        if (split == 0xFD) {
+            break;
+        }
+        if (raster >= split) {
+            band = i + 1;
+        } else {
+            break;
+        }
     }
-    if (raster < 0x97) {
-        bg = 0x0B;
-        c01 = 0x02;
-        c10 = 0x01;
-        return;
-    }
-    bg = 0x0C;
-    c01 = 0x02;
-    c10 = 0x01;
+    bg = g.bands[band * 3];
+    c01 = g.bands[band * 3 + 1];
+    c10 = g.bands[band * 3 + 2];
 }
 
 int PixelColor(int x, int y) {

@@ -9,6 +9,9 @@
 #include "draw.h"
 #include "game.h"
 #include "load.h"
+#include "room.h"
+
+#include <cwchar>
 
 #pragma comment(lib, "d2d1.lib")
 
@@ -118,14 +121,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     LoadConfig(commandLine);
-    // The room files are described in DESIGN.md. title.bin is loaded when
-    // ShowTitleScreen is on.
-    g.charset = LoadFile(L"charset.bin", 2048);
-    g.room = LoadFile(L"room0.bin", 1000);
-    g.color = LoadFile(L"room0.col", 1000);
+    // StartRoom is the room the player sees, counting from 1. $29 is one less.
+    int start = gConfig.startRoom;
+    if (start < 1) {
+        start = 1;
+    }
+    if (start > kRoomCount) {
+        start = kRoomCount;
+    }
     g.frames = LoadFile(L"bruce.bin", static_cast<size_t>(kFrames * 2 * kFrameBytes));
-    if (g.charset.empty() || g.room.empty() || g.color.empty() || g.frames.empty()) {
-        MessageBoxW(nullptr, L"Could not read data\\charset.bin, room0.bin, room0.col, and bruce.bin.",
+    if (g.frames.empty() || !EnterRoom(start - 1)) {
+        MessageBoxW(nullptr, L"Could not read data\\bruce.bin and the room files.",
                     L"Bruce Lee", MB_ICONERROR);
         return 1;
     }
@@ -171,6 +177,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
 
     MSG msg{};
     bool running = true;
+    int shownRoom = -1;
     while (running) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
@@ -182,6 +189,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         }
         if (!running) {
             break;
+        }
+        if (!gInTitle && g.roomId != shownRoom) {
+            shownRoom = g.roomId;
+            wchar_t title[40];
+            swprintf_s(title, L"Bruce Lee - room %d", g.roomId + 1);
+            SetWindowTextW(hwnd, title);
         }
         if (gInTitle) {
             const bool space = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;

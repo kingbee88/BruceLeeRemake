@@ -53,8 +53,8 @@ int PlaneShift(int pose, int plane);
 // the black detail. Each plane is 21 rows of 4 bytes.
 const uint8_t* PoseBytes(int pose, int plane);
 
-// Stand him on the floor just to the right of the lamp. Lifts him if that
-// stand picture is already inside a wall.
+// Stand him where this room starts. Facing is to the right. Lifts him if
+// that stand picture is already inside a wall.
 void PlaceBruce();
 
 // One original logic frame. The window waits 60ms between calls, which is

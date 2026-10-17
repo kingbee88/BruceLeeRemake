@@ -1,8 +1,8 @@
 #pragma once
 
 // Settings from config.ini, with the command line applied on top.
-// showTitleScreen is the one the game acts on. The others are stored so a
-// later change can use the same names.
+// showTitleScreen and startRoom are the ones the game acts on. The others
+// are stored so a later change can use the same names.
 struct Config {
     bool infiniteLives = false;
     bool enemiesCantHitYou = false;
