@@ -2,18 +2,22 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. Arrow keys move Bruce. Up jumps, and on a ladder up and down climb. Space punches while he is standing and flying-kicks while he is moving. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
 
 ## How a frame runs
 
 1. `main.cpp` loads the four playable data files into `g` and calls `PlaceBruce`, which stands him on the floor to the right of the lamp.
-2. Each frame, `Tick` reads the arrow keys.
-3. Left and right change `g.facing` and try a two-pixel step. The step is kept when `Probe` does not report a wall.
-4. Up on its own, while he is on the ground and the key was not already held, starts the standing jump (state `$05`). He rises 4 pixels, then 2 pixels on each of the next four counts, and comes back down 2 pixels on each of six counts. The top of the hop is 12 pixels. Up while left or right is held starts the sideways jump (states `$06` and `$07`): 4 pixels sideways every count, rising 11 pixels, then dropping.
-5. Space while left or right is held starts the flying kick (states `$0C` and `$0D`). He hops 3 pixels, travels flat, then drops. Space with neither direction held is the punch (state `$11`), a short picture with no step. On a ladder, up climbs (state `$01`) and down climbs (state `$02`): 3 pixels, then the picture holds for 3 frames, alternating the two climb drawings. Moving down stops on a floor or a wall. Moving up stops only on a wall, so he can leave the floor. The ladder itself does not stop a climb.
-6. The picture is then chosen. The standing jump counts down from 15 the way state `$05` does: legs together, then the tuck, then the arms-out jump. The sideways jump counts down from 15 the way states `$06` and `$07` do, tucked at the ends and the leg extended in between. The flying kick counts down from 12 the way states `$0C` and `$0D` do. Otherwise a walk pose while a direction is held, or a stand pose. Walking off a ledge uses the legs-together picture.
-7. If that new picture sits inside a wall, he is pushed sideways until it does not.
-8. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
+2. Each logic frame, `Tick` reads the arrow keys and space. Opposite directions cancel. Space is read as a level, so holding it repeats once the move allows it.
+3. If the pose hold is running, it counts down and the stick is not read. Climb holds for 3 logic frames. Duck holds for 1. Every other Bruce move holds for 0.
+4. Otherwise the repeat count reloads to 6 when the state is idle or has just changed, and counts down while the same state continues. Left or right walks two xpos steps (4 screen pixels) until that count reaches 0, then three steps (6 pixels). The two stride pictures alternate every logic frame. The screen edge clears the walk. A wall refuses the step and leaves the walk in place.
+5. Up on a floor, with no ladder and no wall in the overlap, starts the standing jump (state `$05`, timer 15). That frame does not move. Three counts stay still, one count rises 4 pixels, four counts rise 2, six counts drop 2, and the last count stays still. The top of the hop is 12 pixels. A ladder overlap cancels the jump. A wall overlap refuses to start it. Up with left or right starts the sideways jump (states `$06` and `$07`, timer 15): 4 screen pixels sideways on each of the 15 counts, rising 11 pixels and then dropping 11. On a ladder that stick clears the state.
+6. Space during a walk, once the repeat count is below 4, starts the flying kick (states `$0C` and `$0D`, timer 12) instead of the next step. The kick waits until the following logic frame to move. It then rises 1 pixel on each of three counts, travels flat for seven, and drops 1 on each of the last two. Every one of those 12 counts also steps 2 screen pixels. A ladder or a wall cancels it. If he is still in the air when the timer ends, he falls. Space with no direction, and no ladder, is the punch (state `$11`): 4 logic frames of the punch picture, then 4 frames of standing while the stick is ignored. Up with space jumps. Down with space ducks.
+7. Down on a floor ducks (state `$1A`). Down-left and down-right turn him to face that way, except at the far screen edge. He does not walk while the duck is held. On a ladder, down climbs and a diagonal clears the state.
+8. Up or down on a ladder climbs 3 pixels, or 4 once the repeat count has run out, then holds for 3 logic frames. The two climb pictures alternate while he climbs or walks across a ladder. Standing on a ladder keeps the climb picture already showing. Only an overlap counts: he does not reach below his feet. The screen edge is the only thing that cuts a burst short.
+9. With neither ground nor a ladder under him, the first airborne frame drops 1 pixel. Later falling frames drop 2. The second falling frame also steps one xpos toward the way he faces when his torso is still on a ledge. The next frame lands him if his feet overlap ground or a ladder, so he rests in the first ground pixels. Open air shows the arms-out jump. Overlapping a wall shows the legs together.
+10. The picture is chosen after the step, from the overlap taken before it. The standing jump, sideways jump, and flying kick follow the timers above. A fresh move shows its first picture on the frame it starts, and moves on the frame after.
+11. If that new picture sits inside a wall, he is pushed sideways until it does not.
+12. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
 
 `g.x` and `g.y` are the top-left of his sprite in screen pixels. The screen is 320 by 200. A character cell is 8 by 8 pixels, and there are 40 columns and 25 rows.
 
@@ -120,13 +124,13 @@ The low three bits are the collision property. Bit 3 turns multicolor on. The va
 | Byte | Property (`byte & 7`) | Drawn ink | What collision does with a solid pattern |
 | --- | --- | --- | --- |
 | `$08` | 0 | black | wall. A walk or a jump into it is rejected |
-| `$0E` | 6 | blue | floor only. It stops a fall and does not stop a walk |
+| `$0E` | 6 | blue | floor or climb, from the nibble. It does not stop a walk |
 
 The drawn ink is the low three bits. `$08` is black and `$0E` is light blue.
 
-### `data/bruce.bin` — 3528 bytes
+### `data/bruce.bin` — 3864 bytes
 
-Twenty-one poses. Each pose is two planes, and each plane is 21 rows of 4 bytes (32 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
+Twenty-three poses. Each pose is two planes, and each plane is 21 rows of 4 bytes (32 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
 
 The walk and the standing jump use one source byte per row (library mode 0). After the VIC doubles it, the ink is 16 pixels and the other 16 in the row are empty. The punch, and the black plane of each extended flying kick, use two source bytes per row (mode 1), so the ink can reach all 32 pixels.
 
@@ -143,9 +147,9 @@ row byte = offset + y * 4 + (x / 8)
 | 1 | stand, facing left |
 | 2, 3 | walk left, the two strides |
 | 4, 5 | walk right, the two strides |
-| 6 | legs together: the fall, and jump count 15 |
+| 6 | legs together: a fall that overlaps a wall, and jump count 15 |
 | 7 | jump tuck, counts 12–14 and 1 |
-| 8 | jump, arms out, counts 2–11 |
+| 8 | jump, arms out, counts 2–11. Also a fall in open air |
 | 9, 10 | sideways jump left, tucked then extended |
 | 11, 12 | sideways jump right, tucked then extended |
 | 13 | punch left |
@@ -153,12 +157,14 @@ row byte = offset + y * 4 + (x / 8)
 | 15, 16 | flying kick left, tucked then extended |
 | 17, 18 | flying kick right, tucked then extended |
 | 19, 20 | climb, the two steps |
+| 21 | duck, facing left |
+| 22 | duck, facing right |
 
-`g.tick / 6` alternates the two strides. While he is walking, both strides are tested, so the wider one cannot step into a wall that the next stride could not leave. In the air, and during a punch or a kick, the test uses the picture chosen for this frame.
+The two strides alternate every logic frame. While he is walking, both strides are tested, so the wider one cannot step into a wall that the next stride could not leave. Every other state uses the picture already chosen.
 
-Punch left is drawn 16 pixels left of `g.x`. The black plane of flying kick left, extended, is shifted the same way. That is the original adjustment of `$9E` by -8, so the torso stays where the stand picture was and the fist or the leg reaches past it.
+Punch left is drawn 16 pixels left of `g.x`. The black plane of flying kick left, extended, and the black plane of the right-facing duck, are shifted the same way. That is the original adjustment of `$9E` by -8, so the torso stays where the stand picture was and the fist, the leg, or the duck's detail hangs off that side.
 
-These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9, `$1E`/`$1F`, `$20`/`$21`, `$22`/`$23`, `$24`/`$25`, `$26`/`$27`, `$28`/`$29`, 5/4, 7/6, `$16`/`$17`, `$18`/`$19`, `$1A`/`$1B`, `$1C`/`$1D`, `$0A`/`$0B`, `$0C`/`$0D`. The first of each pair is the yellow plane and the second is the black detail, except the punch: libraries 4 and 6 are black (`$F0`) and 5 and 7 are yellow (`$F7`), so those pairs are stored yellow first. Library 8 is the fall. The jump the player sees for most of the arc is library `$20`. The sideways jump is libraries `$22`–`$29`. The punch is libraries 4–7. The flying kick is libraries `$16`–`$1D`. The climb is libraries `$0A`–`$0D`.
+These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9, `$1E`/`$1F`, `$20`/`$21`, `$22`/`$23`, `$24`/`$25`, `$26`/`$27`, `$28`/`$29`, 5/4, 7/6, `$16`/`$17`, `$18`/`$19`, `$1A`/`$1B`, `$1C`/`$1D`, `$0A`/`$0B`, `$0C`/`$0D`, `$40`/`$41`, `$42`/`$43`. The first of each pair is the yellow plane and the second is the black detail, except the punch: libraries 4 and 6 are black (`$F0`) and 5 and 7 are yellow (`$F7`), so those pairs are stored yellow first. Library 8 is the legs-together picture. The jump the player sees for most of the arc is library `$20`. The sideways jump is libraries `$22`–`$29`. The punch is libraries 4–7. The flying kick is libraries `$16`–`$1D`. The climb is libraries `$0A`–`$0D`. The duck is libraries `$40`–`$43`.
 
 ### `data/title.bin` — 8000 bytes
 
@@ -175,19 +181,21 @@ A set bit is ink. This file has no color bytes. The current room does not load i
 
 `Probe` is the test the original runs before it will keep a move. It ORs the yellow and black planes into one mask, then ANDs that mask with the character bytes underneath. Each AND byte is split into two 4-bit values.
 
-`$5592` rolls `$4F3F` in first, so that counter is bit 3 and `$4F3C` is bit 0. `$1DCA` keeps him from falling when bit 0 or bit 2 is set (`and #$05`). Bit 0 is the don't-fall test used here. Bit 3 is the push-out at `$1CC7`. On this screen a push-out nibble is a wall on property 0. The ladder cap is property 6, so a climb passes through it instead of stopping inside the black line.
+`$5592` rolls `$4F3F` in first, so that counter is bit 3 and `$4F3C` is bit 0. `$1DCA` keeps him from falling when bit 0 or bit 2 is set (`and #$05`). Bit 3 is the push-out at `$1CC7`. A wall does not hold him up.
 
-| AND nibble | `$B6` | Result |
+Bit 0 is the same nibbles on every property. The solid nibbles are bit 3 on property 0 and bit 2 on any other property. The swap is `$55E6`, `$5658`, and `$56CA`. Bit 2 is a climb. Up and down on that overlap climb, including where bit 0 is set as well. Down on bit 0 with no bit 2 ducks.
+
+| AND nibble | Flags | Result |
 | --- | --- | --- |
 | 1, 4, or 5 | bit 0 | floor. The roof dots are nibble 5 |
-| 6, 9, or 13 | bit 0, and 13 is also bit 3 | floor. 13 is a wall on property 0 |
-| 7 | bits 0 and 3 | floor, and a wall on property 0 |
-| 3, 11, 12, 14, or 15 | bits 2 and 3 | a wall on property 0. Not a floor |
+| 6 or 9 | bits 0 and 1 | floor. Bit 1 is not a Bruce floor test |
 | 2, 8, or 10 | bit 1 | neither. He falls through these |
+| 7 or 13 | bit 0, plus bit 3 or bit 2 | floor. A wall on property 0, a climb on any other property |
+| 3, 11, 12, 14, or 15 | bit 3 or bit 2 | a wall on property 0, a climb otherwise. Not a floor |
 | anything else | none | ignored |
 
 A pixel past the edge of the 320 by 200 screen counts as a wall.
 
-The roof tile `$2A` is `00 00 00 00 55 55 FF FF` on its shadow half. `$55` is nibble 5, so a fall steps onto that first dotted row and stays. The brown row under the sole stays visible. `$FF` is nibble 15, the black line under the brown. Beside the ladder that line is property 0, so it blocks a sideways step that overlaps it. His feet are in the dots above that line, so the step off the ladder is clear. The floor tile `$11` is `00 00 55 55 AA AA FF FF`. `$AA` is nibble 10, so he falls through it and stops on the `$55`. The statue's other patterns are not in the table, so he runs through that art.
+The roof tile `$2A` is `00 00 00 00 55 55 FF FF` on its shadow half. `$55` is nibble 5, so a fall steps onto that first dotted row and stays. The brown row under the sole stays visible. `$FF` is nibble 15. On a property-6 cell that is a climb, which is the black line capping the hole, so up and down there climb. On property 0 the same line is a wall and blocks a sideways step. The floor tile `$11` is `00 00 55 55 AA AA FF FF`. `$AA` is nibble 10, so he falls through it and stops on the `$55`. The statue's other patterns are not in the table, so he runs through that art.
 
-Tiles `$20`, `$21`, and `$2C` are the ladder (the last one is its bottom). Overlapping one sticks, and it does not push him out, which is why he can climb through the rails and walk off the top. Up and down climb that overlap instead of jumping. A climb down still stops on ground from any other tile, which is the floor under the ladder.
+The ladder rails are climb nibbles on property 6, so overlapping one sticks and does not push him out. He climbs through the rails and walks off the top. The same test is what makes the property-6 roof line climbable. A climb burst does not stop on the floor underneath; the next logic frame sees the ladder bit clear and the move ends.

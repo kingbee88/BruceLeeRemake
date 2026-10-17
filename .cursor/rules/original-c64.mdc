@@ -11,6 +11,10 @@ When a behavior is unclear, check the assembly in `Bruce Lee.d64` at the workspa
 
 The VICE Commodore 64 emulator is on the system path. Run the floppy disk image with `x64sc "Bruce Lee.d64"`, or load a snapshot of the first scene with `x64sc bruceleestart.vsf`. Use that to verify the game against the original.
 
+A 6502 disassembly made from that emulator snapshot is in `asm\first-room.asm`. Read it when you need the first room's code without disassembling the snapshot again.
+
+Documentation for VICE Commodore 64 emulator can be found here: "F:\OldGames\VICEC64\GTK3VICE-3.10-win64\doc\vice.pdf"
+
 ```text
 Unclear: how many pixels a sideways jump rises
 Do: read the jump routine in Bruce Lee.d64, or watch it in VICE, and match that count

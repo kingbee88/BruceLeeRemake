@@ -11,12 +11,12 @@ namespace {
 // One plane can sit 16 pixels left of the other; the shift is applied
 // before the planes are combined.
 // $5592 rolls $4F3F in first, so that counter is bit 3 and $4F3C is bit 0.
-// Bit 0 is nibbles 1, 4, 5, 6, 7, 9, and 13: don't-fall, and not a wall.
+// Bit 0 is nibbles 1, 4, 5, 6, 7, 9, and 13: don't-fall.
 // The roof dots are nibble 5, so his feet rest in that brown row.
-// Bit 3 is nibbles 3, 7, and 11-15: $1CC7 pushes the move back out.
-// On this screen those shapes are a wall only on property 0. The ladder
-// cap is property 6, so a climb can pass it and he is not pinned to the
-// black line beside the hole.
+// Bit 3 is nibbles 3, 7, and 11-15 on property 0: $1CC7 pushes the move out.
+// On any other property those nibbles are bit 2, a climb. The ladder rails
+// and the black line of a property-6 roof are that case, so a climb passes
+// through them and up or down rides them instead of jumping.
 void AddPose(Contact& hit, int pose, int sx, int sy, int row0, int row1) {
     for (int y = row0; y < row1; ++y) {
         const int py = sy + y;
@@ -60,26 +60,28 @@ void AddPose(Contact& hit, int pose, int sx, int sy, int row0, int row1) {
             if (overlapped == 0) {
                 continue;
             }
-            // The ladder in room 0. It supports him, and it is not a wall,
-            // which is why he already sticks to it. $2C is the bottom of it.
-            const bool ladderTile = tile == 0x20 || tile == 0x21 || tile == 0x2C;
-            if (ladderTile) {
-                hit.ladder = true;
-            }
             const int prop = g.color[static_cast<size_t>(cell)] & 7;
             const int nibbles[2] = {overlapped >> 4, overlapped & 0x0F};
             for (const int v : nibbles) {
                 if (v == 0) {
                     continue;
                 }
-                const bool pushOut = v == 3 || v == 7 || v >= 11;
-                const bool support = v == 1 || v == 4 || v == 5 || v == 6 || v == 7 || v == 9 || v == 13;
-                if (pushOut && prop == 0 && !ladderTile) {
+                // Nibbles 3, 7, and 11-15 are bit 3 on property 0 and bit 2
+                // on every other property. The property swap at $55E6 moves
+                // the flag between those two counters. Bit 0 is the same list
+                // on either property. The roof's black line is nibble 15, so
+                // on a property-6 cell it is a climb, and on property 0 a wall.
+                const bool solid = v == 3 || v == 7 || v >= 11;
+                const bool bit0 = v == 1 || v == 4 || v == 5 || v == 6 || v == 7 || v == 9 || v == 13;
+                if (solid && prop == 0) {
                     hit.wall = true;
                 }
-                if (support) {
+                if (solid && prop != 0) {
+                    hit.ladder = true;
+                }
+                if (bit0) {
                     hit.ground = true;
-                    if (!ladderTile) {
+                    if (!(solid && prop != 0)) {
                         hit.floor = true;
                     }
                 }
@@ -91,16 +93,15 @@ void AddPose(Contact& hit, int pose, int sx, int sy, int row0, int row1) {
 }  // namespace
 
 void AddCurrent(Contact& hit, int sx, int sy, int row0, int row1) {
-    // g.pose was chosen for this frame before the step. The jump, the sideways
-    // jump, the flying kick, the punch, and a climb are wider than the fall.
-    if (g.action != 0 || g.vy != 0 || g.jumpTimer != 0 || g.climbHold != 0) {
-        AddPose(hit, g.pose, sx, sy, row0, row1);
-    } else if (g.tick > 0) {
+    // A walk tests both strides, so the wider one cannot step into a wall
+    // the other stride would be unable to leave. Every other state uses the
+    // picture already chosen.
+    if (g.action == kWalkLeft || g.action == kWalkRight) {
         const int base = g.facing < 0 ? 2 : 4;
         AddPose(hit, base, sx, sy, row0, row1);
         AddPose(hit, base + 1, sx, sy, row0, row1);
     } else {
-        AddPose(hit, StandPose(), sx, sy, row0, row1);
+        AddPose(hit, g.pose, sx, sy, row0, row1);
     }
 }
 
@@ -112,9 +113,14 @@ Contact Probe(int sx, int sy) {
 
 Contact ProbeFeet(int sx, int sy) {
     Contact hit;
-    // The legs. Used so a climb down stops on the floor under him, not on
-    // the platform his head is still overlapping at the top of the ladder.
+    // The legs. A full-sprite probe is what climb and landing use.
     AddCurrent(hit, sx, sy, 16, kSpriteRows);
+    return hit;
+}
+
+Contact ProbeUpper(int sx, int sy) {
+    Contact hit;
+    AddCurrent(hit, sx, sy, 0, kSpriteRows - 6);
     return hit;
 }
 

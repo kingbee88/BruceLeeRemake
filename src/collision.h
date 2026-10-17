@@ -1,11 +1,12 @@
 #pragma once
 
 // Result of the original overlap test at one sprite position.
-// wall: $1CC7 push-out on property 0 (nibbles 3, 7, and 11-15).
-// ground: $B6 bit 0 (nibbles 1, 4, 5, 6, 7, 9, and 13). The roof dots are 5.
-// floor: that ground came from something other than a ladder, so a climb
-// down stops there. ladder: he is touching tiles $20, $21, or $2C.
-// Statue ink sets neither. The nibble table is in DESIGN.md.
+// wall: $B6 bit 3. Nibbles 3, 7, and 11-15 on property 0. $1CC7 pushes him out.
+// ground: $B6 bit 0. Nibbles 1, 4, 5, 6, 7, 9, and 13. The roof dots are 5.
+// ladder: $B6 bit 2. Those same solid nibbles on any other property, including
+// the ladder rails and the black line of a property-6 roof. Up and down climb.
+// floor: bit 0 from a nibble that is not also bit 2.
+// Either ground or ladder stops a fall. Statue ink sets neither.
 struct Contact {
     bool wall = false;
     bool ground = false;
@@ -21,6 +22,10 @@ Contact Probe(int sx, int sy);
 
 // The same test, using only the bottom of the sprite (rows 16–20).
 Contact ProbeFeet(int sx, int sy);
+
+// Rows above the feet. $A7 is this result: the scan saved before the bottom
+// six sprite rows. A fall nudges sideways when this still has ground.
+Contact ProbeUpper(int sx, int sy);
 
 // Wall flag for one pose, ignoring what the rest of the walk cycle does.
 // PlaceBruce and the end-of-frame shove use this on the picture just chosen.

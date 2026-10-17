@@ -166,7 +166,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         Tick();
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateWindow(hwnd);
-        Sleep(16);
+        // One Tick is one original logic frame. The raster IRQ decrements
+        // $48 once per screen, and the game waits for a count of 3, so the
+        // actors step every three PAL frames.
+        Sleep(60);
     }
 
     ReleaseTarget();
