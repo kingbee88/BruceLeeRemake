@@ -9,6 +9,7 @@
 // 9/10 sideways jump left, 11/12 sideways jump right.
 // 13 punch left, 14 punch right.
 // 15/16 flying kick left, 17/18 flying kick right.
+// 19/20 the two climb pictures. Up and down on a ladder alternate them.
 // Each direction is its own drawing. Mirroring would put the solid pixels
 // on the wrong side of a wall.
 
@@ -22,6 +23,8 @@ constexpr int kPunch = 0x11;
 constexpr int kPosePunchLeft = 13;
 constexpr int kPosePunchRight = 14;
 constexpr int kPoseFlyLeftExtended = 16;
+constexpr int kPoseClimb0 = 19;
+constexpr int kPoseClimb1 = 20;
 
 // The stand picture for g.facing.
 int StandPose();

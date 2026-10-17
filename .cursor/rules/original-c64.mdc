@@ -1,0 +1,18 @@
+---
+description: Stay truthful to the original Commodore 64 Bruce Lee, and check it with the disk image or VICE when unsure
+alwaysApply: true
+---
+
+# Original Commodore 64 Bruce Lee
+
+Aim to be truthful to the original *Bruce Lee* on the Commodore 64. Movement, timing, poses, collision, graphics, and room data should follow that game.
+
+When a behavior is unclear, check the assembly in `Bruce Lee.d64` at the workspace root before deciding. It is a Commodore 64 floppy disk image of the original game. Do not guess a mechanic, timing, or layout that the disk image can settle.
+
+The VICE Commodore 64 emulator is on the system path. Run the floppy disk image with `x64sc "Bruce Lee.d64"`, or load a snapshot of the first scene with `x64sc bruceleestart.vsf`. Use that to verify the game against the original.
+
+```text
+Unclear: how many pixels a sideways jump rises
+Do: read the jump routine in Bruce Lee.d64, or watch it in VICE, and match that count
+Don't: pick a height that looks close
+```

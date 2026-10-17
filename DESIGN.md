@@ -2,7 +2,7 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. Arrow keys move Bruce. Up jumps. Space punches while he is standing and flying-kicks while he is moving. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. Arrow keys move Bruce. Up jumps, and on a ladder up and down climb. Space punches while he is standing and flying-kicks while he is moving. Escape closes the window.
 
 ## How a frame runs
 
@@ -10,7 +10,7 @@ A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g
 2. Each frame, `Tick` reads the arrow keys.
 3. Left and right change `g.facing` and try a two-pixel step. The step is kept when `Probe` does not report a wall.
 4. Up on its own, while he is on the ground and the key was not already held, starts the standing jump (state `$05`). He rises 4 pixels, then 2 pixels on each of the next four counts, and comes back down 2 pixels on each of six counts. The top of the hop is 12 pixels. Up while left or right is held starts the sideways jump (states `$06` and `$07`): 4 pixels sideways every count, rising 11 pixels, then dropping.
-5. Space while left or right is held starts the flying kick (states `$0C` and `$0D`). He hops 3 pixels, travels flat, then drops. Space with neither direction held is the punch (state `$11`), a short picture with no step. Moving down stops on a floor or a wall. Moving up stops only on a wall, so he can leave the floor.
+5. Space while left or right is held starts the flying kick (states `$0C` and `$0D`). He hops 3 pixels, travels flat, then drops. Space with neither direction held is the punch (state `$11`), a short picture with no step. On a ladder, up climbs (state `$01`) and down climbs (state `$02`): 3 pixels, then the picture holds for 3 frames, alternating the two climb drawings. Moving down stops on a floor or a wall. Moving up stops only on a wall, so he can leave the floor. The ladder itself does not stop a climb.
 6. The picture is then chosen. The standing jump counts down from 15 the way state `$05` does: legs together, then the tuck, then the arms-out jump. The sideways jump counts down from 15 the way states `$06` and `$07` do, tucked at the ends and the leg extended in between. The flying kick counts down from 12 the way states `$0C` and `$0D` do. Otherwise a walk pose while a direction is held, or a stand pose. Walking off a ledge uses the legs-together picture.
 7. If that new picture sits inside a wall, he is pushed sideways until it does not.
 8. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
@@ -124,9 +124,9 @@ The low three bits are the collision property. Bit 3 turns multicolor on. The va
 
 The drawn ink is the low three bits. `$08` is black and `$0E` is light blue.
 
-### `data/bruce.bin` — 3192 bytes
+### `data/bruce.bin` — 3528 bytes
 
-Nineteen poses. Each pose is two planes, and each plane is 21 rows of 4 bytes (32 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
+Twenty-one poses. Each pose is two planes, and each plane is 21 rows of 4 bytes (32 pixels). Bit 7 is the leftmost pixel. One sprite bit is one screen pixel. Left and right are separate drawings; nothing is mirrored.
 
 The walk and the standing jump use one source byte per row (library mode 0). After the VIC doubles it, the ink is 16 pixels and the other 16 in the row are empty. The punch, and the black plane of each extended flying kick, use two source bytes per row (mode 1), so the ink can reach all 32 pixels.
 
@@ -152,12 +152,13 @@ row byte = offset + y * 4 + (x / 8)
 | 14 | punch right |
 | 15, 16 | flying kick left, tucked then extended |
 | 17, 18 | flying kick right, tucked then extended |
+| 19, 20 | climb, the two steps |
 
 `g.tick / 6` alternates the two strides. While he is walking, both strides are tested, so the wider one cannot step into a wall that the next stride could not leave. In the air, and during a punch or a kick, the test uses the picture chosen for this frame.
 
 Punch left is drawn 16 pixels left of `g.x`. The black plane of flying kick left, extended, is shifted the same way. That is the original adjustment of `$9E` by -8, so the torso stays where the stand picture was and the fist or the leg reaches past it.
 
-These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9, `$1E`/`$1F`, `$20`/`$21`, `$22`/`$23`, `$24`/`$25`, `$26`/`$27`, `$28`/`$29`, 4/5, 6/7, `$16`/`$17`, `$18`/`$19`, `$1A`/`$1B`, `$1C`/`$1D`. The even library index is the body and the next index is the detail. Library 8 is the fall. The jump the player sees for most of the arc is library `$20`. The sideways jump is libraries `$22`–`$29`. The punch is libraries 4–7. The flying kick is libraries `$16`–`$1D`.
+These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$11`, `$12`/`$13`, `$14`/`$15`, 8/9, `$1E`/`$1F`, `$20`/`$21`, `$22`/`$23`, `$24`/`$25`, `$26`/`$27`, `$28`/`$29`, 5/4, 7/6, `$16`/`$17`, `$18`/`$19`, `$1A`/`$1B`, `$1C`/`$1D`, `$0A`/`$0B`, `$0C`/`$0D`. The first of each pair is the yellow plane and the second is the black detail, except the punch: libraries 4 and 6 are black (`$F0`) and 5 and 7 are yellow (`$F7`), so those pairs are stored yellow first. Library 8 is the fall. The jump the player sees for most of the arc is library `$20`. The sideways jump is libraries `$22`–`$29`. The punch is libraries 4–7. The flying kick is libraries `$16`–`$1D`. The climb is libraries `$0A`–`$0D`.
 
 ### `data/title.bin` — 8000 bytes
 
@@ -174,13 +175,19 @@ A set bit is ink. This file has no color bytes. The current room does not load i
 
 `Probe` is the test the original runs before it will keep a move. It ORs the yellow and black planes into one mask, then ANDs that mask with the character bytes underneath. Each AND byte is split into two 4-bit values.
 
-| AND nibble | On property 0 | On any other property |
+`$5592` rolls `$4F3F` in first, so that counter is bit 3 and `$4F3C` is bit 0. `$1DCA` keeps him from falling when bit 0 or bit 2 is set (`and #$05`). Bit 0 is the don't-fall test used here. Bit 3 is the push-out at `$1CC7`. On this screen a push-out nibble is a wall on property 0. The ladder cap is property 6, so a climb passes through it instead of stopping inside the black line.
+
+| AND nibble | `$B6` | Result |
 | --- | --- | --- |
-| 3 or 11–15 | wall | floor |
-| 7 | wall and floor | floor |
-| 1, 4, 5, 6, 9, or 13 | floor | floor |
-| anything else, including the statue's patterns | ignored | ignored |
+| 1, 4, or 5 | bit 0 | floor. The roof dots are nibble 5 |
+| 6, 9, or 13 | bit 0, and 13 is also bit 3 | floor. 13 is a wall on property 0 |
+| 7 | bits 0 and 3 | floor, and a wall on property 0 |
+| 3, 11, 12, 14, or 15 | bits 2 and 3 | a wall on property 0. Not a floor |
+| 2, 8, or 10 | bit 1 | neither. He falls through these |
+| anything else | none | ignored |
 
 A pixel past the edge of the 320 by 200 screen counts as a wall.
 
-The statue is drawn, and its color bytes are mostly property 0, but its character patterns are not in the table. He runs through that art. The red line he stands on is an edge pattern, so it holds him up. The side borders and the solid underside of the floor are wall patterns, so they stop him.
+The roof tile `$2A` is `00 00 00 00 55 55 FF FF` on its shadow half. `$55` is nibble 5, so a fall steps onto that first dotted row and stays. The brown row under the sole stays visible. `$FF` is nibble 15, the black line under the brown. Beside the ladder that line is property 0, so it blocks a sideways step that overlaps it. His feet are in the dots above that line, so the step off the ladder is clear. The floor tile `$11` is `00 00 55 55 AA AA FF FF`. `$AA` is nibble 10, so he falls through it and stops on the `$55`. The statue's other patterns are not in the table, so he runs through that art.
+
+Tiles `$20`, `$21`, and `$2C` are the ladder (the last one is its bottom). Overlapping one sticks, and it does not push him out, which is why he can climb through the rails and walk off the top. Up and down climb that overlap instead of jumping. A climb down still stops on ground from any other tile, which is the floor under the ladder.

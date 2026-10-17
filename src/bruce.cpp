@@ -156,19 +156,73 @@ void ClearAction() {
     g.actionTimer = 0;
 }
 
+// States $01 and $02. The actor delay for both is 3, so the original climbs
+// on one frame and holds the picture for the next three. Each active frame
+// calls the one-pixel step three times. Libraries $0A and $0C alternate.
+constexpr int kClimbPixels = 3;
+constexpr int kClimbPause = 3;
+
+// True when a ladder tile is within a few pixels under his feet. That is
+// how down reaches the ladder from the platform it hangs from.
+bool LadderBelow() {
+    for (int d = 1; d <= 8; ++d) {
+        if (Probe(g.x, g.y + d).ladder) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The feet, shifted down a few pixels, meet a ladder. That is the step off
+// the platform at the top. The floor under the ladder has none of that.
+bool FeetLadderBelow() {
+    for (int d = 1; d <= 6; ++d) {
+        if (ProbeFeet(g.x, g.y + d).ladder) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ClimbDown() {
+    for (int i = 0; i < kClimbPixels; ++i) {
+        // $1DCA looks at the overlap he already has. The step onto a floor
+        // pixel is kept; the next one is not. A wall is not entered.
+        const Contact feet = ProbeFeet(g.x, g.y);
+        if (feet.wall || (feet.floor && !feet.ladder && !FeetLadderBelow())) {
+            return;
+        }
+        const Contact into = ProbeFeet(g.x, g.y + 1);
+        if (into.wall) {
+            return;
+        }
+        g.y += 1;
+    }
+}
+
 void MoveVertical(int dy) {
     const int step = dy > 0 ? 1 : -1;
     const int n = dy > 0 ? dy : -dy;
     for (int i = 0; i < n; ++i) {
-        const Contact hit = Probe(g.x, g.y + step);
-        // Down stops on the don't-fall flags as well as a wall. Up is
-        // cancelled only by the solid flag, the same bit $1CC7 pushes out.
-        if (step > 0 ? (hit.wall || hit.ground) : hit.wall) {
+        const Contact into = Probe(g.x, g.y + step);
+        if (step > 0) {
+            // Falling moves onto the don't-fall row, then stays. $1CC7
+            // rejects the step that would enter a push-out row.
+            const Contact here = Probe(g.x, g.y);
+            if (here.ground || here.wall || into.wall) {
+                g.vy = 0;
+                return;
+            }
+        } else if (into.wall) {
             g.vy = 0;
             return;
         }
         g.y += step;
     }
+}
+
+void ClimbUp() {
+    MoveVertical(-kClimbPixels);
 }
 
 // The count is used on this same frame, then reduced. A count of 1 is the
@@ -203,6 +257,7 @@ void Tick() {
     const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
     const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
     const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+    const bool down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
     const bool attack = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
     const bool moving = left != right;
     const int dir = left ? -1 : 1;
@@ -216,8 +271,19 @@ void Tick() {
         g.tick = moving ? g.tick + 1 : 0;
     }
 
+    const Contact here = Probe(g.x, g.y);
     const Contact below = Probe(g.x, g.y + 1);
-    const bool grounded = below.wall || below.ground;
+    const bool onLadder = here.ladder || below.ladder;
+    // The ladder tiles count as ground, which is what makes him stick.
+    // Overlap with the rails counts too, so a gap between rungs does not
+    // drop him. $1DCA reads the overlap at the position he is already in.
+    const bool grounded = here.ground || here.wall || onLadder;
+    // The floor probe is already true on the frame he arrives, while vy is
+    // still the fall speed. Gravity then refuses to run, so vy never clears
+    // and the legs-together picture stays up. Landing drops that speed.
+    if (grounded && g.vy > 0) {
+        g.vy = 0;
+    }
     // The descent stops on the floor. The rising counts are left alone, so a
     // sideways jump or a flying kick that started on the floor can leave it.
     if ((g.action == kSideLeft || g.action == kSideRight) && grounded && g.actionTimer < 7) {
@@ -226,7 +292,28 @@ void Tick() {
         ClearAction();
     }
 
-    if (!Scripted()) {
+    // Up on a ladder is state $01. Down is state $02, including the step
+    // off the platform onto the rungs. Neither one is the standing jump.
+    bool climbing = false;
+    if (g.climbHold > 0) {
+        g.climbHold -= 1;
+        climbing = true;
+    } else if (!Scripted() && up != down && ((up && onLadder) || (down && (onLadder || LadderBelow())))) {
+        g.vy = 0;
+        g.tick = 0;
+        g.climbStep ^= 1;
+        g.pose = kPoseClimb0 + g.climbStep;
+        // Set before the step so Probe tests this climb picture.
+        g.climbHold = kClimbPause;
+        if (up) {
+            ClimbUp();
+        } else {
+            ClimbDown();
+        }
+        climbing = true;
+    }
+
+    if (!climbing && !Scripted()) {
         if (attack && !g.attackHeld) {
             // Fire with a direction is states $0C/$0D ($1F64, $1F6D), timer $0C.
             // Fire with no direction is state $11 ($1FBC), timer 4: the punch.
@@ -257,9 +344,11 @@ void Tick() {
     g.attackHeld = attack;
 
     // Chosen before the step so Probe tests the picture that will be drawn.
+    // A climb step already moved, and the hold frames keep that picture.
     ChoosePose(grounded);
-
-    if (g.jumpTimer != 0) {
+    if (climbing) {
+        g.pose = kPoseClimb0 + g.climbStep;
+    } else if (g.jumpTimer != 0) {
         MoveVertical(JumpDy());
         g.jumpTimer -= 1;
     } else if (g.action == kSideLeft || g.action == kSideRight) {
