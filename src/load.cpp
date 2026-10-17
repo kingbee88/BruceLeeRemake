@@ -6,8 +6,6 @@
 
 #include <string>
 
-namespace {
-
 std::wstring ExeDirectory() {
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -15,8 +13,6 @@ std::wstring ExeDirectory() {
     const auto slash = full.find_last_of(L"\\/");
     return slash == std::wstring::npos ? L"." : full.substr(0, slash);
 }
-
-}  // namespace
 
 std::vector<uint8_t> LoadFile(const wchar_t* name, size_t bytes) {
     const std::wstring dir = ExeDirectory();

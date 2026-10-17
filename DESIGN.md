@@ -2,11 +2,13 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. Space or Enter starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
+
+`config.ini` beside the exe is read first. If that file is not there, `config.ini` in the parent folder is read. `Name=Value` on the command line overrides the file. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture. `InfiniteLives`, `EnemiesCantHitYou`, `StartRoom`, `FullScreen`, and `ShowCRTFilter` are read and not used yet.
 
 ## How a frame runs
 
-1. `main.cpp` loads the four playable data files into `g` and calls `PlaceBruce`, which stands him on the floor to the right of the lamp.
+1. `main.cpp` loads the room files into `g`. With `ShowTitleScreen` on, it paints `title.bin` and waits for Space or Enter. Then `PlaceBruce` stands him on the floor to the right of the lamp.
 2. Each logic frame, `Tick` reads the arrow keys and space. Opposite directions cancel. Space is read as a level, so holding it repeats once the move allows it.
 3. If the pose hold is running, it counts down and the stick is not read. Climb holds for 3 logic frames. Duck holds for 1. Every other Bruce move holds for 0.
 4. Otherwise the repeat count reloads to 6 when the state is idle or has just changed, and counts down while the same state continues. Left or right walks two xpos steps (4 screen pixels) until that count reaches 0, then three steps (6 pixels). The two stride pictures alternate every logic frame. The screen edge clears the walk. A wall refuses the step and leaves the walk in place.
@@ -27,10 +29,11 @@ A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g
 | --- | --- |
 | `src/game.h`, `src/game.cpp` | Screen size, the C64 palette, and the `Game` state every other file shares |
 | `src/load.cpp` | `LoadFile` reads one data file. It looks beside the exe, then in `data\` one directory up, then in `data\` beside the exe. A missing file or a short read comes back empty |
+| `src/config.cpp` | `LoadConfig` reads `config.ini` beside the exe, then in the parent folder, then applies the command line |
 | `src/scene.cpp` | Turns one screen pixel into a color. `BandAt` is the raster split (background, `$D022`, `$D023`). `PixelColor` returns a palette index, or -1 where the cell is empty or the same as the background |
 | `src/collision.cpp` | The original overlap test. `Probe` reports wall and floor for the pose he is about to use. `PoseWall` asks the same question for one picture only |
 | `src/bruce.cpp` | Which picture to show, where he starts, and `Tick` |
-| `src/draw.cpp` | `Compose` fills `g.pixels` |
+| `src/draw.cpp` | `Compose` fills `g.pixels`. `ComposeTitle` paints `title.bin` |
 | `src/main.cpp` | The window, Direct2D, and the message loop |
 
 `StandPose` and `WalkPose` return an index into `bruce.bin`. `PoseBytes` points at one of the two pictures inside that pose: plane 0 is the yellow body, plane 1 is the black detail drawn on top.
@@ -77,7 +80,7 @@ The level art is 22 character rows, 176 screen lines. With every art row painted
 
 ## Data files
 
-The running game loads the first four. `title.bin` is the original title picture and is not drawn by this room.
+The running game loads the first four for the room. `title.bin` is the original title picture, drawn when `ShowTitleScreen` is on.
 
 ### `data/charset.bin` — 2048 bytes
 
@@ -175,7 +178,7 @@ byte = ((y / 8) * 40 + (x / 8)) * 8 + (y & 7)
 bit  = 0x80 >> (x & 7)
 ```
 
-A set bit is ink. This file has no color bytes. The current room does not load it.
+A set bit is white and a clear bit is black. This file has no color bytes. `ShowTitleScreen` paints it and waits for Space or Enter, which is the fire button `title_loop` watches. `ShowTitleScreen=False` skips it and opens the room.
 
 ## Collision
 

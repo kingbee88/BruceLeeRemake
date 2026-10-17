@@ -5,6 +5,7 @@
 #include <d2d1helper.h>
 
 #include "bruce.h"
+#include "config.h"
 #include "draw.h"
 #include "game.h"
 #include "load.h"
@@ -18,6 +19,8 @@ constexpr D2D1_COLOR_F kBorderF{0.f, 0.f, 0.f, 1.f};
 ID2D1Factory* gFactory = nullptr;
 ID2D1HwndRenderTarget* gTarget = nullptr;
 ID2D1Bitmap* gBitmap = nullptr;
+bool gInTitle = false;
+bool gTitleStart = false;
 
 void ReleaseTarget() {
     if (gBitmap) {
@@ -96,6 +99,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) {
             DestroyWindow(hwnd);
+        } else if (gInTitle && (wp == VK_SPACE || wp == VK_RETURN)) {
+            // title_loop leaves on the fire button. Space is that button here.
+            // The picture stays until the key is up, so the first game frame
+            // does not treat the same press as a punch.
+            gTitleStart = true;
         }
         return 0;
     case WM_DESTROY:
@@ -108,8 +116,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
-    // The four files are described in DESIGN.md. title.bin is not used here.
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
+    LoadConfig(commandLine);
+    // The room files are described in DESIGN.md. title.bin is loaded when
+    // ShowTitleScreen is on.
     g.charset = LoadFile(L"charset.bin", 2048);
     g.room = LoadFile(L"room0.bin", 1000);
     g.color = LoadFile(L"room0.col", 1000);
@@ -120,8 +130,18 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         return 1;
     }
     g.pixels.assign(static_cast<size_t>(kWidth * kHeight), kPalette[0x0B]);
-    PlaceBruce();
-    Compose();
+    if (gConfig.showTitleScreen) {
+        const std::vector<uint8_t> title = LoadFile(L"title.bin", 8000);
+        if (title.empty()) {
+            MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
+            return 1;
+        }
+        ComposeTitle(title.data());
+        gInTitle = true;
+    } else {
+        PlaceBruce();
+        Compose();
+    }
 
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &gFactory))) {
         return 1;
@@ -163,7 +183,18 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         if (!running) {
             break;
         }
-        Tick();
+        if (gInTitle) {
+            const bool space = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
+            const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+            if (gTitleStart && !space && !enter) {
+                gInTitle = false;
+                gTitleStart = false;
+                PlaceBruce();
+                Compose();
+            }
+        } else {
+            Tick();
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateWindow(hwnd);
         // One Tick is one original logic frame. The raster IRQ decrements

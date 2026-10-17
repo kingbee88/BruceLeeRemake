@@ -75,6 +75,19 @@ void DrawStatus() {
 
 }  // namespace
 
+void ComposeTitle(const uint8_t* bitmap) {
+    const uint32_t ink = kPalette[1];
+    const uint32_t paper = kPalette[0];
+    for (int y = 0; y < kHeight; ++y) {
+        uint32_t* row = g.pixels.data() + static_cast<size_t>(y) * kWidth;
+        for (int x = 0; x < kWidth; ++x) {
+            const int index = ((y / 8) * 40 + (x / 8)) * 8 + (y & 7);
+            const bool on = (bitmap[index] & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
+            row[x] = on ? ink : paper;
+        }
+    }
+}
+
 void Compose() {
     for (int y = 0; y < kHeight; ++y) {
         int bg, c01, c10;

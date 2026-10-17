@@ -2,7 +2,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
+
+// Directory that contains the running exe, with no trailing slash.
+std::wstring ExeDirectory();
 
 // Read exactly `bytes` from name. Searches beside the exe, then ..\data\,
 // then data\. Returns an empty vector when the file is missing or short.
