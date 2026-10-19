@@ -71,6 +71,8 @@ void AddPose(Contact& hit, int pose, int sx, int sy, int row0, int row1) {
                 // the flag between those two counters. Bit 0 is the same list
                 // on either property. The roof's black line is nibble 15, so
                 // on a property-6 cell it is a climb, and on property 0 a wall.
+                // A lamp bulb is those solid nibbles. Nothing in
+                // flags_from_nibbles exempts tile $13, $14, or $31.
                 const bool solid = v == 3 || v == 7 || v >= 11;
                 const bool bit0 = v == 1 || v == 4 || v == 5 || v == 6 || v == 7 || v == 9 || v == 13;
                 if (solid && prop == 0) {

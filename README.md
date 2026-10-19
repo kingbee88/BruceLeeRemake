@@ -2,7 +2,9 @@
 
 This project recreates the original *Bruce Lee* on the Commodore 64, written natively for Windows with no emulator. It is a homage to the original game and a way to preserve it for the future.
 
-This is still a work in progress. 
+This is still a work in progress.
+
+Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.1-alpha/release0.1.zip)
 
 ![The first screen, with Bruce standing by the lamp](first-room.png)
 

@@ -26,6 +26,7 @@ constexpr int kFlyLeft = 0x0C;
 constexpr int kFlyRight = 0x0D;
 constexpr int kFall = 0x0E;
 constexpr int kCarry = 0x17;  // caught on a scrolling floor, tile $62
+constexpr int kStuck = 0x18;  // $1CC7 reversed a step that still overlaps a wall
 constexpr int kPunch = 0x11;
 constexpr int kZap = 0x19;    // beam or hot floor, library 8, then a life
 constexpr int kDuck = 0x1A;

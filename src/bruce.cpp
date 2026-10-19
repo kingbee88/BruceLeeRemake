@@ -73,6 +73,58 @@ bool wentLeft = false;
 bool wentRight = false;
 bool wentUp = false;
 
+// $4F57 up, $4F5A down, $4F5D left, $4F60 right, then the older copies.
+// release_hold shifts a nonzero current set one generation toward $4FD8.
+// $1CC7 reads the generation at $4F63. Ten generations fit before the spill
+// that the shift writes and the reversal clears. One sideways count is one
+// xpos, two screen pixels.
+constexpr int kStepUp = 0;
+constexpr int kStepDown = 1;
+constexpr int kStepLeft = 2;
+constexpr int kStepRight = 3;
+constexpr int kStepGens = 11;
+int hist[kStepGens][4] = {};
+
+void ClearSteps() {
+    for (int gen = 0; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            hist[gen][d] = 0;
+        }
+    }
+}
+
+void RememberSteps() {
+    bool any = false;
+    for (int d = 0; d < 4; ++d) {
+        if (hist[0][d] != 0) {
+            any = true;
+        }
+    }
+    if (any) {
+        for (int gen = kStepGens - 1; gen > 0; --gen) {
+            for (int d = 0; d < 4; ++d) {
+                hist[gen][d] = hist[gen - 1][d];
+            }
+        }
+    }
+    for (int d = 0; d < 4; ++d) {
+        hist[0][d] = 0;
+    }
+}
+
+// $24C6. The bytes from $4F63 through $4FD8. The current generation is not
+// part of the test.
+bool OlderSteps() {
+    for (int gen = 1; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            if (hist[gen][d] != 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void StandStill() {
     g.action = 0;
     g.actionTimer = 0;
@@ -88,21 +140,23 @@ void Land() {
     SetState(0, 0);
 }
 
-// One xpos step, two screen pixels. A wall or the screen edge refuses it.
-// The original moves anyway and $1CC7 pushes the next frame back out; refusing
-// the step leaves him where that push would put him.
+// One xpos step, two screen pixels. The screen edge refuses it. A wall does
+// not: $1CC7 walks the step back on the next frame. The kick, the fall's
+// nudge, and the scrolling-floor carry still stop on a wall here.
 bool TryStep(int dir) {
     if (dir < 0) {
         if (g.x < kMinX || Probe(g.x - 2, g.y).wall) {
             return false;
         }
         g.x -= 2;
+        hist[0][kStepLeft] += 1;
         wentLeft = true;
     } else {
         if (g.x >= kMaxX || Probe(g.x + 2, g.y).wall) {
             return false;
         }
         g.x += 2;
+        hist[0][kStepRight] += 1;
         wentRight = true;
     }
     return true;
@@ -114,6 +168,7 @@ void Rise(int pixels) {
             return;
         }
         g.y -= 1;
+        hist[0][kStepUp] += 1;
         wentUp = true;
     }
 }
@@ -121,7 +176,103 @@ void Rise(int pixels) {
 void Drop(int pixels) {
     for (int i = 0; i < pixels && g.y < kMaxY; ++i) {
         g.y += 1;
+        hist[0][kStepDown] += 1;
     }
+}
+
+// move_up at $1DF2. The screen edge refuses it. A wall does not.
+void MoveUpRaw(int pixels) {
+    for (int i = 0; i < pixels; ++i) {
+        if (g.y < kMinY) {
+            return;
+        }
+        g.y -= 1;
+        hist[0][kStepUp] += 1;
+        wentUp = true;
+    }
+}
+
+// move_down at $1E39. Same edge rule, and no wall test.
+void MoveDownRaw(int pixels) {
+    for (int i = 0; i < pixels && g.y < kMaxY; ++i) {
+        g.y += 1;
+        hist[0][kStepDown] += 1;
+    }
+}
+
+// move_left at $1E86 and move_right at $1EC4. One xpos, and facing follows.
+void MoveSideRaw(int dir) {
+    if (dir < 0) {
+        if (g.x < kMinX) {
+            return;
+        }
+        g.x -= 2;
+        hist[0][kStepLeft] += 1;
+        wentLeft = true;
+    } else {
+        if (g.x >= kMaxX) {
+            return;
+        }
+        g.x += 2;
+        hist[0][kStepRight] += 1;
+        wentRight = true;
+    }
+    g.facing = dir;
+}
+
+// After $1CC7 has consumed $4F63, copy $4F6F..$4FD8 down onto $4F57 and
+// clear the tail from $4FC3. That drops the generation just undone and the
+// empty current one, and keeps the older copies.
+void SlideAfterPush() {
+    int next[kStepGens][4] = {};
+    for (int gen = 0; gen <= 8; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            next[gen][d] = hist[gen + 2][d];
+        }
+    }
+    for (int gen = 0; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            hist[gen][d] = next[gen][d];
+        }
+    }
+}
+
+// $1CC7. Walk $4F63 back: up by moving down, down by moving up, left by
+// moving right, right by moving left. $85 stays set when that used no down
+// or sideways step, and the loop then tries the next generation. $86 skips
+// the facing nudge on the first pass. State $18, timer $40.
+void PushOut(const Contact& here) {
+    int tries = 8;
+    for (;;) {
+        const int up = hist[1][kStepUp];
+        const int down = hist[1][kStepDown];
+        const int left = hist[1][kStepLeft];
+        const int right = hist[1][kStepRight];
+        const bool sideways = down || left || right;
+        MoveDownRaw(up);
+        MoveUpRaw(down);
+        for (int i = 0; i < left; ++i) {
+            MoveSideRaw(1);
+        }
+        for (int i = 0; i < right; ++i) {
+            MoveSideRaw(-1);
+        }
+        SlideAfterPush();
+        g.hold = 0;
+        tries -= 1;
+        if (tries < 0 || here.ladder) {
+            break;
+        }
+        if (!sideways && g.action != kDuck) {
+            RememberSteps();
+            continue;
+        }
+        if (tries != 7) {
+            MoveSideRaw(g.facing < 0 ? 1 : -1);
+        }
+        break;
+    }
+    SetState(kStuck, 0x40);
 }
 
 // State $05 at $2903, read after keep_state has decremented the timer.
@@ -189,6 +340,12 @@ void ChoosePose(const Contact& here) {
         // $28D4 shows library $0E first, then flips every logic frame.
         g.pose = WalkPose();
         g.tick += 1;
+    } else if (g.action == kStuck) {
+        // $27C1 keeps the picture already showing. Library $44, the arms-out
+        // jump, is the one it replaces with library 8.
+        if (g.pose == kPoseArms) {
+            g.pose = kPoseLegs;
+        }
     } else {
         g.pose = StandPose();
     }
@@ -219,28 +376,32 @@ void Script(const Contact& here) {
     }
 
     if (g.action == kSideLeft || g.action == kSideRight) {
+        // States 6 and 7 at $20D2 and $2120. A ladder lands immediately.
+        // Ground lands only while the timer is below 7. The steps themselves
+        // never read the wall bit. The two sideways steps come before the
+        // drop, so a lamp that the drop clears is not a wall on the next test.
         if (here.ladder) {
             Land();
             return;
         }
         const int dir = g.action == kSideLeft ? -1 : 1;
         if (t > 0x0A) {
-            Rise(2);
+            MoveUpRaw(2);
         } else if (t == 0x0A) {
-            Rise(1);
+            MoveUpRaw(1);
         } else if (t < 7) {
             if (here.ground) {
                 Land();
                 return;
             }
-            TryStep(dir);
-            TryStep(dir);
-            Drop(t == 6 ? 1 : 2);
+            MoveSideRaw(dir);
+            MoveSideRaw(dir);
+            MoveDownRaw(t == 6 ? 1 : 2);
             g.actionTimer -= 1;
             return;
         }
-        TryStep(dir);
-        TryStep(dir);
+        MoveSideRaw(dir);
+        MoveSideRaw(dir);
         g.actionTimer -= 1;
         return;
     }
@@ -309,8 +470,9 @@ void Walk(int dir, bool fire) {
     // through into the last step. A kick replaces whichever step sees a walk
     // already in $C2 and $CB below 4. Fire is $9B == 0. The kick does not
     // move until the next logic frame. A step into the screen edge clears
-    // the state. A wall does not: the step is refused and the walk stays,
-    // which is where $1CC7 would have pushed him back to.
+    // the state. That step returns, so a later one in the burst can still
+    // become the kick. A wall does not refuse the step. The next frame's
+    // $1CC7 walks it back if he is still inside.
     auto one = [&]() -> bool {
         if (g.prevState == walk && g.repeat < 4 && fire) {
             StartFly(dir);
@@ -320,17 +482,7 @@ void Walk(int dir, bool fire) {
             Land();
             return false;
         }
-        g.action = walk;
-        const int next = g.x + dir * 2;
-        if (!Probe(next, g.y).wall) {
-            g.x = next;
-            if (dir < 0) {
-                wentLeft = true;
-            } else {
-                wentRight = true;
-            }
-        }
-        g.facing = dir;
+        MoveSideRaw(dir);
         SetState(walk, 0);
         return false;
     };
@@ -359,6 +511,7 @@ void Climb(int dir) {
                 continue;
             }
             g.y -= 1;
+            hist[0][kStepUp] += 1;
             wentUp = true;
             SetState(kClimbUp, 0);
         } else {
@@ -367,6 +520,7 @@ void Climb(int dir) {
                 continue;
             }
             g.y += 1;
+            hist[0][kStepDown] += 1;
             SetState(kClimbDown, 0);
         }
     }
@@ -648,6 +802,7 @@ void PlaceBruce() {
     RoomSpawn(g.roomId, g.x, g.y);
     g.facing = 1;
     StandStill();
+    ClearSteps();
     wentLeft = false;
     wentRight = false;
     wentUp = false;
@@ -671,6 +826,7 @@ void Tick() {
     // $1BFE flips $7B and $3A6F runs the current room's hook before the
     // special scan, so a door can be open on the same frame it is tested.
     if (AdvanceRoom()) {
+        ClearSteps();
         wentLeft = false;
         wentRight = false;
         wentUp = false;
@@ -685,6 +841,7 @@ void Tick() {
         g.action = 0;
     }
     if (g.action != kZap && ScanSpecials()) {
+        ClearSteps();
         wentLeft = false;
         wentRight = false;
         wentUp = false;
@@ -755,7 +912,30 @@ void Tick() {
     }
     g.prevState = state;
 
+    RememberSteps();
+    // The picture chosen last frame. overlap_actors tests that one pose.
+    // A walk used to test both strides so a step could be refused early.
+    const Contact shown = ProbePose(g.pose, g.x, g.y);
     const Contact here = Probe(g.x, g.y);
+    // $24B7. The frame after a reversal that is clear of the wall drops the
+    // $40 timer and does not read the stick. While he is still inside and
+    // $24C6 finds no older steps, $24DB respawns him.
+    if (state == kStuck && g.actionTimer > 0 && !shown.wall) {
+        g.actionTimer = 0;
+        ChoosePose(here);
+        Compose();
+        return;
+    }
+    if (shown.wall) {
+        if (state == kStuck && g.actionTimer > 0 && !OlderSteps()) {
+            RespawnHere();
+        } else {
+            PushOut(shown);
+        }
+        ChoosePose(ProbePose(g.pose, g.x, g.y));
+        Compose();
+        return;
+    }
     const bool supported = here.ground || here.ladder;
     if (g.actionTimer > 0) {
         Script(here);
@@ -768,27 +948,7 @@ void Tick() {
     }
 
     ChoosePose(here);
-    // The picture just chosen can be wider than the one the step tested.
-    // $1CC7 undoes whole xpos steps. An xpos is two screen pixels, so the
-    // shove stays on that grid. On an odd pixel a solid nibble ANDs down to
-    // 1 or 4, which is ground, and the torso stays on a ledge for the whole
-    // height of the wall. The fall then never lands, and a jump is allowed
-    // from inside the wall.
-    if (PoseWall(g.pose, g.x, g.y)) {
-        const int prefer = g.facing < 0 ? 1 : -1;
-        const int start = g.x;
-        for (int i = 2; i <= kSpriteCols && PoseWall(g.pose, g.x, g.y); i += 2) {
-            if (!PoseWall(g.pose, start + prefer * i, g.y)) {
-                g.x = start + prefer * i;
-            } else if (!PoseWall(g.pose, start - prefer * i, g.y)) {
-                g.x = start - prefer * i;
-            }
-        }
-        if (g.x < start) {
-            wentLeft = true;
-        } else if (g.x > start) {
-            wentRight = true;
-        }
-    }
+    // $1CC7 runs at the start of the next frame, from the picture chosen
+    // here. Moving him back now would hide that overlap from the lamp test.
     Compose();
 }
