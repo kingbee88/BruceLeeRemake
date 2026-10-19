@@ -67,8 +67,10 @@
 ;
 ; enter_room also copies 20 bytes from the pointer at $4AA8, room*2, into
 ; $0153. raster_irq overwrites the first twelve of those every frame from the
-; $480B list, so the picture colors are the $480B list. The score bar is
-; separate: above the picture, $D021 is $FC whatever the room is.
+; $480B list, so the picture colors are the $480B list. The three rows above
+; the picture are not this list. Row 0 is solid black. Row 1 shows $D021,
+; which raster_irq sets to $FC (grey) until raster $40, and that is where the
+; score digits are written. Row 2 is solid black. See init_hardware.
 ;
 ; Bands below are the low nibbles. Splits are the four bytes, and the byte
 ; after $FD is unused.
@@ -78,6 +80,11 @@
 ; Room 2.  Same bands. Splits 78 97 FD 62.
 ; Room 3.  Same bands. Splits 62 97 FD FD.
 ; Room 4.  Bands 06 0E 01, 08 09 01, 06 0E 0B, 0C 0E 0B. Splits FD 56 FD B6.
+;          The list starts with $FD, so only 06 0E 01 is shown: blue, light
+;          blue, white. The right ceiling lip is column 28. Its picture cell
+;          is $51 and the shadow under it is $D1, whose last two bytes are
+;          $C0. At xpos $75 ($1B = 1, two shifts) and ypos $4C, library $44
+;          lays $C0 on those bytes and the overlap returns hit bit 3.
 ; Room 5.  Same as room 4.
 ; Room 6.  Same as room 4.
 ; Room 7.  Bands 08 09 01, 06 0E 0B, 0C 0E 0B, 04 0E 0B. Splits FD.

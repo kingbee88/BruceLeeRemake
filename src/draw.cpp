@@ -78,7 +78,7 @@ uint8_t StatusGlyph(char ch, int row) {
     return bits != nullptr ? bits[row] : 0;
 }
 
-void DrawLine(const char* text, int column) {
+void DrawLine(const char* text, int column, int top) {
     const int origin = column * 8;
     for (int i = 0; text[i] != '\0'; ++i) {
         for (int row = 0; row < 8; ++row) {
@@ -88,8 +88,9 @@ void DrawLine(const char* text, int column) {
                     continue;
                 }
                 const int px = origin + i * 8 + col;
-                if (px >= 0 && px < kWidth) {
-                    g.pixels[static_cast<size_t>(row * kWidth + px)] = kPalette[0];
+                const int py = top + row;
+                if (px >= 0 && py >= 0 && px < kWidth && py < kHeight) {
+                    g.pixels[static_cast<size_t>(py * kWidth + px)] = kPalette[0];
                 }
             }
         }
@@ -98,7 +99,7 @@ void DrawLine(const char* text, int column) {
 
 void DrawStatus() {
     if (g.roomId == 19) {
-        DrawLine("** CONGRATULATIONS **", 0x0A);
+        DrawLine("** CONGRATULATIONS **", 0x0A, 8);
         return;
     }
     char text[40];
@@ -110,7 +111,8 @@ void DrawStatus() {
         lives = 99;
     }
     std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS %02d", shown, lives);
-    DrawLine(text, 8);
+    // The words sit on character row 1. Row 0 above them is the black bar.
+    DrawLine(text, 8, 8);
 }
 
 void DrawSpark(int index) {
@@ -158,8 +160,21 @@ void Compose() {
         uint32_t* row = g.pixels.data() + y * kWidth;
         for (int x = 0; x < kWidth; ++x) {
             const int ink = PixelColor(x, y);
-            if (y < 8) {
-                row[x] = kPalette[15];
+            // init_hardware writes character $20 across $8C00 and character
+            // $06 across $8C50. Color RAM for the first two rows stays $00,
+            // and row 2 stays $08 from the $F8 fill. enter_room starts at
+            // $D878, so it never recolors them.
+            // Row 0: glyph $20 in the score charset is solid, hires color 0,
+            // so the bar above the score is black. Row 1 is character 0,
+            // an empty glyph, so it shows $D021. raster_irq holds that at
+            // $FC (grey) until raster $40, inside the bottom of this row.
+            // The set bits of the score glyphs are color 0, drawn afterwards.
+            // Row 2: glyph $06 in the room charset is solid $FF. Color $08
+            // is multicolor ink black, so the row above the picture is black.
+            if (y < 8 || (y >= 16 && y < 24)) {
+                row[x] = kPalette[0];
+            } else if (y < 16) {
+                row[x] = kPalette[0x0C];
             } else {
                 row[x] = ink < 0 ? paper : kPalette[ink];
             }

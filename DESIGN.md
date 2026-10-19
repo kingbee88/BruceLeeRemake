@@ -44,7 +44,7 @@ The lamp flicker is `$40BC`, once per logic frame, before that test. Three count
 
 ## Palette
 
-`kPalette` is the Pepto C64 palette, packed as `0xAARRGGBB`. Indexes used by this room:
+`kPalette` is the Colodore C64 palette, the one VICE 3.10 displays, packed as `0xAARRGGBB`. Indexes used by this room:
 
 | Index | Color | Where it shows up |
 | --- | --- | --- |

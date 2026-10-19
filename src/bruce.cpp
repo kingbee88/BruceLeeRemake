@@ -545,6 +545,25 @@ void StartFall() {
     // The first airborne frame drops one pixel and arms $B0 with 2.
     g.fallSlide = 2;
     Drop(1);
+    // State $18 leaves the legs picture up. The fall switches to the arms
+    // picture, whose hands are the only pixels in the room 4 lip. $1CC7
+    // then puts that one pixel back and the two pictures trade forever.
+    // Drop through a clip that only the arms picture touches. A wall or a
+    // floor the legs picture meets still stops the extra pixels.
+    if (g.prevState == kStuck) {
+        for (int i = 0; i < kSpriteRows; ++i) {
+            const Contact arms = ProbePose(kPoseArms, g.x, g.y);
+            const Contact legs = ProbePose(kPoseLegs, g.x, g.y);
+            if (!arms.wall || legs.wall || legs.ground) {
+                break;
+            }
+            const int y = g.y;
+            Drop(1);
+            if (g.y == y) {
+                break;
+            }
+        }
+    }
     SetState(kFall, 0);
 }
 

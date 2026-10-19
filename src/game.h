@@ -11,7 +11,7 @@ constexpr int kSpriteRowBytes = kSpriteCols / 8;
 constexpr int kFrameBytes = kSpriteRows * kSpriteRowBytes;
 constexpr int kFrames = 23;
 
-// Pepto C64 colors, packed as 0xAARRGGBB. Index 0 is black. See DESIGN.md.
+// Colodore C64 colors, packed as 0xAARRGGBB. Index 0 is black. See DESIGN.md.
 extern const uint32_t kPalette[16];
 
 // The play state shared by every source file.

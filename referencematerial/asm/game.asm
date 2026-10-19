@@ -12,7 +12,12 @@
 ; two fighters.
 ;
 ;   xpos,X    $9E   horizontal position. One step here is two screen pixels.
+;                    move_left and move_right never add a single screen pixel,
+;                    so the overlap stays on the grid scan_row describes.
 ;   ypos,X    $A1   vertical position. One step is one screen pixel. Up decrements it.
+;                    A script calls move_up or move_down one to four times, so an
+;                    odd ypos is a position the game reaches. The first fall
+;                    frame is the one-call case.
 ;   facing,X  $A4   0 left, 1 right.
 ;   hit,X     $B6   result of the overlap test. flags_from_nibbles rolls it in.
 ;                   bit 0: ground. Nibbles 1, 4, 5, 6, 7, 9, and 13.
@@ -463,6 +468,18 @@ init_hardware:
         JSR clear_playfield                      ; $0792
         LDA #$F8                        ; $0795
         JSR fill_color_ram                      ; $0797
+; Three VIC rows sit above the picture and are not part of the packed room.
+; Row 0 ($8C00) is screen code $20. In the score charset at $8800 that glyph
+; is eight $FF bytes, and its color ($D800) is 0, so the hires cell is solid
+; black. Row 1 ($8C28) is left as the 0 clear_playfield wrote. Color 0 with an
+; empty glyph shows $D021, which raster_irq holds at $FC (grey) until raster
+; $40, inside this row. The score digits are stored on this row: a column in
+; Y of $3C or more is past the 40 cells of $8C00. Row 2 ($8C50) is screen code
+; $06. The room charset, in use once raster_open has run, has eight $FF bytes
+; there. Its color is the $F8 fill left at $D850, nibble $8, so the cell is
+; multicolor ink black. enter_room repaints $8C00 with $20 and starts its
+; color fill at $D878, the first picture row, so these three rows survive
+; every room change.
         LDX #$27                        ; $079A
 L_079C:
         LDA #$00                        ; $079C
@@ -761,6 +778,8 @@ L_09D4:
         LDX $29                         ; $09DA
         LDA $47A0,X                     ; $09DC
         LDX #$00                        ; $09DF
+; $D878 is character row 3. Rows 0 and 1 keep the black written at $079C.
+; Row 2 keeps the $F8 from fill_color_ram, which is multicolor black.
 L_09E1:
         STA $D878,X                     ; $09E1
         STA $D900,X                     ; $09E4
@@ -2862,7 +2881,9 @@ L_1B02:
         ORA $4398                       ; $1B0F
         LDY #$4A                        ; $1B12
         JMP draw_bcd_digits                      ; $1B14
-; Draw both nibbles of A at screen column Y.
+; Draw both nibbles of A at screen column Y. The callers pass $3C, $3E,
+; $40, and $4A. Each of those is past the 40 cells of row 0, so the digits
+; land on row 1 ($8C28), on the grey $D021 bar between the two black rows.
 draw_split_digits:
         PHA                             ; $1B17
         JSR high_nibble                      ; $1B18
@@ -3334,8 +3355,11 @@ L_1E33:
         JSR move_down                   ; $1E33
         JSR move_down                   ; $1E36
 
-; One step down. ypos increases. State becomes 2 (climb down) until the caller stores its
-; own state on top. A ypos of $C7 or more refuses the step and clears the state.
+; One step down, one screen pixel. State becomes 2 (climb down) until the caller
+; stores its own state on top. A ypos of $C7 or more refuses the step and clears
+; the state. Callers issue this once (the first fall frame, and sideways-jump
+; timer 6), twice (later falls, and the standing jump's descent), or three or
+; four times (the climb). ypos is therefore not kept even.
 move_down:
         LDA ypos,X                      ; $1E39
         CMP #$C7                        ; $1E3B
@@ -4684,7 +4708,11 @@ choose_pose:
         STA $4F54,X                     ; $278B
         LDY facing,X                    ; $278E
         LDA state,X                     ; $2790
-        CMP #$0E                        ; $2792  fall. Bit 3 is library 8, the legs together. Otherwise library $44.
+; Fall. Bit 3 selects library 8, the legs together. Otherwise library $44,
+; the arms. The two pictures do not cover the same cells. One pixel is
+; enough for $44 to touch a wall that library 8 misses. Room 4's right lip
+; is that case: see rooms.asm. $1CC7 then puts the pixel back.
+        CMP #$0E                        ; $2792
         BNE L_27A6                      ; $2794
         LDA hit,X                       ; $2796
         AND #$08                        ; $2798
@@ -8748,7 +8776,13 @@ L_48AA:
 
 ; In-game raster interrupt. arm_raster points here and compares against raster
 ; $FB. This pass selects charset $8800 ($D018 = $32), which is the score font,
-; and arms raster $40. The room index in $29 picks two tables. $480B, room*2
+; and arms raster $40. With the yscroll left at 3, the display starts at
+; raster $33, so raster $40 is inside character row 1, the score text. $D021
+; stays $FC (grey) for row 0 and for that score row. raster_open then installs
+; the room charset and the first color band, before row 2 is drawn. Row 2 is
+; screen code $06, solid black in that charset, which is why the strip above
+; the picture is black rather than the room background. The room index in $29
+; picks two tables. $480B, room*2
 ; is twelve color bytes, copied to $0153: four bands of $D021, $D022, $D023.
 ; $4833, room*2 is the split list, and only its first four bytes are copied to
 ; $47F5. Room 0's splits are $78, $97, and $FD. $FD ends the chain. Several
@@ -8804,8 +8838,12 @@ L_4912:
         PLA                             ; $491C
         RTI                             ; $491D
 
-; Raster $40, just above the picture. $F2 is restored to $D018. In this room
-; that is $38, charset $A000. The first band is then taken from $0153.
+; Raster $40, inside the score row. The wait below runs until raster $41, then
+; a short delay, still before row 2. $F2 is restored to $D018. In a normal
+; room that is $38, charset $A000. The first band is then taken from $0153.
+; A split list whose first byte is $FD never reaches raster_split, so this
+; first band is the only one on screen. Rooms 4, 5, and 6 are that case:
+; background 6, $D022 light blue, $D023 white.
 raster_open:
         LDA #$41                        ; $491E
 L_4920:
