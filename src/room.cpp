@@ -43,97 +43,17 @@ uint8_t lampLeft[kRoomCount] = {
     0x03, 0x03, 0x03, 0x00, 0x04, 0x06, 0x02, 0x02, 0x01, 0x00,
 };
 
-// $7B. frame flips this before the room hook, so the hook runs every other
-// logic frame. $4E97 is the trap-door step in room 1. The after-lamp hook
-// stores 3, and $FF means the four pictures have been painted.
-int hookGate = 0;
-int trapTimer = 3;
-
-// Room 5, the hook at $38AB. $71/$77 and $72/$78 slide the two beams under
-// the middle gap. $73/$79 slides the beam at the left of the upper level.
-// The enter hook at $343E reloads all six. A timer is a byte, so $E0 is -32.
-int8_t beamColA = 0x1B;
-int8_t beamColB = 0x1B;
-int8_t beamColC = 0x01;
-int8_t beamTimerA = static_cast<int8_t>(0xFF);
-int8_t beamTimerB = static_cast<int8_t>(0xFC);
-int8_t beamTimerC = static_cast<int8_t>(0xF8);
-
-// One print_string frame. $4086 adds $1F to the accumulator, and $40B4 adds
-// $07 before that. Tiles are the screen codes minus $20, up to the $A0 stop.
-struct BeamTiles {
-    uint8_t count;
-    uint8_t a;
-    uint8_t b;
+const uint8_t kLampLeft0[kRoomCount] = {
+    0x06, 0x06, 0x0A, 0x02, 0x02, 0x0A, 0x08, 0x0D, 0x04, 0x05,
+    0x03, 0x03, 0x03, 0x00, 0x04, 0x06, 0x02, 0x02, 0x01, 0x00,
 };
 
-const BeamTiles kBeamAB[7] = {
-    {1, 0x56, 0x00},
-    {1, 0x55, 0x00},
-    {2, 0x55, 0x56},
-    {2, 0x54, 0x55},
-    {2, 0x00, 0x55},
-    {2, 0x00, 0x54},
-    {2, 0x00, 0x00},
+// First flag byte of each room's list at $4CE2.
+const int kLampAt[kRoomCount] = {
+    0x4D0C, 0x4D25, 0x4D3E, 0x4D67, 0x4D70, 0x4D79, 0x4DA2, 0x4DC3,
+    0x4DF8, 0x4E09, 0x4E1E, 0x4E2B, 0x4E38, 0x4E45, 0x4E4A, 0x4E5B,
+    0x4E74, 0x4E7D, 0x4E86, 0x4E8B,
 };
-
-const BeamTiles kBeamC[7] = {
-    {1, 0x5A, 0x00},
-    {1, 0x59, 0x00},
-    {2, 0x59, 0x5A},
-    {2, 0x58, 0x59},
-    {2, 0x00, 0x59},
-    {2, 0x00, 0x58},
-    {2, 0x00, 0x00},
-};
-
-void StampBeam(const BeamTiles& frame, int col, int tileRow) {
-    const uint8_t tiles[2] = {frame.a, frame.b};
-    for (int i = 0; i < frame.count; ++i) {
-        WriteTile(col + i, tileRow, tiles[i]);
-    }
-}
-
-// $3915, $3944, and $3978. Count 3 steps the beam one column when it is
-// still left of the limit: erase with accumulator 6, then draw accumulator 2
-// at the new column. Count 7 snaps the column back and reloads the pause.
-void AdvanceBeam(int8_t& timer, int8_t& col, int limit, int8_t resetTimer, int8_t resetCol,
-                 int tileRow, const BeamTiles* frames) {
-    timer = static_cast<int8_t>(timer + 1);
-    if (timer < 0) {
-        return;
-    }
-    int frame = timer;
-    if (timer == 3) {
-        if (col < limit) {
-            StampBeam(frames[6], col, tileRow);
-            col = static_cast<int8_t>(col + 1);
-            timer = 2;
-            frame = 2;
-        } else {
-            frame = 3;
-        }
-    } else if (timer == 7) {
-        timer = resetTimer;
-        col = resetCol;
-        return;
-    }
-    StampBeam(frames[frame], col, tileRow);
-}
-
-void AdvanceRoom5Beams() {
-    // $4D99 is 1 in the opening snapshot and the loaded code never stores it,
-    // so the second beam runs along with the other two.
-    AdvanceBeam(beamTimerA, beamColA, 0x1C, static_cast<int8_t>(0xE0), 0x1B, 9, kBeamAB);
-    AdvanceBeam(beamTimerB, beamColB, 0x1C, static_cast<int8_t>(0xE0), 0x1B, 10, kBeamAB);
-    AdvanceBeam(beamTimerC, beamColC, 0x02, static_cast<int8_t>(0xE2), 0x01, 5, kBeamC);
-}
-
-int TopRow(int tileRow) {
-    // Tile row 2 is character row 3. Each tile row after that is two
-    // character rows, the picture and its shadow.
-    return 3 + (tileRow - 2) * 2;
-}
 
 // $30D4. Carry clear there is an open exit. Room 11's doors sit in the
 // middle of the screen, so that room does not ask for an edge.
@@ -197,19 +117,9 @@ bool EnterRoom(int roomId) {
         const RoomLamp& lamp = info.lamps[i];
         WriteTile(lamp.col, lamp.row, lamp.tile);
     }
-    // Room 1's after-lamp hook at $33F6. The closed door is what the packed
-    // stream just drew, and the enter hook opens it again from this count.
-    if (roomId == 1) {
-        trapTimer = 3;
-    }
-    if (roomId == 5) {
-        beamColA = 0x1B;
-        beamColB = 0x1B;
-        beamColC = 0x01;
-        beamTimerA = static_cast<int8_t>(0xFF);
-        beamTimerB = static_cast<int8_t>(0xFC);
-        beamTimerC = static_cast<int8_t>(0xF8);
-    }
+    // Taken lamps are painted, then the enter hook at $4E9C. The packed
+    // picture is still the closed door, the unlit beam, and the full floor.
+    BeginRoomEffects();
     return true;
 }
 
@@ -223,7 +133,7 @@ int TileAt(int col, int tileRow) {
     if (col < 0 || col >= 40 || tileRow < 2 || tileRow > 12) {
         return -1;
     }
-    const int top = TopRow(tileRow) * 40 + col;
+    const int top = PictureRow(tileRow) * 40 + col;
     return g.room[static_cast<size_t>(top)] & 0x7F;
 }
 
@@ -231,9 +141,49 @@ void WriteTile(int col, int tileRow, int tile) {
     if (col < 0 || col >= 40 || tileRow < 2 || tileRow > 12) {
         return;
     }
-    const int top = TopRow(tileRow) * 40 + col;
+    const int top = PictureRow(tileRow) * 40 + col;
     g.room[static_cast<size_t>(top)] = static_cast<uint8_t>(tile);
     g.room[static_cast<size_t>(top + 40)] = static_cast<uint8_t>(tile);
+}
+
+void WritePicture(int col, int tileRow, int tile) {
+    if (col < 0 || col >= 40 || tileRow < 2 || tileRow > 12) {
+        return;
+    }
+    const int top = PictureRow(tileRow) * 40 + col;
+    g.room[static_cast<size_t>(top)] = static_cast<uint8_t>(tile);
+}
+
+bool LampPresent(int address) {
+    for (int room = 0; room < kRoomCount; ++room) {
+        const int base = kLampAt[room];
+        const int count = kRooms[room].lampCount;
+        if (address < base || address >= base + count * 4) {
+            continue;
+        }
+        const int delta = address - base;
+        if (delta % 4 != 0) {
+            return true;
+        }
+        return !lampTaken[room][delta / 4];
+    }
+    return true;
+}
+
+int LampsLeft(int room) {
+    if (room < 0 || room >= kRoomCount) {
+        return 0;
+    }
+    return lampLeft[room];
+}
+
+void ResetCollectedLamps() {
+    for (int room = 0; room < kRoomCount; ++room) {
+        lampLeft[room] = kLampLeft0[room];
+        for (int i = 0; i < 13; ++i) {
+            lampTaken[room][i] = false;
+        }
+    }
 }
 
 bool ClaimLamp(int col, int row, int& mount) {
@@ -254,53 +204,6 @@ bool ClaimLamp(int col, int row, int& mount) {
         return true;
     }
     return false;
-}
-
-// Room 1, the hook at $3679. The door opens once rooms 0, 1, and 2 have no
-// lamps left and room 6 still has one. $7B has already flipped for this
-// frame, and the hook runs only when that byte is 0.
-void AdvanceTrapDoor() {
-    if (hookGate != 0 || trapTimer < 0) {
-        return;
-    }
-    // $3682. Room 6's count has to be nonzero, and rooms 0, 1, and 2 empty.
-    if (lampLeft[6] == 0 || lampLeft[0] != 0 || lampLeft[1] != 0 || lampLeft[2] != 0) {
-        return;
-    }
-    trapTimer -= 1;
-    // print_string of $12, $11, $10, then $0F. Each is five tiles at column
-    // $11 of tile row $0C. $424F plays effect $8A on the first step. The
-    // screen codes minus $20, with bit 7 off, are the tiles below.
-    static const uint8_t picture[4][5] = {
-        {0x11, 0x5C, 0x5D, 0x5E, 0x5F},
-        {0x11, 0x22, 0x22, 0x03, 0x03},
-        {0x5C, 0x5D, 0x5E, 0x03, 0x03},
-        {0x22, 0x22, 0x03, 0x03, 0x03},
-    };
-    const int phase = trapTimer < 0 ? 3 : 2 - trapTimer;
-    for (int i = 0; i < 5; ++i) {
-        WriteTile(0x11 + i, 0x0C, picture[phase][i]);
-    }
-}
-
-void AdvanceRoom() {
-    // $1BFE. A stored 0 becomes 1. A stored 1 becomes 0, which is the frame
-    // a hook that shares $7B is allowed to run.
-    if (hookGate == 0) {
-        hookGate = 1;
-    } else {
-        hookGate -= 1;
-    }
-    // The animation for the room he is standing in.
-    switch (g.roomId) {
-    case 1:
-        AdvanceTrapDoor();
-        break;
-    case 5:
-        // $38AB ignores $7B, so the beams move on every logic frame.
-        AdvanceRoom5Beams();
-        break;
-    }
 }
 
 bool TakeExit(int tile, int xpos, int ypos, bool left, bool right, bool up, bool falling) {

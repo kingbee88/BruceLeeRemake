@@ -40,6 +40,7 @@
 ;   $0C and $0D  flying kick, left and right
 ;   $0E          fall
 ;   $11          punch
+;   $17          carried on the scrolling surface. Tile $62 with the ladder bit.
 ;   $1A          duck
 ;
 ; Where to start reading
@@ -76,6 +77,7 @@
 ;   release_hold      the $0106,X pause between pose changes
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
+;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
 
 ; Runs before start and falls into it. Eight bytes are filled at $8900,
 ; $8A10, and $8AB0. expand_charset then doubles four packed charsets
@@ -516,6 +518,9 @@ L_07D0:
         JSR L_1ABB                      ; $080D
         JSR L_1AC7                      ; $0810
         JSR lives_to_bcd                      ; $0813
+; Countdown and copy count for scroll_surface. The first call copies, and
+; that copy does not move the delay slot. $64 is 0 in the opening snapshot,
+; which is the picture expand_charset wrote.
         LDA #$01                        ; $0816
         STA $60                         ; $0818
         STA $66                         ; $081A
@@ -799,6 +804,8 @@ L_0A2E:
         BPL L_0A2E                      ; $0A32
         STA $87                         ; $0A34
         STA $88                         ; $0A36
+; scroll_surface direction and delay slot. 0 moves the picture up. Slot 7
+; is the last byte of $4CB2, an $08. $60, $64, and $66 keep running.
         STA $65                         ; $0A38
         LDA #$07                        ; $0A3A
         STA $4321                       ; $0A3C
@@ -851,6 +858,8 @@ L_0A93:
         ; $D018 follows the room. Below $0A the value is $38, charset $A000.
         ; Room $12 is $3C, charset $B000. Every other room is $3A, charset
         ; $A800. $B800 is expanded at startup and never selected here.
+        ; boot expands each bank once. scroll_surface writes into the bank
+        ; selected here, and this routine does not expand it again.
         LDA #$38                        ; $0A9B
         LDX $29                         ; $0A9D
         CPX #$0A                        ; $0A9F
@@ -3866,6 +3875,11 @@ L_21E5:
         LDA #$04                        ; $21E7
         STA $AD,X                       ; $21E9
         JSR score_blip                  ; $21EB
+; State $17. The stick has already stepped him two pixels. $60 is read
+; after scroll_surface, so a 1 here is the frame before that copy. The
+; compare is exact: the $84 pause has bit 7 set and does not shove. $65
+; clear moves him up two pixels, the same two rows one pattern byte covers.
+; $65 set moves him down.
 L_21EE:
         LDA $60                         ; $21EE
         CMP #$01                        ; $21F0
@@ -5384,9 +5398,44 @@ L_2C6B:
         CMP $61                         ; $2C6D
         RTS                             ; $2C6F
 
-; Common exit of the room 5 per-frame hook. The STA instructions at
-; $2CFC and $2D03 rewrite the address of the LDA at $2D2B before it runs.
-L_2C70:
+; Scrolling surface. The per-frame hooks of rooms 4, 5, 6, 8, 9, and 11
+; jump here. It rewrites glyphs $61, $62, and $63 and the shadow copies
+; $E1, $E2, and $E3 in the charset on screen. Rooms below 10 read the 24
+; bytes at $42F1 and write charset $A000. Room 11 reads the 24 bytes at
+; $4309 and writes charset $A800. Eight bytes belong to each glyph.
+; enter_room selects the bank with $D018 and does not expand it again, so
+; a step written into a bank is still there when that bank is shown again.
+; $64 is shared by both banks.
+;
+;   $60    countdown. $0818 stores 1, so the first call copies. Bit 7 is
+;          the long pause: the low seven bits count down and the glyphs
+;          stay put unless $66 has run out.
+;   $64    which pattern byte is at the top of the glyph, kept across a
+;          room change. The opening snapshot holds 0, the expanded picture.
+;   $65    0 increments $64 and the picture moves up. Any other value
+;          decrements $64 and the picture moves down. enter_room stores 0.
+;          Wrapping the slot complements this byte, which is the reversal.
+;          Room 4 stores 0 again when lamp $4D74 is taken. Room 8 stores 1
+;          when lamp $4E04 is still present. Room 9 stores 1 on every frame
+;          while lamp $4E09 is gone and $4E99 has not run out, and stores 0
+;          when lamp $4E0D is taken and when the room's lamps are clear.
+;          Room 11 stores 0 when lamp $4E33 is gone.
+;   $66    copies left at this delay. A slot change stores $10. The copy
+;          that starts from the 1 at $0818 does not move the slot.
+;   $4321  index into $4CB2: 84 08 06 04 02 04 06 08. enter_room stores 7.
+;          $84 is the bit-7 pause. Wrapping from 0 back to 7 complements $65.
+;
+; A plain countdown copies when $60 reaches 0. X walks eight pattern bytes
+; from $64 and wraps to 0. Y 0-3 doubles the first four into the picture
+; glyph. Y 4-7 doubles the next four into the shadow; that pointer starts
+; four bytes early because Y is already 4. Glyph byte 0 is the top row, so
+; one step up or down is two pixel rows. State $17 shoves the actor those
+; two pixels on the frame before a plain copy. The $84 pause never leaves
+; $60 equal to 1, so it does not shove. The STA at $2CFC and $2D03
+; rewrite the address of the LDA at $2D2B. The BCS at $2CE4 lands on the
+; $00 inside the BIT at $2CEC, an LDA #$00, and $64 becomes 0. The
+; underflow path stores 7.
+scroll_surface:
         LDA $60                         ; $2C70
         BMI L_2C79                      ; $2C72
         DEC $60                         ; $2C74
@@ -6571,7 +6620,8 @@ hook_enter_3:
         LDA #$03                        ; $33FC
         STA $4E97                       ; $33FE
         RTS                             ; $3401
-; Enter hook for room 4.
+; Enter hook for room 4. Arms the three beams. It does not change $64 or
+; $65. enter_room has already set the upward direction.
 hook_enter_4:
         LDA #$1F                        ; $3402
         STA $4E9A                       ; $3404
@@ -7033,7 +7083,8 @@ L_374B:
         LDX #$06                        ; $3759
         LDY #$15                        ; $375B
         JMP print_string                ; $375D
-; Per-frame hook for room 4.
+; Per-frame hook for room 4. It ends in scroll_surface. The ladder is the
+; vertical run of tiles $61, $62, $62, $63.
 hook_frame_4:
         LDA $4D70                       ; $3760
         BEQ L_378D                      ; $3763
@@ -7099,6 +7150,7 @@ L_37E1:
         LDA $4E98                       ; $37E6
         BMI L_3811                      ; $37E9
         DEC $4E98                       ; $37EB
+; Lamp $4D74 has been taken. Force the surface up and restart its slot.
         LDA #$00                        ; $37EE
         STA $65                         ; $37F0
         LDA #$07                        ; $37F2
@@ -7197,7 +7249,7 @@ L_38A0:
         LDA #$1A                        ; $38A4
         STA $73                         ; $38A6
 L_38A8:
-        JMP L_2C70                      ; $38A8
+        JMP scroll_surface             ; $38A8
 ; Per-frame hook for room 5. It does not read $7B, so the beams move on
 ; every logic frame. These are energy beams.
 ;
@@ -7220,7 +7272,8 @@ L_38A8:
 ; holds 1 there, and nothing from $0500 to $4FFF stores $4D99.
 ;
 ; The blocks above the beam counters are one-shots on $4E99, $4E9A,
-; and $4E9B. Each waits while its $4Dxx flag is still clear.
+; and $4E9B. Each waits while its $4Dxx flag is still clear. The hook
+; ends in scroll_surface.
 hook_frame_5:
         LDA $4D99                       ; $38AB
         BNE L_38CB                      ; $38AE
@@ -7350,8 +7403,8 @@ L_399F:
         LDA #$01                        ; $39A3
         STA $73                         ; $39A5
 L_39A7:
-        JMP L_2C70                      ; $39A7
-; Per-frame hook for room 6.
+        JMP scroll_surface             ; $39A7
+; Per-frame hook for room 6. It ends in scroll_surface.
 hook_frame_6:
         LDA $30                         ; $39AA
         BNE L_39BD                      ; $39AC
@@ -7363,7 +7416,7 @@ hook_frame_6:
         JSR L_3AA0                      ; $39BA
 L_39BD:
         JSR L_3228                      ; $39BD
-        JMP L_2C70                      ; $39C0
+        JMP scroll_surface             ; $39C0
 ; Per-frame hook for room 7.
 hook_frame_7:
         JSR L_3228                      ; $39C3
@@ -7514,7 +7567,7 @@ L_3ACA:
         JSR print_string                ; $3ACE
         INC $6C                         ; $3AD1
         RTS                             ; $3AD3
-; Per-frame hook for room 8.
+; Per-frame hook for room 8. It ends in scroll_surface.
 hook_frame_8:
         LDA $31                         ; $3AD4
         ORA $4E00                       ; $3AD6
@@ -7534,6 +7587,7 @@ L_3AEA:
         DEC $4E9A                       ; $3AF7
         LDA $4E04                       ; $3AFA
         BEQ L_3B08                      ; $3AFD
+; Lamp $4E04 is still present. Force the surface down and restart its slot.
         LDA #$01                        ; $3AFF
         STA $65                         ; $3B01
         LDA #$07                        ; $3B03
@@ -7625,14 +7679,17 @@ L_3BA7:
         LDA #$DA                        ; $3BAB
         STA $78                         ; $3BAD
 L_3BAF:
-        JMP L_2C70                      ; $3BAF
-; Per-frame hook for room 9.
+        JMP scroll_surface             ; $3BAF
+; Per-frame hook for room 9. It ends in scroll_surface.
 hook_frame_9:
         LDA $4E99                       ; $3BB2
         BMI L_3BC8                      ; $3BB5
         LDA $4E09                       ; $3BB7
         BNE L_3BC8                      ; $3BBA
         DEC $4E99                       ; $3BBC
+; Lamp $4E09 is gone. Pin the surface down, and the slot at 7, until this
+; counter runs out. The slot never wraps while this runs, so it cannot
+; reverse on its own.
         LDA #$01                        ; $3BBF
         STA $65                         ; $3BC1
         LDA #$07                        ; $3BC3
@@ -7646,6 +7703,7 @@ L_3BC8:
         LDA #$07                        ; $3BD5
         LDY #$17                        ; $3BD7
         JSR L_3A8A                      ; $3BD9
+; Lamp $4E0D has been taken. Force the surface up and restart its slot.
         LDA #$00                        ; $3BDC
         STA $65                         ; $3BDE
         LDA #$07                        ; $3BE0
@@ -7656,6 +7714,7 @@ L_3BE5:
         LDA $4E98                       ; $3BE9
         BMI L_3C06                      ; $3BEC
         DEC $4E98                       ; $3BEE
+; Room 9's lamps are clear. Force the surface up and restart its slot.
         LDA #$00                        ; $3BF1
         STA $65                         ; $3BF3
         LDA #$07                        ; $3BF5
@@ -7739,7 +7798,7 @@ L_3C85:
         LDA #$C0                        ; $3C89
         STA $78                         ; $3C8B
 L_3C8D:
-        JMP L_2C70                      ; $3C8D
+        JMP scroll_surface             ; $3C8D
 ; Per-frame hook for room 10.
 hook_frame_10:
         LDA $4E97                       ; $3C90
@@ -7775,20 +7834,22 @@ L_3CA7:
         NOP                             ; $3CBB
         NOP                             ; $3CBC
         JMP L_3228                      ; $3CBD
-; Per-frame hook for room 11.
+; Per-frame hook for room 11. It ends in scroll_surface. The pattern is
+; the block at $4309, written into charset $A800.
 hook_frame_11:
         LDA $4E97                       ; $3CC0
         BMI L_3CD6                      ; $3CC3
         LDA $4E33                       ; $3CC5
         BNE L_3CD6                      ; $3CC8
         DEC $4E97                       ; $3CCA
+; Lamp $4E33 has been taken. Force the surface up and restart its slot.
         LDA #$00                        ; $3CCD
         STA $65                         ; $3CCF
         LDA #$07                        ; $3CD1
         STA $4321                       ; $3CD3
 L_3CD6:
         JSR L_3228                      ; $3CD6
-        JMP L_2C70                      ; $3CD9
+        JMP scroll_surface             ; $3CD9
 ; Per-frame hook for room 18.
 hook_frame_18:
         LDA $4E97                       ; $3CDC

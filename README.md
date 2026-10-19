@@ -36,15 +36,16 @@ An Xbox pad, or any other XInput controller, does the same things. The keyboard 
 
 ## Current state
 
-* All 20 screens added - flow not complete yet, but now you can open hatch in room2.
-* All Bruce movement animation added and he can move freely. 
+* All 20 room added - most rooms are playable and has lamps, beams, doors, etc. working
+* All Bruce movement and fighting animations added and he can move as in original. 
 * Gamepad support
 
 ## TODO
 
 * Fix errors in all levels
-* Scene progress all the way through
-* Ninja and Yumi
+* Prove the game is completable
+* Add Ninja and Yumi and health
+* Game over screen
 * Fullscreen support
 * Trainers
 * Audio

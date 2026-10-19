@@ -5,6 +5,7 @@
 #include "bruce.h"
 
 #include "collision.h"
+#include "config.h"
 #include "draw.h"
 #include "game.h"
 #include "pad.h"
@@ -466,6 +467,54 @@ const uint8_t* PoseBytes(int pose, int plane) {
 
 namespace {
 
+// $AD. State $17 waits this many frames between stick steps.
+int carryDelay = 0;
+
+void RespawnHere() {
+    if (!gConfig.infiniteLives) {
+        g.lives -= 1;
+        if (g.lives < 0) {
+            g.lives = 4;
+        }
+    }
+    if (EnterRoom(g.roomId)) {
+        PlaceBruce();
+    }
+}
+
+// $2187. A pure direction steps. Diagonals do not. $60 == 1 then shoves
+// two pixels with the scrolling floor. The climb picture alternates on a step.
+void CarryMove(int stick) {
+    bool stepped = false;
+    if (carryDelay > 0) {
+        carryDelay -= 1;
+    } else if (stick == 0x0E) {
+        Rise(2);
+        stepped = true;
+    } else if (stick == 0x0D) {
+        Drop(2);
+        stepped = true;
+    } else if (stick == 0x0B) {
+        TryStep(-1);
+        TryStep(-1);
+        stepped = true;
+    } else if (stick == 0x07) {
+        TryStep(1);
+        TryStep(1);
+        stepped = true;
+    }
+    if (stepped) {
+        carryDelay = 4;
+        g.pose = g.pose == kPoseClimb0 ? kPoseClimb1 : kPoseClimb0;
+    }
+    const int shove = SurfaceShove();
+    if (shove < 0) {
+        Rise(2);
+    } else if (shove > 0) {
+        Drop(2);
+    }
+}
+
 void TakeLamp(int col, int tileRow) {
     const int tile = TileAt(col, tileRow);
     if (tile != 0x13 && tile != 0x14 && tile != 0x31) {
@@ -564,18 +613,24 @@ bool ScanSpecials() {
     }
     const int col0 = (xpos - 0x0C) >> 2;
     const int row0 = (rowY - 0x0C) >> 4;
-    const bool prize = ProbePose(g.pose, g.x, g.y).bit1;
+    const Contact pose = ProbePose(g.pose, g.x, g.y);
+    const bool prize = pose.bit1;
     const bool falling = g.action == kFall;
     for (int dr = 0; dr < 2; ++dr) {
         for (int dc = 0; dc < 3; ++dc) {
             const int col = col0 + dc;
             const int row = row0 + dr;
             const int tile = TileAt(col, row);
+            if (tile < 0) {
+                continue;
+            }
             if (tile >= 2 && tile <= 5) {
                 if (TakeExit(tile, xpos, ypos, wentLeft, wentRight, wentUp, falling)) {
                     return true;
                 }
+                continue;
             }
+            TouchRoomTile(tile, col, row, prize, pose.ladder);
             if (prize) {
                 TakeLamp(col, row);
             }
@@ -614,14 +669,8 @@ void Tick() {
     AnimateLamps();
 
     // $1BFE flips $7B and $3A6F runs the current room's hook before the
-    // special scan, so room 1's door can be open on the same frame it is tested.
-    AdvanceRoom();
-
-    // scan_specials runs before the hold check, so a pose that is sitting
-    // still can still claim a lamp or take an exit. The step flags are the
-    // ones left by the previous frame. A hold keeps them, the way $1C62
-    // returns before $1C8F clears the counters.
-    if (ScanSpecials()) {
+    // special scan, so a door can be open on the same frame it is tested.
+    if (AdvanceRoom()) {
         wentLeft = false;
         wentRight = false;
         wentUp = false;
@@ -630,12 +679,67 @@ void Tick() {
         return;
     }
 
-    // $0106. The picture stays, and this frame does not read the stick.
-    if (g.hold > 0) {
-        g.hold -= 1;
+    // $2E10 clears state $17 before the cells are read, so the tile has to
+    // catch him again. A shock skips the scan, which is the $19 test.
+    if (g.action == kCarry) {
+        g.action = 0;
+    }
+    if (g.action != kZap && ScanSpecials()) {
+        wentLeft = false;
+        wentRight = false;
+        wentUp = false;
+        StandStill();
         Compose();
         return;
     }
+
+    int stick = 0x0F;
+    if (up && !down) {
+        stick &= ~0x01;
+    }
+    if (down && !up) {
+        stick &= ~0x02;
+    }
+    if (left && !right) {
+        stick &= ~0x04;
+    }
+    if (right && !left) {
+        stick &= ~0x08;
+    }
+
+    // $0106. The picture stays, and this frame does not read the stick.
+    // A beam still shows the shock pose while the hold runs out.
+    if (g.hold > 0) {
+        g.hold -= 1;
+        if (g.action == kZap) {
+            g.pose = kPoseLegs;
+        }
+        Compose();
+        return;
+    }
+
+    // State $19. Y is the timer before the decrement. 1 spends the life.
+    if (g.action == kZap) {
+        if (g.actionTimer <= 1) {
+            RespawnHere();
+        } else {
+            g.actionTimer -= 1;
+            g.pose = kPoseLegs;
+        }
+        Compose();
+        return;
+    }
+
+    // State $17 keeps the picture and does not fall through to a walk.
+    if (g.action == kCarry) {
+        wentLeft = false;
+        wentRight = false;
+        wentUp = false;
+        CarryMove(stick);
+        Compose();
+        return;
+    }
+
     wentLeft = false;
     wentRight = false;
     wentUp = false;
@@ -650,22 +754,6 @@ void Tick() {
         g.repeat -= 1;
     }
     g.prevState = state;
-
-    // Joystick nibble, active low, as $1689 stores it in $98. Fire is $9B
-    // cleared. Opposite directions cancel, which a stick cannot do.
-    int stick = 0x0F;
-    if (up && !down) {
-        stick &= ~0x01;
-    }
-    if (down && !up) {
-        stick &= ~0x02;
-    }
-    if (left && !right) {
-        stick &= ~0x04;
-    }
-    if (right && !left) {
-        stick &= ~0x08;
-    }
 
     const Contact here = Probe(g.x, g.y);
     const bool supported = here.ground || here.ladder;

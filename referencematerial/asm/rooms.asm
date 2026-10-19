@@ -242,3 +242,26 @@
 ; $4E9B. Each waits while its $4Dxx flag is still clear. play_sound_8a,
 ; called from L_3A8A, plays the sound and keeps A.
 
+; ---------------------------------------------------------------------------
+; Scrolling surface. scroll_surface in game.asm rewrites glyphs $61, $62,
+; and $63, and the shadow glyphs $E1, $E2, and $E3. hook_frame_4,
+; hook_frame_5, hook_frame_6, hook_frame_8, hook_frame_9, and hook_frame_11
+; jump to it. Rooms 0-9 share charset $A000, so a step written in one of
+; those rooms is what the next of them shows. Room 11 uses charset $A800
+; and the pattern at $4309. The other pattern, at $42F1, is the one rooms
+; below 10 read.
+;
+; Room 4's ladder is the vertical run at character columns 18-21. The
+; picture row is $61, $62, $62, $63. The shadow row is those tiles with
+; bit 7 set. Rooms 5 and 6 draw the same glyphs in horizontal runs, and
+; rooms 8, 9, and 11 draw them too. Room 18 contains the tile numbers,
+; but its charset is $B000 and this routine never writes that bank. Room
+; 19 contains them on charset $A800 and does not call the routine, so
+; they stay as expand_charset left them until room 11 writes that bank.
+;
+; enter_room stores 0 in $65 and 7 in $4321, so the picture starts upward
+; and the delay slot starts at the last byte of $4CB2. $64 is not cleared.
+; hook_enter_4 does not touch either byte. The direction reverses only
+; when the slot wraps, unless a hook stores $65 itself. Room 4 does that,
+; upward, when lamp $4D74 is taken.
+

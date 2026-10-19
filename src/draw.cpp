@@ -2,6 +2,7 @@
 
 #include "bruce.h"
 #include "game.h"
+#include "room.h"
 #include "scene.h"
 
 #include <cstdio>
@@ -35,6 +36,13 @@ uint8_t StatusGlyph(char ch, int row) {
     static const uint8_t kA[8] = {0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00};
     static const uint8_t kL[8] = {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00};
     static const uint8_t kS[8] = {0x3C, 0x66, 0x60, 0x3C, 0x06, 0x66, 0x3C, 0x00};
+    static const uint8_t kC[8] = {0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00};
+    static const uint8_t kN[8] = {0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x00};
+    static const uint8_t kG[8] = {0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x3C, 0x00};
+    static const uint8_t kR[8] = {0x7C, 0x66, 0x66, 0x7C, 0x78, 0x6C, 0x66, 0x00};
+    static const uint8_t kU[8] = {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00};
+    static const uint8_t kI[8] = {0x3C, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00};
+    static const uint8_t kStar[8] = {0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00};
     const uint8_t* bits = nullptr;
     if (ch >= '0' && ch <= '9') {
         bits = kDigit[ch - '0'];
@@ -52,15 +60,26 @@ uint8_t StatusGlyph(char ch, int row) {
         bits = kL;
     } else if (ch == 'S') {
         bits = kS;
+    } else if (ch == 'C') {
+        bits = kC;
+    } else if (ch == 'N') {
+        bits = kN;
+    } else if (ch == 'G') {
+        bits = kG;
+    } else if (ch == 'R') {
+        bits = kR;
+    } else if (ch == 'U') {
+        bits = kU;
+    } else if (ch == 'I') {
+        bits = kI;
+    } else if (ch == '*') {
+        bits = kStar;
     }
     return bits != nullptr ? bits[row] : 0;
 }
 
-void DrawStatus() {
-    char text[40];
-    const int shown = g.score > 999999 ? 999999 : g.score;
-    std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS 04", shown);
-    const int origin = 8 * 8;
+void DrawLine(const char* text, int column) {
+    const int origin = column * 8;
     for (int i = 0; text[i] != '\0'; ++i) {
         for (int row = 0; row < 8; ++row) {
             const uint8_t bits = StatusGlyph(text[i], row);
@@ -72,6 +91,45 @@ void DrawStatus() {
                 if (px >= 0 && px < kWidth) {
                     g.pixels[static_cast<size_t>(row * kWidth + px)] = kPalette[0];
                 }
+            }
+        }
+    }
+}
+
+void DrawStatus() {
+    if (g.roomId == 19) {
+        DrawLine("** CONGRATULATIONS **", 0x0A);
+        return;
+    }
+    char text[40];
+    const int shown = g.score > 999999 ? 999999 : g.score;
+    int lives = g.lives;
+    if (lives < 0) {
+        lives = 0;
+    } else if (lives > 99) {
+        lives = 99;
+    }
+    std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS %02d", shown, lives);
+    DrawLine(text, 8);
+}
+
+void DrawSpark(int index) {
+    int x = 0;
+    int y = 0;
+    const uint8_t* shape = nullptr;
+    if (!BossSparkAt(index, x, y, shape)) {
+        return;
+    }
+    for (int row = 0; row < 21; ++row) {
+        for (int col = 0; col < 24; ++col) {
+            const uint8_t bits = shape[row * 3 + col / 8];
+            if ((bits & static_cast<uint8_t>(0x80 >> (col & 7))) == 0) {
+                continue;
+            }
+            const int px = x + col;
+            const int py = y + row;
+            if (px >= 0 && py >= 0 && px < kWidth && py < kHeight) {
+                g.pixels[static_cast<size_t>(py * kWidth + px)] = kPalette[7];
             }
         }
     }
@@ -107,6 +165,8 @@ void Compose() {
             }
         }
     }
+    DrawSpark(0);
+    DrawSpark(1);
     // The body is yellow. The second image is the black hair, eyes, and legs,
     // drawn on top. One sprite pixel is one screen pixel, which is the shape
     // in the reference picture.
