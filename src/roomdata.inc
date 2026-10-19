@@ -1,4 +1,4 @@
-// Room tables from the running game. asm/rooms.asm names each one.
+// Room tables from the running game. referencematerial/asm/rooms.asm names each one.
 // charset is 0 ($A000), 1 ($A800), or 2 ($B000).
 // spawnX and spawnY are xpos ($4BAE) and ypos ($4BC2).
 // bands are the low nibbles of the twelve bytes at the $480B pointer.

@@ -1,4 +1,4 @@
-; Bruce Lee.d64
+; ../Bruce Lee.d64
 ;
 ; The disk has one program, "BRUCE LEE+2 /REM". It loads at $0801 like a
 ; BASIC file. The BASIC line is SYS 2059, which is $080B, the first

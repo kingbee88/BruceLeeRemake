@@ -1,6 +1,6 @@
 ; Bruce Lee, the shared code of the running game.
 ;
-; Bruce Lee.d64 holds one program, "BRUCE LEE+2 /REM", packed so that the
+; ../Bruce Lee.d64 holds one program, "BRUCE LEE+2 /REM", packed so that the
 ; only machine code stored in the clear is the loader in disk-boot.asm.
 ; This file is that program after it has been unpacked, taken from a
 ; snapshot with room 0 on screen. Movement, collision, and room entry are

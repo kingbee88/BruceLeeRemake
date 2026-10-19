@@ -6,7 +6,7 @@ The disk holds one program, `BRUCE LEE+2 /REM`. Only the loader is stored as pla
 
 ## disk-boot.asm
 
-The loader on `Bruce Lee.d64`. It loads at `$0801` like a BASIC file. The BASIC line is `SYS 2059`, which enters the copy stub at `$080B`. That stub copies an Exomizer decruncher to `$00F0` and jumps into it. The decruncher reads the packed bytes downward from `$A447` and writes the program downward from `$CF78`. When the stream is finished, the loader switches the ROMs back in and jumps to `$2800`.
+The loader on `../Bruce Lee.d64`. It loads at `$0801` like a BASIC file. The BASIC line is `SYS 2059`, which enters the copy stub at `$080B`. That stub copies an Exomizer decruncher to `$00F0` and jumps into it. The decruncher reads the packed bytes downward from `$A447` and writes the program downward from `$CF78`. When the stream is finished, the loader switches the ROMs back in and jumps to `$2800`.
 
 Addresses in this file are where the instruction runs. The copy stub runs at `$080B`. The decruncher is stored at `$A548` and runs at `$00F0`.
 

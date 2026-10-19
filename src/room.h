@@ -3,7 +3,7 @@
 constexpr int kRoomCount = 20;
 
 // Load room 0..19. The screen, the colors, and the charset are the expanded
-// bytes described in asm/rooms.asm. Lamps already taken in this room are
+// bytes described in referencematerial/asm/rooms.asm. Lamps already taken in this room are
 // painted as the bare mount. Returns false when a data file is missing.
 bool EnterRoom(int roomId);
 
