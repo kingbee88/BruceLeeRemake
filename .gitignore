@@ -1,3 +1,4 @@
 tmp/
 build/Debug/
-build/Release/
+build/Release/*
+!build/Release/BruceLee.exe
