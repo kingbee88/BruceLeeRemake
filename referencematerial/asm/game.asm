@@ -74,7 +74,7 @@
 ;   frame             one frame, then wait for the raster count
 ;   init_hardware     VIC bank, colors, row pointers
 ;   enter_room        load room $29
-;   title_loop        the title screen keys
+;   title_loop        the options page. F3, F5, F7, and the handedness keys
 ;   step_actors       hold, then choose a picture, for each actor
 ;   choose_pose       state and facing to a library number
 ;   blit_sprites      copy those pictures into the sprite slots
@@ -83,8 +83,24 @@
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
 ;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
+;
+; Front end. The title picture is not drawn by this file. In boot01_title.vsf
+; the loader at $C500 still has it: multicolor bitmap at $2000, video matrix
+; $0400 filled with $1E, color RAM $0C, border light blue, background black.
+; That loader is gone once this image is running. It is written out in title.asm.
+;   open_room         options page. F3 is $42C9, F5 is $42CA, F7 or the button starts.
+;   between_rooms     the PLAYER page. $03 selects the digit. Then the room.
+;   $28               falls left. clear_work_ram stores 4, or 9 when $42CA is set.
+;   $42C9             0 is one player, 1 is two players.
+;   $42CA             0 is the computer, 1 is a human opponent.
+;   $42CB, $42CC      copies of $42C9 and $42CA kept across clear_work_ram.
+;   $03               0 or 1, the player named on the PLAYER page.
+;   $1383, $1384      port 1 and port 2 handedness. 0 left, 1 right.
 
-; Runs before start and falls into it. Eight bytes are filled at $8900,
+; Runs before start and falls into it. The title snapshot enters here from the
+; stub at $0400, which has already copied the character ROM. Plain glyphs land
+; on $8800 and $8900, and the inverse of each lands $40 codes higher, which is
+; why a menu highlight is EOR #$40. Eight bytes are then filled at $8900,
 ; $8A10, and $8AB0. expand_charset then doubles four packed charsets
 ; into $A000/$A400, $A800/$AC00, $B000/$B400, and $B800/$BC00. The
 ; fourth call leaves the stack pointer at $B8. The sprite pictures are
@@ -228,6 +244,13 @@ reset_actors:
         NOP                             ; $057F
         CLI                             ; $0580
         JMP frame                      ; $0581
+; Options page. Screen off, then the logo from the four rows at $49BD, the
+; three prompt strings, and the highlight on F3, 1 PLAYER, F5, COMPUTER, and
+; F7. Sprite 0 is the TM mark: twelve bytes from $0E40, X-expanded, at
+; $83C0+$0C. The raster is game_over_raster, which keeps charset $8000 and
+; multicolor on through row 9 and switches at raster $82. $49/$4A start at
+; $0960, 2400 frames. title_loop returns on F7 or the button; the timeout
+; jumps to reset_actors instead, which skips the PLAYER page.
 open_room:
         SEI                             ; $0584
         LDA $D011                       ; $0585
@@ -261,6 +284,8 @@ L_059F:
         LDA #$0F                        ; $05CA
         STA $8FF8                       ; $05CC
         LDX #$0B                        ; $05CF
+; Four rows of the TM sprite, placed on sprite image $0F.
+copy_tm:
 L_05D1:
         LDA $0E40,X                     ; $05D1
         STA $83CC,X                     ; $05D4
@@ -298,6 +323,9 @@ L_0613:
         DEX                             ; $0623
         BNE L_0613                      ; $0624
         LDX #$27                        ; $0626
+; Logo rows. Bit 7 selects the lower half of the $8000 charset. $4A0D is
+; character row 2, $49BD row 5, $49E5 row 6, $4A35 row 9.
+copy_logo:
 L_0628:
         LDA $4A0D,X                     ; $0628
         ORA #$80                        ; $062B
@@ -328,6 +356,10 @@ L_0628:
         LDY #$31                        ; $0666
         JSR print_string                      ; $0668
         LDX #$09                        ; $066B
+; Highlight the default choices. ADC #$40 sets bit 6, the inverse glyph.
+; X = 0 and 1 also cover the F of F3, F5, and F7. The wider run is 1 PLAYER
+; and COMPUTER. 2 PLAYERS, OPPONENT, and the dash stay plain.
+highlight_menu:
 L_066D:
         LDA $8DF0,X                     ; $066D
         CLC                             ; $0670
@@ -614,8 +646,10 @@ L_089A:
         CPX #$0D                        ; $08AC
         BCC L_089A                      ; $08AE
         RTS                             ; $08B0
-; Wait on the title. A fresh key in $0109 is dispatched; otherwise this watches for the
-; button.
+; Wait on the options page. $49/$4A count down once a frame in game_over_raster.
+; At 0 this jumps to reset_actors and never reaches the PLAYER page. A fresh
+; key in $0109 is dispatched. The button is bit 4 of $DC01, active low.
+; Key codes, after AND #$7F: F7 is 3, F3 is 5, F5 is 6. Bit 7 of $0109 is Shift.
 title_loop:
         LDA $49                         ; $08B1
         ORA $4A                         ; $08B3
@@ -631,14 +665,15 @@ L_08BA:
         STA $010C                       ; $08C9
         LDA $0109                       ; $08CC
         JMP title_key                      ; $08CF
-L_08D2:
+; F7, F5, F3. Anything else falls through to the button test.
+menu_key:
         AND #$7F                        ; $08D2
         CMP #$03                        ; $08D4
-        BEQ L_08FC                      ; $08D6
+        BEQ menu_start                      ; $08D6
         CMP #$06                        ; $08D8
-        BEQ L_0908                      ; $08DA
+        BEQ menu_f5                      ; $08DA
         CMP #$05                        ; $08DC
-        BEQ L_092C                      ; $08DE
+        BEQ menu_f3                      ; $08DE
 L_08E0:
         LDA $4A                         ; $08E0
         CMP #$08                        ; $08E2
@@ -646,6 +681,7 @@ L_08E0:
         LDA $49                         ; $08E6
         CMP #$02                        ; $08E8
         BCS L_08F5                      ; $08EA
+; String $0E is spaces. It wipes the handedness line as the timeout runs out.
         LDA #$0E                        ; $08EC
         LDX #$0A                        ; $08EE
         LDY #$02                        ; $08F0
@@ -654,7 +690,8 @@ L_08F5:
         LDA $DC01                       ; $08F5
         AND #$10                        ; $08F8
         BNE title_loop                      ; $08FA
-L_08FC:
+; F7 or the joystick button. $48 is 16 frames of debounce, counted by the raster.
+menu_start:
         JSR wait_button_up                      ; $08FC
         LDA #$10                        ; $08FF
         STA $48                         ; $0901
@@ -662,13 +699,15 @@ L_0903:
         LDA $48                         ; $0903
         BNE L_0903                      ; $0905
         RTS                             ; $0907
-L_0908:
+; F5. $42CA is 0 for the computer and 1 for a human opponent. $42CC keeps a copy.
+menu_f5:
         LDA $42CA                       ; $0908
         EOR #$01                        ; $090B
         STA $42CA                       ; $090D
         STA $42CC                       ; $0910
         JSR flip_menu_b                      ; $0913
-L_0916:
+; Let the key up, put the 2400-frame timeout back, and pause four frames.
+menu_settle:
         JSR wait_button_up                      ; $0916
         LDA #$09                        ; $0919
         STA $4A                         ; $091B
@@ -680,7 +719,8 @@ L_0925:
         LDA $48                         ; $0925
         BNE L_0925                      ; $0927
         JMP title_loop                      ; $0929
-L_092C:
+; F3. $42C9 is 0 for one player and 1 for two. $42CB keeps a copy.
+menu_f3:
         LDA $42C9                       ; $092C
         EOR #$01                        ; $092F
         STA $42C9                       ; $0931
@@ -701,18 +741,22 @@ wait_button_up:
         AND #$10                        ; $0951
         BEQ wait_button_up                      ; $0953
         RTS                             ; $0955
-; The title keys. $2A, $AA, $11 and $91 each print a line and set or clear $1383 or $1384.
+; Handedness. L is $2A and R is $11. Shift sets bit 7, so Shift-L is $AA and
+; Shift-R is $91. $1383 is port 1 and $1384 is port 2. 0 is left-handed, which
+; rotates the stick through the table at $4A85. 1 is right-handed, the stick as read.
+; The four strings are $08, $0A, $09, and $0D.
 title_key:
         CMP #$2A                        ; $0956
-        BEQ L_0969                      ; $0958
+        BEQ joy1_left                      ; $0958
         CMP #$AA                        ; $095A
-        BEQ L_0979                      ; $095C
+        BEQ joy2_left                      ; $095C
         CMP #$11                        ; $095E
-        BEQ L_0988                      ; $0960
+        BEQ joy1_right                      ; $0960
         CMP #$91                        ; $0962
-        BEQ L_0998                      ; $0964
-        JMP L_08D2                      ; $0966
-L_0969:
+        BEQ joy2_right                      ; $0964
+        JMP menu_key                      ; $0966
+; L. Joystick 1, left-handed.
+joy1_left:
         LDA #$08                        ; $0969
         LDX #$0A                        ; $096B
         LDY #$02                        ; $096D
@@ -720,7 +764,8 @@ L_0969:
         LDA #$00                        ; $0972
         STA $1383                       ; $0974
         BEQ L_09A6                      ; $0977
-L_0979:
+; Shift-L. Joystick 2, left-handed.
+joy2_left:
         LDA #$0A                        ; $0979
         TAX                             ; $097B
         LDY #$02                        ; $097C
@@ -728,7 +773,8 @@ L_0979:
         LDA #$00                        ; $0981
         STA $1384                       ; $0983
         BEQ L_09A6                      ; $0986
-L_0988:
+; R. Joystick 1, right-handed.
+joy1_right:
         LDA #$09                        ; $0988
         LDX #$0A                        ; $098A
         LDY #$02                        ; $098C
@@ -736,7 +782,8 @@ L_0988:
         LDA #$01                        ; $0991
         STA $1383                       ; $0993
         BNE L_09A6                      ; $0996
-L_0998:
+; Shift-R. Joystick 2, right-handed.
+joy2_right:
         LDA #$0D                        ; $0998
         LDX #$0A                        ; $099A
         LDY #$02                        ; $099C
@@ -744,7 +791,7 @@ L_0998:
         LDA #$01                        ; $09A1
         STA $1384                       ; $09A3
 L_09A6:
-        JMP L_0916                      ; $09A6
+        JMP menu_settle                      ; $09A6
 ; Write A through all four pages of color RAM, $D800 to $DBFF.
 fill_color_ram:
         LDX #$00                        ; $09A9
@@ -758,8 +805,8 @@ L_09AB:
         RTS                             ; $09BA
         .byte $04
 
-; Blank the screen and load room $29. $42C9 and $42CA are the two title options; they
-; change which slots the enemies use.
+; Blank the screen and load room $29. $42CA set means a human opponent: the
+; spawn count $5E is forced to 8 here, and to $30 when that actor is woken.
 enter_room:
         LDA $D011                       ; $09BC
         AND #$EF                        ; $09BF
@@ -846,6 +893,7 @@ L_0A4E:
         STA $5D                         ; $0A5E
         STA $5E                         ; $0A60
 L_0A62:
+; Human opponent. Actor 1's wake count $5E is 8 instead of the room's value.
         LDA $42CA                       ; $0A62
         BEQ L_0A6B                      ; $0A65
         LDA #$08                        ; $0A67
@@ -1214,6 +1262,7 @@ L_0D0F:
         LDX $29                         ; $0D1E
         LDA $135B,X                     ; $0D20
         STA $5E                         ; $0D23
+; Human opponent reloads actor 1's count with $30.
         LDA $42CA                       ; $0D25
         BEQ L_0D2E                      ; $0D28
         LDA #$30                        ; $0D2A
@@ -1246,6 +1295,7 @@ L_0D46:
         STA $0D57                       ; $0D52
         LDA $E000                       ; $0D55
         STA $5E                         ; $0D58
+; Same override when actor 1 is the one being restarted.
         LDA $42CA                       ; $0D5A
         BEQ L_0D63                      ; $0D5D
         LDA #$30                        ; $0D5F
@@ -1377,9 +1427,11 @@ L_0E32:
         TAX                             ; $0E39
         RTS                             ; $0E3A
 
-; $0E3B  17 bytes of data between routines
+; $0E3B  5 bytes read and discarded by L_0E2E. $0E40 is 12 bytes, four rows of
+; the TM sprite copied to $83CC.
 
-; Flip bit 6 of the glyphs on the second menu row, then draw the word selected by $42CA.
+; Flip bit 6 on the F5 row ($8E40, twenty bytes: row 14, columns 16-35), then
+; draw the word selected by $42CA. $4D is the inverse dash and is left as it is.
 flip_menu_b:
         LDX #$13                        ; $0E4C
 L_0E4E:
@@ -1394,7 +1446,7 @@ L_0E5A:
         LDX #$50                        ; $0E5D
         LDA $42CA                       ; $0E5F
         JMP draw_menu_word                      ; $0E62
-; Flip bit 6 of the glyphs on the first menu row, then draw the word selected by $42C9.
+; Flip bit 6 on the F3 row ($8DF0, row 12, columns 16-35), then the word for $42C9.
 flip_menu_a:
         LDX #$13                        ; $0E65
 L_0E67:
@@ -1408,9 +1460,12 @@ L_0E73:
         BPL L_0E67                      ; $0E74
         LDX #$00                        ; $0E76
         LDA $42C9                       ; $0E78
-; X picks the row. A is the option. The four bytes written are the word for that choice.
+; X is 0 for the F3 row and $50 for the F5 row, one double-row lower. A = 0 keeps
+; the first choice, 1 PLAYER or COMPUTER. A nonzero selects 2 PLAYERS or
+; OPPONENT. The EOR above flips the letters. These four stores repair the
+; key-cap glyphs and the extra S, which are not a plain inverse.
 draw_menu_word:
-        BNE L_0E92                      ; $0E7B
+        BNE menu_second_choice                      ; $0E7B
         LDA #$42                        ; $0E7D
         STA $8DEF,X                     ; $0E7F
         LDA #$40                        ; $0E82
@@ -1420,7 +1475,7 @@ draw_menu_word:
         LDA #$00                        ; $0E8C
         STA $8E04,X                     ; $0E8E
         RTS                             ; $0E91
-L_0E92:
+menu_second_choice:
         LDA #$00                        ; $0E92
         STA $8DEF,X                     ; $0E94
         LDA #$42                        ; $0E97
@@ -1430,7 +1485,13 @@ L_0E92:
         LDA #$56                        ; $0EA1
         STA $8E04,X                     ; $0EA3
         RTS                             ; $0EA6
-; Blue screen, the two option lines, and a countdown in $48. Used between lives.
+; PLAYER page. The whole screen is charset $8000, multicolor, background blue.
+; $03 picks the player. His two digit glyphs are copied from $4A7D into the
+; lines at $4A5D, and those lines are stored with bit 7 set at $8D24 and
+; $8D4C, row 7 column 12 and row 8 column 12. The glyphs are multicolor pair
+; 01, so the ink is $D022, which between_raster cycles. $48 starts at $40
+; frames, or $80 when $42C9 is set. The raster decrements it. The countdown in
+; $18/$19/$1A is longer than either of those, so the page ends on $48.
 between_rooms:
         SEI                             ; $0EA7
         LDA $D011                       ; $0EA8
@@ -1455,6 +1516,10 @@ L_0EC1:
         ASL A                           ; $0ED5
         TAX                             ; $0ED6
         LDY #$00                        ; $0ED7
+; $4A7D is eight digit glyphs: player 1, then player 2, each line pair.
+; X is $03 times 2. The first pair replaces columns 14-15 of line 1, the
+; second pair the same columns of line 2.
+patch_player_digits:
 L_0ED9:
         LDA $4A7D,X                     ; $0ED9
         STA $4A6B,Y                     ; $0EDC
@@ -1573,6 +1638,8 @@ L_0FA8:
         STA $0301                       ; $0FB3
         JSR L_33CA                      ; $0FB6
         JSR fill_0340                      ; $0FB9
+; Falls. 4 against the computer. 9 when $42CA is the human opponent.
+; The Remember trainer can turn the later DEC and INC of $28 into LDA.
         LDA #$04                        ; $0FBC
         STA $28                         ; $0FBE
         LDA $42CA                       ; $0FC0
@@ -1979,9 +2046,10 @@ L_147E:
 
 ; $1488  28 bytes of data between routines
 
-; between_rooms points the raster here, at line $63. $D022 steps through
-; dark grey, grey, light grey, and white. That flash is this screen's color
-; cycle. flicker_lamps is the routine that changes the lamp glyphs.
+; between_rooms points the raster here, at line $63. It waits until $6E, then
+; walks $D022 through dark grey $B, grey $C, light grey $F, white $1, and
+; back down. That is the band across the PLAYER glyphs. Each raster_wait is
+; about one scanline. $48 counts down once per frame.
 between_raster:
         LDX #$6D                        ; $14A4
         LDA #$6E                        ; $14A6
@@ -1995,30 +2063,30 @@ L_14B4:
         DEX                             ; $14B4
         BNE L_14B4                      ; $14B5
 L_14B7:
-        LDA #$FB                        ; $14B7
+        LDA #$FB                        ; $14B7  dark grey
         STA $D022                       ; $14B9
         JSR raster_wait                 ; $14BC
         JSR raster_wait                 ; $14BF
-        LDA #$FC                        ; $14C2
+        LDA #$FC                        ; $14C2  grey
         STA $D022                       ; $14C4
         JSR raster_wait                 ; $14C7
         JSR raster_wait                 ; $14CA
-        LDA #$FF                        ; $14CD
+        LDA #$FF                        ; $14CD  light grey
         STA $D022                       ; $14CF
         JSR raster_wait                 ; $14D2
         JSR raster_wait                 ; $14D5
-        LDA #$F1                        ; $14D8
+        LDA #$F1                        ; $14D8  white
         STA $D022                       ; $14DA
         JSR raster_wait                 ; $14DD
-        LDA #$FF                        ; $14E0
+        LDA #$FF                        ; $14E0  light grey again
         STA $D022                       ; $14E2
         JSR raster_wait                 ; $14E5
         JSR raster_wait                 ; $14E8
-        LDA #$FC                        ; $14EB
+        LDA #$FC                        ; $14EB  grey again
         STA $D022                       ; $14ED
         JSR raster_wait                 ; $14F0
         JSR raster_wait                 ; $14F3
-        LDA #$FB                        ; $14F6
+        LDA #$FB                        ; $14F6  dark grey again
         STA $D022                       ; $14F8
         LDA #$30                        ; $14FB
         STA $D018                       ; $14FD
@@ -2051,8 +2119,12 @@ L_1528:
         BNE L_1528                      ; $1529
         RTS                             ; $152B
 
-; game_over points the raster here. Charset $8000 and multicolor stay on until
-; raster $82, where game_over_late takes over. $48 still counts down.
+; Options page and game over both point here. From raster $FD, charset $8000
+; and multicolor stay on through the logo, rows 0-9. Raster $82 is the top of
+; row 10, where options_late takes over. On the logo, color RAM is $0F:
+; pair 00 is $D021 blue, 01 and 10 are $D022/$D023 light grey, 11 would be
+; yellow. The logo glyphs use 00 and 01. $48, and $49/$4A, count down here.
+options_raster:
 game_over_raster:
         LDA $48                         ; $152C
         BEQ L_1532                      ; $152E
@@ -2091,9 +2163,12 @@ L_1542:
         PLA                             ; $1572
         RTI                             ; $1573
 
-; Raster $82 on the game-over screen. Charset $8800 is the score font, and
-; $D016 drops to $16, so the wide dots are off. The vector returns to
-; game_over_raster at raster $FD.
+; Raster $82. Charset $8800 is the score font, copied from the character ROM
+; with the inverse $40 codes higher. $D016 drops to $16: multicolor off,
+; xscroll 6. Rows 10-24 are hires, white ink on the blue background, and bit
+; 6 of a code is the highlighted glyph. The vector returns to options_raster
+; at raster $FD.
+options_late:
 game_over_late:
         LDX #$04                        ; $1574
 L_1576:
@@ -2168,6 +2243,8 @@ L_15EA:
         LDA #$B8                        ; $15EA
 L_15EC:
         STA $7C                         ; $15EC
+; $1383 = 0 prints L at row 1 column 2. Right-handed clears it. The second L,
+; at $8C4D, is drawn only in two-player or opponent mode, from $1384.
         LDA $1383                       ; $15EE
         BEQ L_15F7                      ; $15F1
         LDA #$00                        ; $15F3
@@ -2266,6 +2343,9 @@ L_1689:
         STA $DC03                       ; $169A
         LDA $0104                       ; $169D
         BEQ L_1703                      ; $16A0
+; Port follows $03. Left-handed ($1383,X = 0) rotates the nibble through $4A85
+; ($00, $08, $04, $0C): up becomes right, right becomes down, and so on.
+; $42CA set also reads the other port into $99, the opponent.
         LDA $DC01                       ; $16A2
         LDX $03                         ; $16A5
         BEQ L_16AC                      ; $16A7
@@ -2493,6 +2573,8 @@ lose_life:
         STA $09BB                       ; $1820
         JMP open_room                   ; $1823
 L_1826:
+; One fall. The trainer's first question stores $A5 here, so this becomes LDA $28
+; and the count never moves. The same byte is stored over the INC at $2FE5 and $3155.
         DEC $28                         ; $1826
         BMI game_over                      ; $1828
 ; Count $28 down. Two-player mode swaps the saved block at $439F before the next room.
@@ -5061,6 +5143,8 @@ L_29D4:
 L_29DD:
         LDA $67                         ; $29DD
         AND #$0C                        ; $29DF
+; The trainer's second question writes $09 over this branch offset, so the
+; ORA into $B3 is skipped. $B3 is Bruce's sprite-hit bits. $29F7 is the other one.
         BNE L_29E6                      ; $29E1
         JMP L_29F2                      ; $29E3
 L_29E6:
@@ -5073,6 +5157,7 @@ L_29E6:
 L_29F2:
         LDA $67                         ; $29F2
         AND #$30                        ; $29F4
+; Same trainer patch: offset $09 skips the ORA #$10 into $B3.
         BNE L_29FB                      ; $29F6
         JMP L_2A07                      ; $29F8
 L_29FB:
@@ -6013,6 +6098,7 @@ L_2FDA:
         BCC L_2FD9                      ; $2FDE
         LDX $03                         ; $2FE0
         DEC $4E95,X                     ; $2FE2
+; An extra fall. The trainer overwrites this INC with LDA, the same byte as at $1826.
         INC $28                         ; $2FE5
         JSR lives_to_bcd                      ; $2FE7
         LDY #$8E                        ; $2FEA
@@ -6218,6 +6304,7 @@ L_3149:
         STA $4392,X                     ; $314F
         DEX                             ; $3152
         BPL L_3149                      ; $3153
+; Extra fall when the score crosses the next mark. The trainer's LDA patch covers this too.
         INC $28                         ; $3155
         JSR lives_to_bcd                      ; $3157
 L_315A:
@@ -8682,7 +8769,10 @@ L_42A1:
         LDX #$00                        ; $42BE
         LDY #$0A                        ; $42C0
         JMP print_string                ; $42C2
-; $42C5  1217 bytes of data
+; $42C5  1217 bytes of data. $42C9 and $42CA are the two option flags inside
+; this block, then $42CB and $42CC, their copies. print_string reads the
+; table at $43BE. String $4F is the F3 line, $50 the F5 line, $51 the F7
+; line. $08, $09, $0A, and $0D are the four handedness lines.
 
 L_4786:
         INC $04                         ; $4786
@@ -8936,7 +9026,10 @@ L_49A0:
         INC $44                         ; $49B8
         JMP raster_arm                  ; $49BA
 
-; $49BD  1822 bytes of data between routines
+; $49BD  1822 bytes of data between routines. The first 160 bytes are the four
+; logo rows open_room copies: $49BD, $49E5, $4A0D, $4A35. $4A5D and $4A6D are
+; the two PLAYER lines, 16 bytes each. $4A7D is eight digit glyphs, player 1
+; then player 2. $4A85 is the four-byte left-handed stick rotation.
 
 ; Bit 4 of $D011 turns the screen on. Bit 7 stays clear, so the raster compare uses $D012
 ; alone.

@@ -6,6 +6,7 @@
 #include "scene.h"
 
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -140,15 +141,57 @@ void DrawSpark(int index) {
 }  // namespace
 
 void ComposeTitle(const uint8_t* bitmap) {
-    const uint32_t ink = kPalette[1];
-    const uint32_t paper = kPalette[0];
+    // boot01_title.vsf is bitmap mode with multicolor on ($D011 $3B, $D016 $18).
+    // $D018 is $18, so this bitmap is $2000 and the video matrix is $0400.
+    // All 1000 matrix bytes are $1E, and color RAM is $0C. $D021 is black.
+    // A pixel pair is two bits: 00 background, 01 the high nibble, 10 the low
+    // nibble, 11 color RAM. $D020 is light blue and sits outside this picture.
+    // The bitmap paints that same light blue along its outer edge, so on the
+    // Commodore it continues the border. Those pixels are the grey of the
+    // picture field. Light blue inside the picture stays: the buildings and
+    // the frame lines.
+    const int color[4] = {0x00, 0x01, 0x0E, 0x0C};
+    std::vector<uint8_t> pairs(static_cast<size_t>(kWidth) * kHeight);
     for (int y = 0; y < kHeight; ++y) {
         uint32_t* row = g.pixels.data() + static_cast<size_t>(y) * kWidth;
         for (int x = 0; x < kWidth; ++x) {
             const int index = ((y / 8) * 40 + (x / 8)) * 8 + (y & 7);
-            const bool on = (bitmap[index] & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
-            row[x] = on ? ink : paper;
+            const int pair = (x & 7) / 2;
+            const int bits = (bitmap[index] >> (6 - pair * 2)) & 3;
+            pairs[static_cast<size_t>(y * kWidth + x)] = static_cast<uint8_t>(bits);
+            row[x] = kPalette[color[bits]];
         }
+    }
+    const uint32_t field = kPalette[0x0C];
+    std::vector<int> pending;
+    auto take = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= kWidth || y >= kHeight) {
+            return;
+        }
+        const size_t i = static_cast<size_t>(y * kWidth + x);
+        if (pairs[i] != 2) {
+            return;
+        }
+        pairs[i] = 3;
+        g.pixels[i] = field;
+        pending.push_back(static_cast<int>(i));
+    };
+    for (int x = 0; x < kWidth; ++x) {
+        take(x, 0);
+        take(x, kHeight - 1);
+    }
+    for (int y = 0; y < kHeight; ++y) {
+        take(0, y);
+        take(kWidth - 1, y);
+    }
+    for (size_t n = 0; n < pending.size(); ++n) {
+        const int i = pending[n];
+        const int x = i % kWidth;
+        const int y = i / kWidth;
+        take(x - 1, y);
+        take(x + 1, y);
+        take(x, y - 1);
+        take(x, y + 1);
     }
 }
 

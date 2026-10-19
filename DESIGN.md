@@ -2,13 +2,13 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. Space or Enter starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. Space or Enter opens the options page. F3 and F5 change the two options there, and F7 opens the PLAYER page, which holds and then starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
 
-`config.ini` beside the exe is read first. If that file is not there, `config.ini` in the parent folder is read. `Name=Value` on the command line overrides the file. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture. `InfiniteLives`, `EnemiesCantHitYou`, `StartRoom`, `FullScreen`, and `ShowCRTFilter` are read and not used yet.
+`config.ini` beside the exe is read first. If that file is not there, `config.ini` in the parent folder is read. `Name=Value` on the command line overrides the file. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture, the options page, and the PLAYER page. `InfiniteLives`, `EnemiesCantHitYou`, `StartRoom`, `FullScreen`, and `ShowCRTFilter` are read and not used yet.
 
 ## How a frame runs
 
-1. `main.cpp` loads the room files into `g`. With `ShowTitleScreen` on, it paints `title.bin` and waits for Space or Enter. Then `PlaceBruce` stands him on the floor to the right of the lamp.
+1. `main.cpp` loads the room files into `g`. With `ShowTitleScreen` on, it paints `title.bin` and waits for Space or Enter. That opens the options page in `front.bin`. F7 then shows the PLAYER page. Then `PlaceBruce` stands him on the floor to the right of the lamp. `ShowTitleScreen` off skips those three pages.
 2. Each logic frame, `Tick` reads the arrow keys and space. Opposite directions cancel. Space is read as a level, so holding it repeats once the move allows it.
 3. If the pose hold is running, it counts down and the stick is not read. Climb holds for 3 logic frames. Duck holds for 1. Every other Bruce move holds for 0.
 4. Otherwise the repeat count reloads to 6 when the state is idle or has just changed, and counts down while the same state continues. Left or right walks two xpos steps (4 screen pixels) until that count reaches 0, then three steps (6 pixels). The two stride pictures alternate every logic frame. The screen edge clears the walk. A wall refuses the step and leaves the walk in place.
@@ -38,6 +38,7 @@ The lamp flicker is `$40BC`, once per logic frame, before that test. Three count
 | `src/collision.cpp` | The original overlap test. `Probe` reports wall and floor for the pose he is about to use. `PoseWall` asks the same question for one picture only |
 | `src/bruce.cpp` | Which picture to show, where he starts, and `Tick` |
 | `src/draw.cpp` | `Compose` fills `g.pixels`. `ComposeTitle` paints `title.bin` |
+| `src/front.cpp` | `ComposeMenu` and `ComposePlayerUp` paint the two pages in `front.bin` |
 | `src/main.cpp` | The window, Direct2D, and the message loop |
 
 `StandPose` and `WalkPose` return an index into `bruce.bin`. `PoseBytes` points at one of the two pictures inside that pose: plane 0 is the yellow body, plane 1 is the black detail drawn on top.
@@ -175,14 +176,18 @@ These are the original library images, in order: 2/3, 0/1, `$0E`/`$0F`, `$10`/`$
 
 ### `data/title.bin` — 8000 bytes
 
-The title picture, copied from address `$2000` in the unpacked game. It is the standard 320 by 200 hires bitmap. It is not a row of 320 pixels followed by the next row. The VIC chip stores 25 rows of 40 cells, and each cell is eight bytes, one byte per pixel row of that 8 by 8 cell.
+The title picture, copied from address `$2000` in the title snapshot. It is a multicolor bitmap, not a row of 320 pixels followed by the next row. The VIC chip stores 25 rows of 40 cells, and each cell is eight bytes, one byte per pixel row of that 8 by 8 cell. Each byte holds four pixel pairs.
 
 ```
 byte = ((y / 8) * 40 + (x / 8)) * 8 + (y & 7)
-bit  = 0x80 >> (x & 7)
+pair = (byte >> (6 - ((x & 7) / 2) * 2)) & 3
 ```
 
-A set bit is white and a clear bit is black. This file has no color bytes. `ShowTitleScreen` paints it and waits for Space or Enter, which is the fire button `title_loop` watches. `ShowTitleScreen=False` skips it and opens the room.
+`$D011` is `$3B` and `$D016` is `$18`, so multicolor bitmap mode is on. `$D018` is `$18`: the bitmap is `$2000` and the video matrix is `$0400`. Every matrix byte is `$1E`, and color RAM is `$0C`. `$D021` is black. Pair `00` is that background, `01` is the high nibble (white), `10` is the low nibble (light blue), and `11` is color RAM (grey). `$D020` is the light blue border and is not part of the picture. The bitmap paints that same light blue along its outer edge, so on the Commodore it continues the border. Those pixels are drawn in the grey of the picture field. Light blue inside the picture is the buildings and the frame. `ShowTitleScreen` paints it and waits for Space or Enter. That opens the options page. `ShowTitleScreen=False` skips the picture, the options page, and the PLAYER page, and opens the room.
+
+### `data/front.bin` — 5136 bytes
+
+The options page and the PLAYER page, copied from the menu snapshot. 2048 bytes are the charset at `$8000`, then 2048 bytes of the charset at `$8800`, then the 1000 screen codes at `$8C00`, then the 32 player-line glyphs at `$4A5D`, then the 8 digit glyphs at `$4A7D`. The stored screen has 1 PLAYER and COMPUTER highlighted. F3 and F5 run `flip_menu_a` and `flip_menu_b`. F7 shows PLAYER 1, which `between_rooms` holds for `$40` PAL frames, or `$80` when two players are selected.
 
 ## Collision
 

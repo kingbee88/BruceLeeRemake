@@ -7,6 +7,7 @@
 #include "bruce.h"
 #include "config.h"
 #include "draw.h"
+#include "front.h"
 #include "game.h"
 #include "load.h"
 #include "pad.h"
@@ -23,8 +24,20 @@ constexpr D2D1_COLOR_F kBorderF{0.f, 0.f, 0.f, 1.f};
 ID2D1Factory* gFactory = nullptr;
 ID2D1HwndRenderTarget* gTarget = nullptr;
 ID2D1Bitmap* gBitmap = nullptr;
-bool gInTitle = false;
+
+// Title picture, then the options page, then between_rooms, then play.
+enum class Stage { Title, Menu, Player, Play };
+Stage gStage = Stage::Play;
 bool gTitleStart = false;
+bool gMenuStart = false;
+bool gTwoPlayers = false;     // $42C9. F3. Clear is 1 PLAYER.
+bool gHumanOpponent = false;  // $42CA. F5. Clear is COMPUTER.
+bool gPrevF3 = false;
+bool gPrevF5 = false;
+// between_rooms counts $48 from $40, or $80 when two players are selected.
+// This loop sleeps three PAL frames. 21 passes is 63 of the 64. 43 is 129
+// of the 128.
+int gPlayerFrames = 0;
 
 void ReleaseTarget() {
     if (gBitmap) {
@@ -103,10 +116,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) {
             DestroyWindow(hwnd);
-        } else if (gInTitle && (wp == VK_SPACE || wp == VK_RETURN)) {
-            // title_loop leaves on the fire button. Space is that button here.
-            // The picture stays until the key is up, so the first game frame
-            // does not treat the same press as a punch.
+        } else if (gStage == Stage::Title && (wp == VK_SPACE || wp == VK_RETURN)) {
+            // The title picture leaves on the fire button. Space is that
+            // button here. The picture stays until the key is up, so the
+            // options page does not see the same press.
             gTitleStart = true;
         }
         return 0;
@@ -115,6 +128,56 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     default:
         return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+bool KeyDown(int vk) {
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
+void BeginMenu() {
+    gTwoPlayers = false;
+    gHumanOpponent = false;
+    gMenuStart = false;
+    // A key already held when the page appears waits for a fresh press.
+    gPrevF3 = KeyDown(VK_F3);
+    gPrevF5 = KeyDown(VK_F5);
+    gStage = Stage::Menu;
+    ComposeMenu(gTwoPlayers, gHumanOpponent);
+}
+
+void BeginPlay() {
+    // clear_work_ram writes 4 falls for the computer and 9 for a human opponent.
+    g.lives = gHumanOpponent ? 9 : 4;
+    gStage = Stage::Play;
+    PlaceBruce();
+    Compose();
+}
+
+void PollMenu() {
+    const bool f3 = KeyDown(VK_F3);
+    const bool f5 = KeyDown(VK_F5);
+    // title_loop accepts F7, and the joystick button on $DC01.
+    const bool start = KeyDown(VK_F7) || ReadPad().fire;
+    if (f3 && !gPrevF3) {
+        gTwoPlayers = !gTwoPlayers;
+        ComposeMenu(gTwoPlayers, gHumanOpponent);
+    }
+    if (f5 && !gPrevF5) {
+        gHumanOpponent = !gHumanOpponent;
+        ComposeMenu(gTwoPlayers, gHumanOpponent);
+    }
+    gPrevF3 = f3;
+    gPrevF5 = f5;
+    if (start) {
+        gMenuStart = true;
+    }
+    if (gMenuStart && !start) {
+        gMenuStart = false;
+        gPlayerFrames = gTwoPlayers ? 43 : 21;
+        gStage = Stage::Player;
+        // $03 is 0 at cold start, so the page says PLAYER 1.
+        ComposePlayerUp(0);
     }
 }
 
@@ -143,11 +206,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
             MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
             return 1;
         }
+        if (!LoadFront()) {
+            MessageBoxW(nullptr, L"Could not read data\\front.bin.", L"Bruce Lee", MB_ICONERROR);
+            return 1;
+        }
         ComposeTitle(title.data());
-        gInTitle = true;
+        gStage = Stage::Title;
     } else {
         PlaceBruce();
         Compose();
+        gStage = Stage::Play;
     }
 
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &gFactory))) {
@@ -191,27 +259,31 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         if (!running) {
             break;
         }
-        if (!gInTitle && g.roomId != shownRoom) {
+        if (gStage == Stage::Play && g.roomId != shownRoom) {
             shownRoom = g.roomId;
             wchar_t title[40];
             swprintf_s(title, L"Bruce Lee - room %d", g.roomId);
             SetWindowTextW(hwnd, title);
         }
-        if (gInTitle) {
-            const bool space = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
-            const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+        if (gStage == Stage::Title) {
+            const bool space = KeyDown(VK_SPACE);
+            const bool enter = KeyDown(VK_RETURN);
             const bool fire = space || enter || ReadPad().fire;
             if (fire) {
                 gTitleStart = true;
             }
-            // The picture stays until fire is up, so the first game frame
-            // does not treat the same press as a punch. A is that button
-            // on the pad, the same as Space.
+            // The picture stays until fire is up. A on the pad is that
+            // button, the same as Space.
             if (gTitleStart && !fire) {
-                gInTitle = false;
                 gTitleStart = false;
-                PlaceBruce();
-                Compose();
+                BeginMenu();
+            }
+        } else if (gStage == Stage::Menu) {
+            PollMenu();
+        } else if (gStage == Stage::Player) {
+            gPlayerFrames--;
+            if (gPlayerFrames <= 0) {
+                BeginPlay();
             }
         } else {
             Tick();

@@ -16,6 +16,10 @@ The code in the running game, taken from a snapshot with room 0 on screen. It st
 
 Picture bytes, sprite images, and other data are left as unnamed stretches. The room tables are in `rooms.asm`.
 
+## title.asm
+
+The bytes at `$C000` in `../emulatorsnapshots/boot01_title.vsf`. They are not in `game.asm`. By the options page that RAM has been overwritten, and `$0400` is screen memory. This file is the part that shows the title picture, asks the crack's two questions, and copies the game down to `$0400`.
+
 ## rooms.asm
 
 What changes from room to room. The running game has twenty rooms, and `$29` holds the index, 0 through 19. `game.asm` walks the tables here: the packed picture for each room, the charset, and how many lamps are left. The notes on room 1's trap door and room 5's energy beams are here too. The instructions are `hook_enter_1`, `hook_frame_1`, `hook_enter_5`, and `hook_frame_5` in `game.asm`.

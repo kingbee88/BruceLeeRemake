@@ -6,6 +6,7 @@
 // Call after Tick has chosen g.pose and g.x / g.y.
 void Compose();
 
-// Paint title.bin. A set bit is white and a clear bit is black. The file
-// carries no color bytes, so this is the hires picture on its own.
+// Paint title.bin. It is the multicolor bitmap at $2000. Every cell uses the
+// same four colors from the title snapshot. Light blue along the outer edge
+// is the border color, so it is drawn as the grey field.
 void ComposeTitle(const uint8_t* bitmap);
