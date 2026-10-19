@@ -4,7 +4,7 @@ This project recreates the original *Bruce Lee* on the Commodore 64, written nat
 
 This is still a work in progress. 
 
-![The first screen, with Bruce standing by the lamp](docs/first-room.png)
+![The first screen, with Bruce standing by the lamp](first-room.png)
 
 
 ## Overview
