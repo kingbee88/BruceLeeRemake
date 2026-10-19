@@ -32,7 +32,9 @@ An Xbox pad, or any other XInput controller, does the same things. The keyboard 
 | D-pad or left stick | Move. Left and right walk, up jumps, down ducks or climbs |
 | D-pad or left stick, up with left or right | Jump sideways |
 
-`build.bat` compiles with the Visual Studio C++ tools and writes `build\BruceLee.exe`. The executable looks for `charset.bin`, `room0.bin`, `room0.col`, `bruce.bin`, and `title.bin` beside itself, in `data\` one directory up, or in `data\` beside the executable. `config.ini` is read beside the exe, then in the parent folder. `ShowTitleScreen=False` in that file, or on the command line, skips the title.
+`build.bat` compiles with the Visual Studio C++ tools. `build.bat debug` writes `build\Debug\BruceLee.exe` with optimizations off and a program database beside it. `build.bat release`, or `build.bat` with no argument, writes the optimized `build\Release\BruceLee.exe`. `build.bat all` builds both. In Cursor, with the CodeLLDB extension installed, Ctrl+Shift+B builds Debug and F5 launches it under the debugger. The Run and Debug menu can start Release as well.
+
+The executable looks for `charset.bin`, `room0.bin`, `room0.col`, `bruce.bin`, and `title.bin` beside itself, in `data\` one or two directories up, or in `data\` beside the executable. `config.ini` is read beside the exe, then one folder up, then two folders up, so an exe in `build\Debug` or `build\Release` still finds the copies at the project root. `ShowTitleScreen=False` in that file, or on the command line, skips the title.
 
 `DESIGN.md` describes how a frame runs, how the character cells and sprite poses are stored, and how collision decides wall and floor.
 

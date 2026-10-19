@@ -1,0 +1,10 @@
+# clangd uses this for navigation. build.bat still compiles with cl.exe.
+# The MSVC target makes clangd pick up the Visual Studio and Windows SDK headers.
+CompileFlags:
+  Add:
+    - --target=x86_64-pc-windows-msvc
+    - -std=c++17
+    - -DUNICODE
+    - -D_UNICODE
+    - -I
+    - src

@@ -1,0 +1,35 @@
+{
+  "configurations": [
+    {
+      "name": "Debug",
+      "includePath": [
+        "${workspaceFolder}/src"
+      ],
+      "defines": [
+        "UNICODE",
+        "_UNICODE",
+        "_DEBUG"
+      ],
+      "compilerPath": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-msvc-x64"
+    },
+    {
+      "name": "Release",
+      "includePath": [
+        "${workspaceFolder}/src"
+      ],
+      "defines": [
+        "UNICODE",
+        "_UNICODE",
+        "NDEBUG"
+      ],
+      "compilerPath": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-msvc-x64"
+    }
+  ],
+  "version": 4
+}

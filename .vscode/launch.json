@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/Debug/BruceLee.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false,
+      "terminal": "console",
+      "preLaunchTask": "Build Debug"
+    },
+    {
+      "name": "Release",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/Release/BruceLee.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false,
+      "terminal": "console",
+      "preLaunchTask": "Build Release"
+    }
+  ]
+}

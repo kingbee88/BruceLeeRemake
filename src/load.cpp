@@ -16,7 +16,7 @@ std::wstring ExeDirectory() {
 
 std::vector<uint8_t> LoadFile(const wchar_t* name, size_t bytes) {
     const std::wstring dir = ExeDirectory();
-    const std::wstring rels[] = {L"\\", L"\\..\\data\\", L"\\data\\"};
+    const std::wstring rels[] = {L"\\", L"\\..\\data\\", L"\\..\\..\\data\\", L"\\data\\"};
     for (const std::wstring& rel : rels) {
         const std::wstring path = dir + rel + name;
         HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,

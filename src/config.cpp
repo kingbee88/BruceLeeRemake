@@ -181,10 +181,13 @@ void ApplyCommandLine(const wchar_t* commandLine) {
 void LoadConfig(const wchar_t* commandLine) {
     const std::wstring dir = ExeDirectory();
     std::string bytes;
-    // The file beside the exe wins even when it sets nothing. The parent
-    // file is the workspace copy when the exe is still in build\.
+    // The file beside the exe wins even when it sets nothing. One folder up
+    // is the workspace copy when the exe is in build\. Two folders up is
+    // that copy when the exe is in build\Debug or build\Release.
     if (!ReadIni(dir + L"\\config.ini", bytes)) {
-        ReadIni(dir + L"\\..\\config.ini", bytes);
+        if (!ReadIni(dir + L"\\..\\config.ini", bytes)) {
+            ReadIni(dir + L"\\..\\..\\config.ini", bytes);
+        }
     }
     if (!bytes.empty()) {
         ApplyIniText(WidenFile(bytes));

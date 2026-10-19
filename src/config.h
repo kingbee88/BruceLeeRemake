@@ -15,5 +15,6 @@ struct Config {
 extern Config gConfig;
 
 // Read config.ini beside the exe. If that file is not there, read config.ini
-// in the parent folder. Then apply Name=Value words from the command line.
+// one folder up, then two folders up. Then apply Name=Value words from the
+// command line.
 void LoadConfig(const wchar_t* commandLine);
