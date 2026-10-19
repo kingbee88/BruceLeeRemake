@@ -6,7 +6,7 @@
 struct Config {
     bool infiniteLives = false;
     bool enemiesCantHitYou = false;
-    int startRoom = 1;
+    int startRoom = 0;
     bool showTitleScreen = true;
     bool fullScreen = false;
     bool showCrtFilter = false;

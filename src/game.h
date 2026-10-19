@@ -35,7 +35,7 @@ struct Game {
     int prevState = 0;     // $C2. State at the start of the previous logic frame
     int fallSlide = 0;     // $B0. One sideways nudge on the second falling frame
     int score = 0;         // $41..$43, a 24-bit count. A lamp adds 125.
-    int roomId = 0;        // $29. 0 is the opening room. StartRoom is this plus one.
+    int roomId = 0;        // $29. 0 is the opening room. StartRoom uses this same number.
     int charsetId = 0;     // 0 is $A000, 1 is $A800, 2 is $B000.
     // Four bands of background, $D022, $D023. The low nibble is the VIC color.
     // splits are raster lines. $FD ends the list. Screen y 0 is raster 50.

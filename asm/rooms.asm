@@ -1,10 +1,10 @@
 ; Rooms. The running game has twenty, and $29 holds the index, 0 through $13.
-; first-room.asm is the code that walks these tables. This file is the tables
+; game.asm is the code that walks these tables. This file is the tables
 ; and the notes that came from reading them.
 
 ; ---------------------------------------------------------------------------
-; Charset expand, $047A. It is reached by falling out of the eight-byte fill
-; at $0466, and start at $050F runs after the calls that follow it. Each call
+; Charset expand. boot in game.asm fills eight bytes, then expands the
+; charsets, and falls into start at $050F. Each expand call
 ; sets $F3 to $7F, so 128 glyphs. expand_charset at $4892 doubles four source
 ; bytes into ($06) and the next four into ($08). The two destinations are the
 ; two halves of one 2048-byte charset: glyphs 0-127, then glyphs 128-255.
@@ -20,64 +20,6 @@
 ; source: $9060 is used as a mask buffer, so the packed bytes cannot be
 ; expanded again. The live charsets are what the rooms draw.
 
-        LDA #$7F                        ; $047A
-        STA $F3                         ; $047C
-        LDA #$00                        ; $047E
-        STA $04                         ; $0480
-        LDA #$90                        ; $0482
-        STA $05                         ; $0484
-        LDA #$00                        ; $0486
-        STA $06                         ; $0488
-        STA $08                         ; $048A
-        LDA #$A0                        ; $048C
-        STA $07                         ; $048E
-        LDA #$A4                        ; $0490
-        STA $09                         ; $0492
-        JSR expand_charset              ; $0494
-        LDA #$7F                        ; $0497
-        STA $F3                         ; $0499
-        LDA #$00                        ; $049B
-        STA $04                         ; $049D
-        LDA #$94                        ; $049F
-        STA $05                         ; $04A1
-        LDA #$00                        ; $04A3
-        STA $06                         ; $04A5
-        STA $08                         ; $04A7
-        LDA #$A8                        ; $04A9
-        STA $07                         ; $04AB
-        LDA #$AC                        ; $04AD
-        STA $09                         ; $04AF
-        JSR expand_charset              ; $04B1
-        LDA #$7F                        ; $04B4
-        STA $F3                         ; $04B6
-        LDA #$00                        ; $04B8
-        STA $04                         ; $04BA
-        LDA #$98                        ; $04BC
-        STA $05                         ; $04BE
-        LDA #$00                        ; $04C0
-        STA $06                         ; $04C2
-        STA $08                         ; $04C4
-        LDA #$B0                        ; $04C6
-        STA $07                         ; $04C8
-        LDA #$B4                        ; $04CA
-        STA $09                         ; $04CC
-        JSR expand_charset              ; $04CE
-        LDA #$7F                        ; $04D1
-        STA $F3                         ; $04D3
-        LDA #$00                        ; $04D5
-        STA $04                         ; $04D7
-        LDA #$9C                        ; $04D9
-        STA $05                         ; $04DB
-        LDA #$00                        ; $04DD
-        STA $06                         ; $04DF
-        STA $08                         ; $04E1
-        LDA #$B8                        ; $04E3
-        TAX                             ; $04E5
-        TXS                             ; $04E6
-        STA $07                         ; $04E7
-        LDA #$BC                        ; $04E9
-        STA $09                         ; $04EB
-        JSR expand_charset              ; $04ED
 
 ; enter_room picks the charset from $29. $D018 = $38 for rooms 0-9, which is
 ; $A000. $D018 = $3C for room $12, which is $B000. $D018 = $3A for the rest,
@@ -91,7 +33,7 @@
 ; ---------------------------------------------------------------------------
 ; Picture. $4B34,X and $4B49,X are the low and high bytes of the packed
 ; stream for room X. The streams sit one after another. Room 0 starts at
-; $68F9. The command bytes are described at L_0AD7 in first-room.asm.
+; $68F9. The command bytes are described at L_0AD7 in game.asm.
 ;
 ; Rooms 0-3, 5, 6, 8, 9, 11, 12, 14-16, and 19 emit 440 cells, which is the
 ; playfield: character rows 3-24, eleven tile rows of two character rows.
@@ -241,41 +183,19 @@
 ; 19: dummy at 0,0
 
 ; $4E9C, room*2 runs once from L_336E, after the taken lamps are painted.
-; The word is the address minus one. It clears $4E97-$4E9B first. Room 1's
-; hook is $33F6 and stores 3 in $4E97:
-;
-;        LDA #$03                        ; $33F6
-;        STA $4E97                       ; $33F8
-;        RTS                             ; $33FB
+; The word is the address minus one. It clears $4E97-$4E9B first. The
+; enter hooks are hook_enter_0 through hook_enter_19 in game.asm. Room 1's
+; hook is hook_enter_1 and stores 3 in $4E97.
 ;
 ; $4EC4, room*2 is called every logic frame from L_3A6F, after $7B has
-; flipped. Room 1's hook is $3679. It opens the trap door in the floor.
+; flipped. The per-frame hooks are hook_frame_0 through hook_frame_19 in
+; game.asm. Room 1's hook is hook_frame_1. It opens the trap door in the floor.
 ; $2A, $2B, and $2C have to be zero, which is every lamp in rooms 0, 1, and
 ; 2 taken. $30 is room 6's count and has to be nonzero, so the door stays
 ; shut once room 6 is clear. $4E97 then counts 3, 2, 1, 0, $FF. Each step
 ; prints five tiles at column $11 of tile row $0C. The first step, when the
-; count becomes 2, calls $424F, which plays sound $8A and keeps A.
+; count becomes 2, calls play_sound_8a, which plays sound $8A and keeps A.
 
-        LDA $7B                         ; $3679
-        BNE $36A5                       ; $367B
-        LDA $4E97                       ; $367D
-        BMI $36A5                       ; $3680
-        LDA $30                         ; $3682
-        BEQ $36A5                       ; $3684
-        LDA $2A                         ; $3686
-        ORA $2B                         ; $3688
-        ORA $2C                         ; $368A
-        BNE $36A5                       ; $368C
-        DEC $4E97                       ; $368E
-        LDA $4E97                       ; $3691
-        CMP #$02                        ; $3694
-        BNE $369B                       ; $3696
-        JSR $424F                       ; $3698
-        CLC                             ; $369B
-        ADC #$10                        ; $369C
-        LDX #$0C                        ; $369E
-        LDY #$11                        ; $36A0
-        JMP print_string                ; $36A2
 ;
 ; print_string subtracts $20 from each byte and stops on $A0. The four
 ; strings, and the tiles they become, are:
@@ -289,3 +209,36 @@
 ; packed stream is still the closed floor: columns $11-$15 of that row are
 ; tiles 11 11 22 22 11 until this hook paints over them. Coming back into
 ; the room decompresses that floor and arms $4E97 with 3 again.
+
+; Room 5's enter hook is hook_enter_5 in game.asm. It repeats until the
+; byte at $02 is $32, writes color $FC across $D89A-$D89C and $D8C2-$D8C4,
+; and reloads the three beam columns, rows, and timers. $74, $75, and $76
+; are tile rows 9, $0A, and 5. A timer is a byte, so $FF, $FC, and $F8 are
+; the opening pauses.
+
+
+; Room 5's per-frame hook is hook_frame_5 in game.asm. It does not read $7B,
+; so the beams move on every logic frame. These are energy beams.
+;
+; $71/$77 slides the beam under the middle gap on tile row $74. $72/$78
+; slides the beam on tile row $75, the next row down. Both run from column
+; $1B to column $1C. $73/$79 slides the beam at the left of the upper level,
+; tile row $76, from column $01 to column $02. Count 3 erases with
+; accumulator 6 and, while the column is still left of the limit, steps one
+; column right and draws accumulator 2. Count 7 reloads the column and the
+; pause. $E0 is -32 and $E2 is -30.
+;
+; print_row74 and print_row75 add $1F to the frame and print it. The two gap
+; beams therefore use strings $1F-$25:
+;   56 / 55 / 55 56 / 54 55 / 00 55 / 00 54 / 00 00
+; print_row76_later adds 7 before that, so the upper beam uses strings
+; $26-$2C:
+;   5A / 59 / 59 5A / 58 59 / 00 59 / 00 58 / 00 00
+;
+; The second beam runs only when $4D99 is nonzero. The opening snapshot holds
+; 1 there, and nothing from $0500 to $4FFF stores $4D99.
+;
+; $38AB-$3914 are one-shot blocks on the counters at $4E99, $4E9A, and
+; $4E9B. Each waits while its $4Dxx flag is still clear. play_sound_8a,
+; called from L_3A8A, plays the sound and keeps A.
+

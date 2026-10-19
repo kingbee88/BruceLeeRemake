@@ -475,7 +475,7 @@ void TakeLamp(int col, int tileRow) {
     if (!ClaimLamp(col, tileRow, mount)) {
         return;
     }
-    ReplaceLamp(col, tileRow, mount);
+    WriteTile(col, tileRow, mount);
     if (g.score <= 999999 - 125) {
         g.score += 125;
     }
@@ -610,11 +610,12 @@ void Tick() {
     const bool fire = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0 || pad.fire;
 
     // $40BC runs before the overlap, and a held pose still reaches it.
+    // The lamp glyphs flicker in every room. The charset selects the bytes.
     AnimateLamps();
 
-    // $1BFE flips $7B and $3A6F runs the room hook before the special scan,
-    // so the trap door can be open on the same frame it is tested.
-    AdvanceTrapDoor();
+    // $1BFE flips $7B and $3A6F runs the current room's hook before the
+    // special scan, so room 1's door can be open on the same frame it is tested.
+    AdvanceRoom();
 
     // scan_specials runs before the hold check, so a pose that is sitting
     // still can still claim a lamp or take an exit. The step flags are the
@@ -679,10 +680,16 @@ void Tick() {
     }
 
     ChoosePose(here);
+    // The picture just chosen can be wider than the one the step tested.
+    // $1CC7 undoes whole xpos steps. An xpos is two screen pixels, so the
+    // shove stays on that grid. On an odd pixel a solid nibble ANDs down to
+    // 1 or 4, which is ground, and the torso stays on a ledge for the whole
+    // height of the wall. The fall then never lands, and a jump is allowed
+    // from inside the wall.
     if (PoseWall(g.pose, g.x, g.y)) {
         const int prefer = g.facing < 0 ? 1 : -1;
         const int start = g.x;
-        for (int i = 1; i <= kSpriteCols && PoseWall(g.pose, g.x, g.y); ++i) {
+        for (int i = 2; i <= kSpriteCols && PoseWall(g.pose, g.x, g.y); i += 2) {
             if (!PoseWall(g.pose, start + prefer * i, g.y)) {
                 g.x = start + prefer * i;
             } else if (!PoseWall(g.pose, start - prefer * i, g.y)) {

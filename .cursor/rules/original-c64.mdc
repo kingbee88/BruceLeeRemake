@@ -9,9 +9,9 @@ Aim to be truthful to the original *Bruce Lee* on the Commodore 64. Movement, ti
 
 When a behavior is unclear, check the assembly in `Bruce Lee.d64` at the workspace root before deciding. It is a Commodore 64 floppy disk image of the original game. Do not guess a mechanic, timing, or layout that the disk image can settle.
 
-The VICE Commodore 64 emulator is on the system path. Run the floppy disk image with `x64sc "Bruce Lee.d64"`, or load a snapshot of the first scene with `x64sc bruceleestart.vsf`. Use that to verify the game against the original.
+The VICE Commodore 64 emulator is on the system path. Run the floppy disk image with `x64sc "Bruce Lee.d64"`, or load a snapshot of the first scene with `x64sc room00.vsf` - snapshots are inthe emulatorscapshots folder. Use that to verify the game against the original.
 
-A 6502 disassembly made from that emulator snapshot is in `asm\first-room.asm`. Read it when you need the first room's code without disassembling the snapshot again.
+A 6502 disassembly of the code in memory, taken from that snapshot, is in `asm\game.asm`. The room tables are in `asm\rooms.asm`. Read those before disassembling the snapshot again.
 
 Documentation for VICE Commodore 64 emulator can be found here: "F:\OldGames\VICEC64\GTK3VICE-3.10-win64\doc\vice.pdf"
 

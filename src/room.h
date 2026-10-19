@@ -15,8 +15,9 @@ void RoomSpawn(int roomId, int& x, int& y);
 // -1 when the cell is outside the playfield.
 int TileAt(int col, int tileRow);
 
-// Write a tile on both rows of the pair. Used when a lamp is taken.
-void ReplaceLamp(int col, int tileRow, int tile);
+// Write a tile on both rows of the pair. Lamps, beams, and the trap door
+// all paint through this.
+void WriteTile(int col, int tileRow, int tile);
 
 // True when (col, row) is an untaken lamp in the current room. The mount
 // tile is returned and the lamp stays taken if the room is entered again.
@@ -27,6 +28,8 @@ bool ClaimLamp(int col, int row, int& mount);
 // is loaded and g.x / g.y are the arrival spot.
 bool TakeExit(int tile, int xpos, int ypos, bool left, bool right, bool up, bool falling);
 
-// One logic frame of the room hook at $3A6F. Room 1 opens its trap door here
-// once rooms 0, 1, and 2 have no lamps left. Call it before the special scan.
-void AdvanceTrapDoor();
+// One logic frame of the hook at $3A6F for the room he is in. $1BFE flips
+// $7B first. Room 1 steps its trap door on the frames that flip allows.
+// Room 5 slides its three beams on every frame. Call it before the special
+// scan.
+void AdvanceRoom();

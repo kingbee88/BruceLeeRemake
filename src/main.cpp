@@ -122,16 +122,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     LoadConfig(commandLine);
-    // StartRoom is the room the player sees, counting from 1. $29 is one less.
+    // StartRoom is $29, counting from 0. 0 is the opening room.
     int start = gConfig.startRoom;
-    if (start < 1) {
-        start = 1;
+    if (start < 0) {
+        start = 0;
     }
-    if (start > kRoomCount) {
-        start = kRoomCount;
+    if (start >= kRoomCount) {
+        start = kRoomCount - 1;
     }
     g.frames = LoadFile(L"bruce.bin", static_cast<size_t>(kFrames * 2 * kFrameBytes));
-    if (g.frames.empty() || !EnterRoom(start - 1)) {
+    if (g.frames.empty() || !EnterRoom(start)) {
         MessageBoxW(nullptr, L"Could not read data\\bruce.bin and the room files.",
                     L"Bruce Lee", MB_ICONERROR);
         return 1;
@@ -194,7 +194,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         if (!gInTitle && g.roomId != shownRoom) {
             shownRoom = g.roomId;
             wchar_t title[40];
-            swprintf_s(title, L"Bruce Lee - room %d", g.roomId + 1);
+            swprintf_s(title, L"Bruce Lee - room %d", g.roomId);
             SetWindowTextW(hwnd, title);
         }
         if (gInTitle) {

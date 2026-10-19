@@ -1,10 +1,12 @@
-; Bruce Lee, the code that is running in the first room.
+; Bruce Lee, the shared code of the running game.
 ;
 ; Bruce Lee.d64 holds one program, "BRUCE LEE+2 /REM", packed so that the
 ; only machine code stored in the clear is the loader in disk-boot.asm.
-; This file is the game with the first room on screen, from the memory
-; image bruceleestart.vsf. These are the routines the Windows port follows,
+; This file is that program after it has been unpacked, taken from a
+; snapshot with room 0 on screen. Movement, collision, and room entry are
+; the same in every room. These are the routines the Windows port follows,
 ; at the same addresses. The packed file is not a plain copy of this listing.
+; Room tables are in rooms.asm. The per-room hooks are in this file.
 ;
 ; X selects the actor. X = 0 is Bruce. The same fields exist for the other
 ; two fighters.
@@ -19,6 +21,11 @@
 ;                          when the cell property is not 0.
 ;                   bit 3: wall. Those same nibbles when the property is 0.
 ;                          push_out walks the step back out.
+;                   scan_row marks the AND of the sprite and the glyph, not
+;                   the glyph nibble itself. A partly covered $F can become
+;                   1 or 4, and those are ground. An xpos step is two screen
+;                   pixels, and that alignment is what keeps a solid wall on
+;                   nibbles 3, 12, and 15.
 ;   state,X   $BF   which scripted move is running. 0 means none.
 ;   timer,X   $CE   counts down through that script.
 ;   active,X  $95   bit 0 set: this actor is in the room.
@@ -36,6 +43,7 @@
 ;   $1A          duck
 ;
 ; Where to start reading
+;   boot              fill, charset expand, sprite pictures, then start
 ;   start             cold start
 ;   read_stick        joystick and keyboard
 ;   actor_tick        one actor for this frame
@@ -64,13 +72,101 @@
 ;   step_actors       hold, then choose a picture, for each actor
 ;   choose_pose       state and facing to a library number
 ;   blit_sprites      copy those pictures into the sprite slots
+;   place_sprites     hardware X and Y. A left-facing body can sit 8 xpos left.
 ;   release_hold      the $0106,X pause between pose changes
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
 
+; Runs before start and falls into it. Eight bytes are filled at $8900,
+; $8A10, and $8AB0. expand_charset then doubles four packed charsets
+; into $A000/$A400, $A800/$AC00, $B000/$B400, and $B800/$BC00. The
+; fourth call leaves the stack pointer at $B8. The sprite pictures are
+; built, $10F7 returns, and the sprite colors are written.
+boot:
+        LDX #$07                        ; $0466
+L_0468:
+        LDA #$FF                        ; $0468
+        STA $8900,X                     ; $046A
+        LDA #$03                        ; $046D
+        STA $8A10,X                     ; $046F
+        LDA #$C0                        ; $0472
+        STA $8AB0,X                     ; $0474
+        DEX                             ; $0477
+        BPL L_0468                      ; $0478
+        LDA #$7F                        ; $047A
+        STA $F3                         ; $047C
+        LDA #$00                        ; $047E
+        STA $04                         ; $0480
+        LDA #$90                        ; $0482
+        STA $05                         ; $0484
+        LDA #$00                        ; $0486
+        STA $06                         ; $0488
+        STA $08                         ; $048A
+        LDA #$A0                        ; $048C
+        STA $07                         ; $048E
+        LDA #$A4                        ; $0490
+        STA $09                         ; $0492
+        JSR expand_charset              ; $0494
+        LDA #$7F                        ; $0497
+        STA $F3                         ; $0499
+        LDA #$00                        ; $049B
+        STA $04                         ; $049D
+        LDA #$94                        ; $049F
+        STA $05                         ; $04A1
+        LDA #$00                        ; $04A3
+        STA $06                         ; $04A5
+        STA $08                         ; $04A7
+        LDA #$A8                        ; $04A9
+        STA $07                         ; $04AB
+        LDA #$AC                        ; $04AD
+        STA $09                         ; $04AF
+        JSR expand_charset              ; $04B1
+        LDA #$7F                        ; $04B4
+        STA $F3                         ; $04B6
+        LDA #$00                        ; $04B8
+        STA $04                         ; $04BA
+        LDA #$98                        ; $04BC
+        STA $05                         ; $04BE
+        LDA #$00                        ; $04C0
+        STA $06                         ; $04C2
+        STA $08                         ; $04C4
+        LDA #$B0                        ; $04C6
+        STA $07                         ; $04C8
+        LDA #$B4                        ; $04CA
+        STA $09                         ; $04CC
+        JSR expand_charset              ; $04CE
+        LDA #$7F                        ; $04D1
+        STA $F3                         ; $04D3
+        LDA #$00                        ; $04D5
+        STA $04                         ; $04D7
+        LDA #$9C                        ; $04D9
+        STA $05                         ; $04DB
+        LDA #$00                        ; $04DD
+        STA $06                         ; $04DF
+        STA $08                         ; $04E1
+        LDA #$B8                        ; $04E3
+        TAX                             ; $04E5
+        TXS                             ; $04E6
+        STA $07                         ; $04E7
+        LDA #$BC                        ; $04E9
+        STA $09                         ; $04EB
+        JSR expand_charset              ; $04ED
+        JSR build_sprites               ; $04F0
+        JSR L_10F7                      ; $04F3
+        LDA #$35                        ; $04F6
+        STA $01                         ; $04F8
+        LDA #$F0                        ; $04FA
+        STA $D028                       ; $04FC
+        STA $D02A                       ; $04FF
+        STA $D02B                       ; $0502
+        LDA #$F7                        ; $0505
+        STA $D027                       ; $0507
+        LDA #$F5                        ; $050A
+        STA $D029                       ; $050C
+
 ; Cold start. The screen is turned off until the room is ready.
-; The charset expand at $047A runs before this. It is listed in rooms.asm,
-; along with the per-room pointers this file's enter_room walks.
+; boot falls into here. The per-room pointers enter_room walks are in
+; rooms.asm.
 start:
         SEI                             ; $050F
         CLD                             ; $0510
@@ -1517,7 +1613,16 @@ L_1013:
 L_102A:
         RTS                             ; $102A
 
-; $102B  16 bytes of data between routines
+L_102B:
+        LDX #$13                        ; $102B
+L_102D:
+        LDA $0153,X                     ; $102D
+        STA $47B4,X                     ; $1030
+        DEX                             ; $1033
+        BPL L_102D                      ; $1034
+        LDA #$FE                        ; $1036
+        STA $82                         ; $1038
+        RTS                             ; $103A
 
 L_103B:
         LDX #$13                        ; $103B
@@ -1530,7 +1635,60 @@ L_103D:
         STA $82                         ; $1048
         RTS                             ; $104A
 
-; $104B  106 bytes of data between routines
+L_104B:
+        LDX #$08                        ; $104B
+L_104D:
+        LDA $010F,X                     ; $104D
+        BEQ L_10B1                      ; $1050
+        TXA                             ; $1052
+        PHA                             ; $1053
+        LDA $0119,X                     ; $1054
+        STA $012D,X                     ; $1057
+        STA $70                         ; $105A
+        LDA $0123,X                     ; $105C
+        STA $6F                         ; $105F
+        LDA $010F,X                     ; $1061
+        BMI L_108F                      ; $1064
+        DEC $0119,X                     ; $1066
+        LDA $0119,X                     ; $1069
+        CMP $0137,X                     ; $106C
+        BCS L_1077                      ; $106F
+        LDA $0141,X                     ; $1071
+        STA $0119,X                     ; $1074
+L_1077:
+        STA $6E                         ; $1077
+        LDA $6F                         ; $1079
+        CMP #$05                        ; $107B
+        BEQ L_1089                      ; $107D
+        CMP #$0A                        ; $107F
+        BEQ L_1089                      ; $1081
+        JSR L_404E                      ; $1083
+        JMP L_10AF                      ; $1086
+L_1089:
+        JSR L_4063                      ; $1089
+        JMP L_10AF                      ; $108C
+L_108F:
+        INC $0119,X                     ; $108F
+        LDA $0119,X                     ; $1092
+        CMP $0141,X                     ; $1095
+        BCC L_10A0                      ; $1098
+        LDA $0137,X                     ; $109A
+        STA $0119,X                     ; $109D
+L_10A0:
+        STA $6E                         ; $10A0
+        LDA $6F                         ; $10A2
+        CMP #$05                        ; $10A4
+        BEQ L_1089                      ; $10A6
+        CMP #$0A                        ; $10A8
+        BEQ L_1089                      ; $10AA
+        JSR L_404E                      ; $10AC
+L_10AF:
+        PLA                             ; $10AF
+        TAX                             ; $10B0
+L_10B1:
+        DEX                             ; $10B1
+        BPL L_104D                      ; $10B2
+        RTS                             ; $10B4
 
 ; Play the effect for Y = $82, restoring A, X and Y.
 blip_and_return:
@@ -1568,7 +1726,43 @@ L_10DA:
         BIT $10DF                       ; $10DC
         RTS                             ; $10DF
 
-; $10E0  81 bytes of data between routines
+L_10E0:
+        LDA $03                         ; $10E0
+        CLC                             ; $10E2
+        ADC #$26                        ; $10E3
+        TAX                             ; $10E5
+        LDA #$01                        ; $10E6
+L_10E8:
+        STA $0300,X                     ; $10E8
+        DEX                             ; $10EB
+        DEX                             ; $10EC
+        BPL L_10E8                      ; $10ED
+        LDX $03                         ; $10EF
+        LDA #$00                        ; $10F1
+        STA $0300,X                     ; $10F3
+        RTS                             ; $10F6
+L_10F7:
+        RTS                             ; $10F7
+; $10F8  11 bytes of data
+; Hardware IRQ. $FFFE points here. Both branches jump through the
+; pointer at $0408, which is $491E in this snapshot. $FFFA and $FFFC
+; point at the RTI below.
+irq_vector:
+        PHA                             ; $1103
+        TXA                             ; $1104
+        PHA                             ; $1105
+        TYA                             ; $1106
+        PHA                             ; $1107
+        TSX                             ; $1108
+        LDA $0104,X                     ; $1109
+        AND #$00                        ; $110C
+        BEQ L_1113                      ; $110E
+        JMP ($0408)                     ; $1110
+L_1113:
+        JMP ($0408)                     ; $1113
+nmi_vector:
+        RTI                             ; $1116
+; $1117  26 bytes of data
 
 ; Zero $8200-$827F and $8340-$83BF.
 clear_sprite_ram:
@@ -1849,7 +2043,7 @@ L_1542:
         STA $D018                       ; $1544
         LDA #$18                        ; $1547
         STA $D016                       ; $1549
-        JSR $E006                       ; $154C
+        JSR L_E006                      ; $154C
         LDA #$74                        ; $154F
         STA $0408                       ; $1551
         LDA #$15                        ; $1554
@@ -1914,11 +2108,11 @@ irq_service:
         LDA #$00                        ; $15A9
         STA $44                         ; $15AB
         LDX $29                         ; $15AD
-        JSR $EB03                       ; $15AF
-        JSR $EF73                       ; $15B2
-        JSR $F073                       ; $15B5
+        JSR voice_1                     ; $15AF
+        JSR voice_2                     ; $15B2
+        JSR voice_3                     ; $15B5
         INC $16                         ; $15B8
-        JSR $25E2                       ; $15BA
+        JSR place_sprites               ; $15BA
         LDA $4EEC                       ; $15BD
         BNE L_15CD                      ; $15C0
         LDA #$02                        ; $15C2
@@ -1986,7 +2180,7 @@ L_1628:
         LDA #$86                        ; $1634
         STA $0105                       ; $1636
         JSR L_1A42                      ; $1639
-        JSR $102B                       ; $163C
+        JSR L_102B                      ; $163C
 L_163F:
         INC $80                         ; $163F
         BNE L_1645                      ; $1641
@@ -2157,7 +2351,7 @@ L_173F:
         STA $42CA                       ; $176A
         LDA #$20                        ; $176D
         STA $88                         ; $176F
-        JSR $424F                       ; $1771
+        JSR play_sound_8a               ; $1771
         LDA $28                         ; $1774
         CMP #$05                        ; $1776
         BCC L_177F                      ; $1778
@@ -2910,7 +3104,9 @@ L_1CBC:
         JMP L_24B7                      ; $1CC4
 
 ; Bit 3 of hit,X is the solid flag. While it is set, step back out: down, then up, then
-; right, then left.
+; right, then left. Each sideways step is one xpos, two screen pixels. That is
+; the alignment where a solid wall nibble stays a wall. One screen pixel off
+; that grid is enough for the AND in scan_row to turn it into ground.
 push_out:
         LDA hit,X                       ; $1CC7
         AND #$08                        ; Bit 3, the solid flag.
@@ -3013,7 +3209,9 @@ L_1D7E:
 ; $B0,X becomes 2 and he drops one pixel. Later frames drop two. While the
 ; shifted $B0,X is still set and the upper body ($A7) shows ground, one xpos
 ; step is added toward his facing. Bits 0 or 2 of the full hit land him on
-; that pixel.
+; that pixel. The upper-body test is bit 0 only. A wall whose AND has
+; collapsed to nibble 1 or 4 sets that bit on every row, so the fall never
+; reaches the landing test while he overlaps that column.
         CMP #$0E                        ; $1D80
         BNE on_ground                   ; $1D82
         TXA                             ; $1D84
@@ -4231,7 +4429,128 @@ L_25D7:
         STA $277E                       ; $25DE
         RTS                             ; $25E1
 
-; $25E2  190 bytes of data between routines
+; Hardware sprite positions. irq_service calls this every frame. blit_sprites
+; clears $277E after copying images, and a nonzero $277E skips the write.
+; Collision keeps testing the unshifted xpos.
+;
+; The body's hardware X is xpos times two, the expanded sprite coordinate.
+; $D4,X is the $5CBF byte L_2719 returned. When it is nonzero and facing is
+; left, 8 is subtracted first, so the picture is drawn 16 screen pixels to
+; the left of the collision box. The second sprite does that subtract when
+; its library, $4F4B,X, is $05, $3F, $43, or $19. Actor 2 has no second
+; sprite here. The hardware Y of both sprites is ypos+$1D. The carry out of
+; the ASL is that sprite's bit in $D010.
+;
+; The five pointers at $8FF8-$8FFC come from $2763, or from $2768 when $277D
+; is set. $277D flips on every call that gets this far.
+place_sprites:
+        LDA $277E                       ; $25E2
+        BEQ L_25E8                      ; $25E5
+        RTS                             ; $25E7
+L_25E8:
+        INC $277E                       ; $25E8
+        LDX #$02                        ; $25EB
+        STX $51                         ; $25ED
+L_25EF:
+        LDA active,X                    ; $25EF
+        AND #$01                        ; $25F1
+        BEQ L_2634                      ; $25F3
+        LDA xpos,X                      ; $25F5
+        STA $B9,X                       ; $25F7
+        LDY $D4,X                       ; $25F9
+        BEQ L_2606                      ; $25FB
+        LDY facing,X                    ; $25FD
+        CPY #$01                        ; $25FF
+        BEQ L_2606                      ; $2601
+        SEC                             ; $2603
+        SBC #$08                        ; $2604
+L_2606:
+        ASL A                           ; $2606
+        PHA                             ; $2607
+        LDY $276D,X                     ; $2608
+        LDA $D010                       ; $260B
+        BCC L_2615                      ; $260E
+        ORA $2773,Y                     ; $2610
+        BNE L_2618                      ; $2613
+L_2615:
+        AND $2778,Y                     ; $2615
+L_2618:
+        STA $D010                       ; $2618
+        TYA                             ; $261B
+        ASL A                           ; $261C
+        TAY                             ; $261D
+        PLA                             ; $261E
+        STA $D000,Y                     ; $261F
+        LDA ypos,X                      ; $2622
+        CLC                             ; $2624
+        ADC #$1D                        ; $2625
+        STA $D001,Y                     ; $2627
+        LDY $276D,X                     ; $262A
+        LDA $DA,X                       ; $262D
+        STA $D027,Y                     ; $262F
+L_2632:
+        CPX #$02                        ; $2632
+L_2634:
+        BEQ L_267A                      ; $2634
+        LDY $4F4B,X                     ; $2636
+        LDA xpos,X                      ; $2639
+        CPY #$05                        ; $263B
+        BEQ L_264B                      ; $263D
+        CPY #$3F                        ; $263F
+        BEQ L_264B                      ; $2641
+        CPY #$43                        ; $2643
+        BEQ L_264B                      ; $2645
+        CPY #$19                        ; $2647
+        BNE L_264E                      ; $2649
+L_264B:
+        SEC                             ; $264B
+        SBC #$08                        ; $264C
+L_264E:
+        ASL A                           ; $264E
+        PHA                             ; $264F
+        LDY $2770,X                     ; $2650
+        LDA $D010                       ; $2653
+        BCC L_265D                      ; $2656
+        ORA $2773,Y                     ; $2658
+        BNE L_2660                      ; $265B
+L_265D:
+        AND $2778,Y                     ; $265D
+L_2660:
+        STA $D010                       ; $2660
+        TYA                             ; $2663
+        ASL A                           ; $2664
+        TAY                             ; $2665
+        PLA                             ; $2666
+        STA $D000,Y                     ; $2667
+        LDA ypos,X                      ; $266A
+        CLC                             ; $266C
+        ADC #$1D                        ; $266D
+        STA $D001,Y                     ; $266F
+        LDY $2770,X                     ; $2672
+        LDA $DD,X                       ; $2675
+        STA $D027,Y                     ; $2677
+L_267A:
+        LDX $51                         ; $267A
+        DEX                             ; $267C
+        BMI L_2682                      ; $267D
+        JMP L_25EF                      ; $267F
+L_2682:
+        LDX #$04                        ; $2682
+        LDY #$04                        ; $2684
+        LDA $277D                       ; $2686
+        BEQ L_268D                      ; $2689
+        LDY #$09                        ; $268B
+L_268D:
+        LDA $2763,Y                     ; $268D
+        STA $8FF8,X                     ; $2690
+        DEY                             ; $2693
+        DEX                             ; $2694
+        BPL L_268D                      ; $2695
+        LDA $277D                       ; $2697
+        EOR #$01                        ; $269A
+        STA $277D                       ; $269C
+        RTS                             ; $269F
+
 
 ; Copy one image from the library at $6667 into the sprite buffer at ($0E). A zero in A
 ; means the buffer is cleared instead.
@@ -4326,6 +4645,8 @@ L_273E:
         LDA $5C33,X                     ; $273E
 L_2741:
         PHA                             ; $2741
+; X returns the $5CBF byte for this library. place_sprites shifts a
+; left-facing body eight xpos when the byte is nonzero.
         LDA $5CBF,X                     ; $2742
         PHA                             ; $2745
         LDX $51                         ; $2746
@@ -5063,7 +5384,137 @@ L_2C6B:
         CMP $61                         ; $2C6D
         RTS                             ; $2C6F
 
-; $2C70  229 bytes of data between routines
+; Common exit of the room 5 per-frame hook. The STA instructions at
+; $2CFC and $2D03 rewrite the address of the LDA at $2D2B before it runs.
+L_2C70:
+        LDA $60                         ; $2C70
+        BMI L_2C79                      ; $2C72
+        DEC $60                         ; $2C74
+        BEQ L_2C92                      ; $2C76
+        RTS                             ; $2C78
+L_2C79:
+        AND #$7F                        ; $2C79
+        SEC                             ; $2C7B
+        SBC #$01                        ; $2C7C
+        BEQ L_2C85                      ; $2C7E
+        ORA #$80                        ; $2C80
+        STA $60                         ; $2C82
+        RTS                             ; $2C84
+L_2C85:
+        LDX $4321                       ; $2C85
+        LDA $4CB2,X                     ; $2C88
+        STA $60                         ; $2C8B
+        DEC $66                         ; $2C8D
+        BMI L_2CBC                      ; $2C8F
+        RTS                             ; $2C91
+L_2C92:
+        LDA #$A0                        ; $2C92
+        STA $7C                         ; $2C94
+        LDA #$F1                        ; $2C96
+        STA $7D                         ; $2C98
+        LDA #$42                        ; $2C9A
+        STA $7E                         ; $2C9C
+        LDA $29                         ; $2C9E
+        CMP #$0A                        ; $2CA0
+        BCC L_2CB0                      ; $2CA2
+        LDA #$A8                        ; $2CA4
+        STA $7C                         ; $2CA6
+        LDA #$09                        ; $2CA8
+        STA $7D                         ; $2CAA
+        LDA #$43                        ; $2CAC
+        STA $7E                         ; $2CAE
+L_2CB0:
+        LDX $4321                       ; $2CB0
+        LDA $4CB2,X                     ; $2CB3
+        STA $60                         ; $2CB6
+        DEC $66                         ; $2CB8
+        BPL L_2CD8                      ; $2CBA
+L_2CBC:
+        DEC $4321                       ; $2CBC
+        BPL L_2CCC                      ; $2CBF
+        LDX #$07                        ; $2CC1
+        STX $4321                       ; $2CC3
+        LDA $65                         ; $2CC6
+        EOR #$01                        ; $2CC8
+        STA $65                         ; $2CCA
+L_2CCC:
+        LDX $4321                       ; $2CCC
+        LDA $4CB2,X                     ; $2CCF
+        STA $60                         ; $2CD2
+        LDA #$10                        ; $2CD4
+        STA $66                         ; $2CD6
+L_2CD8:
+        LDA $65                         ; $2CD8
+        BNE L_2CE6                      ; $2CDA
+        INC $64                         ; $2CDC
+        LDA $64                         ; $2CDE
+        CMP #$08                        ; $2CE0
+        BCC L_2CF1                      ; $2CE2
+        BCS $2CED                       ; $2CE4  lands on LDA #$00 inside $2CEC
+L_2CE6:
+        DEC $64                         ; $2CE6
+        BPL L_2CF1                      ; $2CE8
+        LDA #$07                        ; $2CEA
+        BIT $00A9                       ; $2CEC
+        STA $64                         ; $2CEF
+L_2CF1:
+        LDX #$02                        ; $2CF1
+L_2CF3:
+        STX $51                         ; $2CF3
+        TXA                             ; $2CF5
+        ASL A                           ; $2CF6
+        ASL A                           ; $2CF7
+        ASL A                           ; $2CF8
+        CLC                             ; $2CF9
+        ADC $7D                         ; $2CFA
+        STA $2D2C                       ; $2CFC  rewrites a byte of the instruction at $2D2B
+        LDA $7E                         ; $2CFF
+        ADC #$00                        ; $2D01
+        STA $2D2D                       ; $2D03  rewrites a byte of the instruction at $2D2B
+        TXA                             ; $2D06
+        CLC                             ; $2D07
+        ADC #$61                        ; $2D08
+        STA $43BC                       ; $2D0A
+        JSR scale_by_eight              ; $2D0D
+        LDA $43BC                       ; $2D10
+        STA $06                         ; $2D13
+        SEC                             ; $2D15
+        SBC #$04                        ; $2D16
+        STA $08                         ; $2D18
+        LDA $43BB                       ; $2D1A
+        CLC                             ; $2D1D
+        ADC $7C                         ; $2D1E
+        STA $07                         ; $2D20
+        CLC                             ; $2D22
+        ADC #$04                        ; $2D23
+        STA $09                         ; $2D25
+        LDY #$00                        ; $2D27
+        LDX $64                         ; $2D29
+L_2D2B:
+        LDA $E000,X                     ; $2D2B
+        CPY #$04                        ; $2D2E
+        BCS L_2D3C                      ; $2D30
+        STA ($06),Y                     ; $2D32
+        JSR L_478D                      ; $2D34
+        STA ($06),Y                     ; $2D37
+        JMP L_2D43                      ; $2D39
+L_2D3C:
+        STA ($08),Y                     ; $2D3C
+        JSR L_4794                      ; $2D3E
+        STA ($08),Y                     ; $2D41
+L_2D43:
+        INY                             ; $2D43
+        INX                             ; $2D44
+        CPX #$08                        ; $2D45
+        BNE L_2D4B                      ; $2D47
+        LDX #$00                        ; $2D49
+L_2D4B:
+        CPY #$08                        ; $2D4B
+        BNE L_2D2B                      ; $2D4D
+        LDX $51                         ; $2D4F
+        DEX                             ; $2D51
+        BPL L_2CF3                      ; $2D52
+        RTS                             ; $2D54
 
 ; If Bruce (X = 0) has $D1 negative, he has lost a life. The other actors call $3001
 ; instead.
@@ -5811,7 +6262,104 @@ enter_room_at:
         LDA $4BAE,X                     ; $3222
         JMP L_2F8E                      ; $3225
 
-; $3228  180 bytes of data between routines
+L_3228:
+        LDX #$02                        ; $3228
+        STX $4F                         ; $322A
+L_322C:
+        LDX $4F                         ; $322C
+        LDA $4FDE,X                     ; $322E
+        BNE L_3236                      ; $3231
+        JMP L_32C4                      ; $3233
+L_3236:
+        INC $4FDE,X                     ; $3236
+        CMP #$08                        ; $3239
+        BNE L_3260                      ; $323B
+        JSR L_32CC                      ; $323D
+L_3240:
+        LDX $4F                         ; $3240
+        LDY $4FE1,X                     ; $3242
+        LDA $4FE4,X                     ; $3245
+        TAX                             ; $3248
+        LDA #$2F                        ; $3249
+        JSR print_string                ; $324B
+        LDX $4F                         ; $324E
+        LDY $4FE1,X                     ; $3250
+        LDA $4FE4,X                     ; $3253
+        TAX                             ; $3256
+        INX                             ; $3257
+        LDA #$30                        ; $3258
+        JSR print_string                ; $325A
+        JMP L_32C4                      ; $325D
+L_3260:
+        CMP #$0C                        ; $3260
+        BNE L_3282                      ; $3262
+        LDY $4FE1,X                     ; $3264
+        LDA $4FE4,X                     ; $3267
+        TAX                             ; $326A
+        LDA #$31                        ; $326B
+        JSR print_string                ; $326D
+        LDX $4F                         ; $3270
+        LDY $4FE1,X                     ; $3272
+        LDA $4FE4,X                     ; $3275
+        TAX                             ; $3278
+        INX                             ; $3279
+        LDA #$32                        ; $327A
+        JSR print_string                ; $327C
+        JMP L_32C4                      ; $327F
+L_3282:
+        CMP #$10                        ; $3282
+        BEQ L_3240                      ; $3284
+        CMP #$14                        ; $3286
+        BNE L_32BB                      ; $3288
+        LDY $4FE1,X                     ; $328A
+        LDA $4FE4,X                     ; $328D
+        TAX                             ; $3290
+        LDA #$00                        ; $3291
+        JSR print_string                ; $3293
+        DEY                             ; $3296
+        DEY                             ; $3297
+        LDA $04                         ; $3298
+        CLC                             ; $329A
+        ADC #$50                        ; $329B
+        STA $04                         ; $329D
+        LDA $05                         ; $329F
+        ADC #$4C                        ; $32A1
+        STA $05                         ; $32A3
+        LDA #$F8                        ; $32A5
+        STA ($04),Y                     ; $32A7
+        LDX $4F                         ; $32A9
+        LDY $4FE1,X                     ; $32AB
+        LDA $4FE4,X                     ; $32AE
+        TAX                             ; $32B1
+        INX                             ; $32B2
+        LDA #$33                        ; $32B3
+        JSR print_string                ; $32B5
+        JMP L_32C4                      ; $32B8
+L_32BB:
+        CMP #$18                        ; $32BB
+        BNE L_32C4                      ; $32BD
+        LDA #$00                        ; $32BF
+        STA $4FDE,X                     ; $32C1
+L_32C4:
+        DEC $4F                         ; $32C4
+        BMI L_32CB                      ; $32C6
+        JMP L_322C                      ; $32C8
+L_32CB:
+        RTS                             ; $32CB
+L_32CC:
+        PHA                             ; $32CC
+        TXA                             ; $32CD
+        PHA                             ; $32CE
+        TYA                             ; $32CF
+        PHA                             ; $32D0
+        LDY #$8D                        ; $32D1
+        JSR play_sound                  ; $32D3
+        PLA                             ; $32D6
+        TAY                             ; $32D7
+        PLA                             ; $32D8
+        TAX                             ; $32D9
+        PLA                             ; $32DA
+        RTS                             ; $32DB
 
 ; Copy the three score bytes at $41 into the display copy at $4398.
 stash_scores:
@@ -6005,7 +6553,896 @@ L_33E6:
 L_33F4:
         RTS                             ; $33F4
 
-; $33F5  1646 bytes of data between routines
+; Per-room hooks. The word at $4E9C, room*2 is the enter hook, and the
+; word at $4EC4, room*2 is the per-frame hook. Both store the address
+; minus one. L_336E calls the enter hook after the taken lamps are
+; painted. L_3A6F calls the per-frame hook once a logic frame.
+;
+; Enter hook for rooms 0, 2, 6, 10, and 11.
+hook_enter_0:
+        RTS                             ; $33F5
+; Enter hook for room 1. Arms the trap-door count at $4E97 with 3.
+hook_enter_1:
+        LDA #$03                        ; $33F6
+        STA $4E97                       ; $33F8
+        RTS                             ; $33FB
+; Enter hook for room 3.
+hook_enter_3:
+        LDA #$03                        ; $33FC
+        STA $4E97                       ; $33FE
+        RTS                             ; $3401
+; Enter hook for room 4.
+hook_enter_4:
+        LDA #$1F                        ; $3402
+        STA $4E9A                       ; $3404
+        LDA #$01                        ; $3407
+        STA $71                         ; $3409
+        LDA #$0B                        ; $340B
+        STA $74                         ; $340D
+        LDA #$0B                        ; $340F
+        STA $72                         ; $3411
+        LDA #$07                        ; $3413
+        STA $75                         ; $3415
+        STA $76                         ; $3417
+        LDA #$1A                        ; $3419
+        STA $73                         ; $341B
+        LDA #$FF                        ; $341D
+        STA $77                         ; $341F
+        STA $78                         ; $3421
+        LDA #$F4                        ; $3423
+        STA $79                         ; $3425
+        RTS                             ; $3427
+; Enter hook for room 5. Repeats until the byte at $02 is $32, writes
+; color $FC across $D89A-$D89C and $D8C2-$D8C4, and reloads the three
+; beam columns, rows, and timers. $74, $75, and $76 are tile rows 9,
+; $0A, and 5. A timer is a byte, so $FF, $FC, and $F8 are the pauses.
+hook_enter_5:
+        LDX #$00                        ; $3428
+        LDA $02,X                       ; $342A
+        TAY                             ; $342C
+        CPY #$32                        ; $342D
+        BNE hook_enter_5                ; $342F
+        LDA #$FC                        ; $3431
+        LDX #$02                        ; $3433
+L_3435:
+        STA $D89A,X                     ; $3435
+        STA $D8C2,X                     ; $3438
+        DEX                             ; $343B
+        BPL L_3435                      ; $343C
+        LDA #$1B                        ; $343E
+        STA $71                         ; $3440
+        STA $72                         ; $3442
+        LDA #$01                        ; $3444
+        STA $73                         ; $3446
+        LDA #$09                        ; $3448
+        STA $74                         ; $344A
+        LDA #$0A                        ; $344C
+        STA $75                         ; $344E
+        LDA #$05                        ; $3450
+        STA $76                         ; $3452
+        LDA #$FF                        ; $3454
+        STA $77                         ; $3456
+        LDA #$FC                        ; $3458
+        STA $78                         ; $345A
+        LDA #$F8                        ; $345C
+        STA $79                         ; $345E
+        RTS                             ; $3460
+; Enter hook for room 7.
+hook_enter_7:
+        LDA #$05                        ; $3461
+        STA $6E                         ; $3463
+        STA $70                         ; $3465
+        LDA #$0B                        ; $3467
+        STA $6F                         ; $3469
+        LDA #$22                        ; $346B
+        STA $71                         ; $346D
+        LDA #$04                        ; $346F
+        STA $74                         ; $3471
+        LDA #$FF                        ; $3473
+        STA $77                         ; $3475
+        RTS                             ; $3477
+; Enter hook for room 8.
+hook_enter_8:
+        LDA #$06                        ; $3478
+        STA $71                         ; $347A
+        LDA #$1B                        ; $347C
+        STA $72                         ; $347E
+        LDA #$05                        ; $3480
+        STA $74                         ; $3482
+        STA $75                         ; $3484
+        LDA #$FF                        ; $3486
+        STA $77                         ; $3488
+        LDA #$F2                        ; $348A
+        STA $78                         ; $348C
+        RTS                             ; $348E
+; Enter hook for room 9.
+hook_enter_9:
+        LDA #$FA                        ; $348F
+        LDX #$03                        ; $3491
+L_3493:
+        STA $D89B,X                     ; $3493
+        STA $D8C3,X                     ; $3496
+        DEX                             ; $3499
+        BPL L_3493                      ; $349A
+        LDA #$04                        ; $349C
+        STA $6E                         ; $349E
+        STA $70                         ; $34A0
+        LDA #$0C                        ; $34A2
+        STA $6F                         ; $34A4
+        LDA #$10                        ; $34A6
+        STA $71                         ; $34A8
+        STA $72                         ; $34AA
+        LDA #$05                        ; $34AC
+        STA $74                         ; $34AE
+        LDA #$06                        ; $34B0
+        STA $75                         ; $34B2
+        LDA #$FC                        ; $34B4
+        STA $77                         ; $34B6
+        LDA #$FF                        ; $34B8
+        STA $78                         ; $34BA
+        RTS                             ; $34BC
+; Enter hook for room 12.
+hook_enter_12:
+        LDA #$01                        ; $34BD
+        STA $4E97                       ; $34BF
+        RTS                             ; $34C2
+; Enter hook for room 13.
+hook_enter_13:
+        LDX #$04                        ; $34C3
+L_34C5:
+        LDA #$02                        ; $34C5
+        STA $010F,X                     ; $34C7
+        LDA #$82                        ; $34CA
+        STA $0114,X                     ; $34CC
+        DEX                             ; $34CF
+        BPL L_34C5                      ; $34D0
+        LDA #$00                        ; $34D2
+        STA $0118                       ; $34D4
+        STA $0112                       ; $34D7
+        LDA #$06                        ; $34DA
+        STA $0138                       ; $34DC
+        STA $011E                       ; $34DF
+        STA $0132                       ; $34E2
+        STA $013C                       ; $34E5
+        STA $013D                       ; $34E8
+        LDA #$02                        ; $34EB
+        STA $011B                       ; $34ED
+        STA $012F                       ; $34F0
+        STA $0139                       ; $34F3
+        STA $013B                       ; $34F6
+        LDX $40                         ; $34F9
+        BNE L_34FF                      ; $34FB
+        LDA #$06                        ; $34FD
+L_34FF:
+        STA $0120                       ; $34FF
+        STA $0134                       ; $3502
+        STA $013E                       ; $3505
+        LDA #$12                        ; $3508
+        LDX $40                         ; $350A
+        BNE L_3510                      ; $350C
+        LDA #$14                        ; $350E
+L_3510:
+        STA $0137                       ; $3510
+        STA $0148                       ; $3513
+        LDA #$15                        ; $3516
+        LDX $40                         ; $3518
+        BNE L_351E                      ; $351A
+        LDA #$13                        ; $351C
+L_351E:
+        STA $011A                       ; $351E
+        STA $012E                       ; $3521
+        STA $0142                       ; $3524
+        LDA #$16                        ; $3527
+        STA $011F                       ; $3529
+        STA $0133                       ; $352C
+        STA $011D                       ; $352F
+        STA $0131                       ; $3532
+        LDX $40                         ; $3535
+        BNE L_353B                      ; $3537
+        LDA #$14                        ; $3539
+L_353B:
+        STA $0121                       ; $353B
+        STA $0135                       ; $353E
+        STA $013F                       ; $3541
+        LDA #$21                        ; $3544
+        STA $0119                       ; $3546
+        STA $012D                       ; $3549
+        STA $0141                       ; $354C
+        LDX $40                         ; $354F
+        BEQ L_3555                      ; $3551
+        LDA #$25                        ; $3553
+L_3555:
+        STA $0143                       ; $3555
+        STA $0145                       ; $3558
+        LDA #$26                        ; $355B
+        LDX $40                         ; $355D
+        BNE L_3563                      ; $355F
+        LDA #$22                        ; $3561
+L_3563:
+        STA $0146                       ; $3563
+        STA $0147                       ; $3566
+        STA $0149                       ; $3569
+        LDA #$05                        ; $356C
+        STA $0128                       ; $356E
+        STA $0129                       ; $3571
+        LDA #$07                        ; $3574
+        STA $0123                       ; $3576
+        STA $012A                       ; $3579
+        LDA #$0A                        ; $357C
+        STA $0124                       ; $357E
+        STA $012B                       ; $3581
+        LDA #$0C                        ; $3584
+        STA $0125                       ; $3586
+        STA $0127                       ; $3589
+        RTS                             ; $358C
+; Enter hook for room 14.
+hook_enter_14:
+        LDA #$01                        ; $358D
+        STA $4E97                       ; $358F
+        RTS                             ; $3592
+; Enter hook for room 15.
+hook_enter_15:
+        LDA #$01                        ; $3593
+        STA $4E97                       ; $3595
+        STA $4E98                       ; $3598
+        STA $4E99                       ; $359B
+        RTS                             ; $359E
+; Enter hook for room 16.
+hook_enter_16:
+        LDA #$FF                        ; $359F
+        STA $DB1C                       ; $35A1
+        STA $DB1D                       ; $35A4
+        STA $DB44                       ; $35A7
+        STA $DB45                       ; $35AA
+        STA $DB6C                       ; $35AD
+        STA $DB6D                       ; $35B0
+        STA $DB94                       ; $35B3
+        STA $DB95                       ; $35B6
+        LDX $03                         ; $35B9
+        LDA $4E95,X                     ; $35BB
+        BNE L_35C3                      ; $35BE
+        JSR $2FEF                       ; $35C0
+L_35C3:
+        RTS                             ; $35C3
+; Enter hook for room 17.
+hook_enter_17:
+        LDA #$FF                        ; $35C4
+        STA $DB1E                       ; $35C6
+        LDA #$01                        ; $35C9
+        STA $4E97                       ; $35CB
+        STA $4E98                       ; $35CE
+        LDA #$08                        ; $35D1
+        STA $71                         ; $35D3
+        STA $72                         ; $35D5
+        STA $73                         ; $35D7
+        LDA #$03                        ; $35D9
+        STA $74                         ; $35DB
+        LDA #$05                        ; $35DD
+        STA $6F                         ; $35DF
+        LDA #$07                        ; $35E1
+        STA $75                         ; $35E3
+        LDA #$09                        ; $35E5
+        STA $76                         ; $35E7
+        LDA #$0B                        ; $35E9
+        STA $6E                         ; $35EB
+        LDA #$F8                        ; $35ED
+        STA $77                         ; $35EF
+        LDA #$F1                        ; $35F1
+        STA $78                         ; $35F3
+        LDA #$EA                        ; $35F5
+        STA $79                         ; $35F7
+        RTS                             ; $35F9
+; Enter hook for room 18.
+hook_enter_18:
+        LDX #$00                        ; $35FA
+        LDA #$FE                        ; $35FC
+L_35FE:
+        STA $D878,X                     ; $35FE
+        STA $D900,X                     ; $3601
+        STA $DA00,X                     ; $3604
+        STA $DB00,X                     ; $3607
+        INX                             ; $360A
+        BNE L_35FE                      ; $360B
+        LDX #$7F                        ; $360D
+        LDA #$00                        ; $360F
+L_3611:
+        STA $8340,X                     ; $3611
+        DEX                             ; $3614
+        BPL L_3611                      ; $3615
+        STA $D017                       ; $3617
+        LDA #$FF                        ; $361A
+        STA $D01D                       ; $361C
+        LDA #$01                        ; $361F
+        STA $4E97                       ; $3621
+        STA $4E98                       ; $3624
+        LDA #$00                        ; $3627
+        STA $432E                       ; $3629
+        STA $432F                       ; $362C
+        STA $4330                       ; $362F
+        LDA #$10                        ; $3632
+        STA $4331                       ; $3634
+        LDA #$06                        ; $3637
+        STA $4336                       ; $3639
+        LDA #$07                        ; $363C
+        STA $4337                       ; $363E
+        RTS                             ; $3641
+; Per-frame hook for room 0.
+hook_frame_0:
+        LDA $30                         ; $3642
+        BNE L_3678                      ; $3644
+        LDA $7B                         ; $3646
+        BNE L_3678                      ; $3648
+        DEC $4E97                       ; $364A
+        BPL L_3678                      ; $364D
+        LDA $4E98                       ; $364F
+        BNE L_3667                      ; $3652
+        LDY #$81                        ; $3654
+        JSR play_sound                  ; $3656
+        LDA #$1D                        ; $3659
+        LDX #$09                        ; $365B
+        LDY #$07                        ; $365D
+        JSR print_string                ; $365F
+        INC $4E98                       ; $3662
+        BNE L_3678                      ; $3665
+L_3667:
+        LDA #$1E                        ; $3667
+        LDX #$09                        ; $3669
+        LDY #$07                        ; $366B
+        JSR print_string                ; $366D
+        DEC $4E98                       ; $3670
+        LDA #$05                        ; $3673
+        STA $4E97                       ; $3675
+L_3678:
+        RTS                             ; $3678
+; Per-frame hook for room 1. Opens the trap door in the floor. $2A,
+; $2B, and $2C have to be zero, which is every lamp in rooms 0, 1, and
+; 2 taken. $30 is room 6's count and has to be nonzero, so the door
+; stays shut once room 6 is clear. $4E97 then counts 3, 2, 1, 0, $FF.
+; Each step prints five tiles at column $11 of tile row $0C. The first
+; step, when the count becomes 2, calls play_sound_8a.
+;
+; print_string subtracts $20 from each byte and stops on $A0. The four
+; strings, and the tiles they become, are:
+;
+;   $12 at $45AA: 31 7C 7D 7E 7F A0    tiles 11 5C 5D 5E 5F
+;   $11 at $45B0: 31 42 42 A3 A3 A0    tiles 11 22 22 03 03
+;   $10 at $45B6: 7C 7D 7E A3 A3 A0    tiles 5C 5D 5E 03 03
+;   $0F at $45BC: 42 42 A3 A3 A3 A0    tiles 22 22 03 03 03
+;
+; Tile $03 is the exit in slot 1, so the open hole leads to room 5.
+; The packed stream is still the closed floor: columns $11-$15 of that
+; row are tiles 11 11 22 22 11 until this hook paints over them. Coming
+; back into the room decompresses that floor and arms $4E97 with 3.
+hook_frame_1:
+        LDA $7B                         ; $3679
+        BNE L_36A5                      ; $367B
+        LDA $4E97                       ; $367D
+        BMI L_36A5                      ; $3680
+        LDA $30                         ; $3682
+        BEQ L_36A5                      ; $3684
+        LDA $2A                         ; $3686
+        ORA $2B                         ; $3688
+        ORA $2C                         ; $368A
+        BNE L_36A5                      ; $368C
+        DEC $4E97                       ; $368E
+        LDA $4E97                       ; $3691
+        CMP #$02                        ; $3694
+        BNE L_369B                      ; $3696
+        JSR play_sound_8a               ; $3698
+L_369B:
+        CLC                             ; $369B
+        ADC #$10                        ; $369C
+        LDX #$0C                        ; $369E
+        LDY #$11                        ; $36A0
+        JMP print_string                ; $36A2
+L_36A5:
+        RTS                             ; $36A5
+; Per-frame hook for room 2.
+hook_frame_2:
+        NOP                             ; $36A6
+        NOP                             ; $36A7
+        NOP                             ; $36A8
+        NOP                             ; $36A9
+        NOP                             ; $36AA
+        NOP                             ; $36AB
+        NOP                             ; $36AC
+        NOP                             ; $36AD
+        LDA $30                         ; $36AE
+        BNE L_3701                      ; $36B0
+        LDA $4E98                       ; $36B2
+        BMI L_36CF                      ; $36B5
+        DEC $4E98                       ; $36B7
+        JSR play_sound_8a               ; $36BA
+        LDA #$1A                        ; $36BD
+        LDX #$0B                        ; $36BF
+        LDY #$25                        ; $36C1
+        JSR print_string                ; $36C3
+        LDA #$07                        ; $36C6
+        LDX #$0C                        ; $36C8
+        LDY #$25                        ; $36CA
+        JSR print_string                ; $36CC
+L_36CF:
+        LDA $7B                         ; $36CF
+        BNE L_3701                      ; $36D1
+        DEC $4E99                       ; $36D3
+        BPL L_3701                      ; $36D6
+        LDA $4E97                       ; $36D8
+        BNE L_36F0                      ; $36DB
+        LDY #$81                        ; $36DD
+        JSR play_sound                  ; $36DF
+        LDA #$1D                        ; $36E2
+        LDX #$09                        ; $36E4
+        LDY #$21                        ; $36E6
+        JSR print_string                ; $36E8
+        INC $4E97                       ; $36EB
+        BNE L_3701                      ; $36EE
+L_36F0:
+        LDA #$1E                        ; $36F0
+        LDX #$09                        ; $36F2
+        LDY #$21                        ; $36F4
+        JSR print_string                ; $36F6
+        DEC $4E97                       ; $36F9
+        LDA #$05                        ; $36FC
+        STA $4E99                       ; $36FE
+L_3701:
+        RTS                             ; $3701
+; Per-frame hook for room 3.
+hook_frame_3:
+        LDA $7B                         ; $3702
+        BNE L_3726                      ; $3704
+        LDA $4E97                       ; $3706
+        BMI L_3726                      ; $3709
+        LDA $2D                         ; $370B
+        BNE L_3726                      ; $370D
+        DEC $4E97                       ; $370F
+        LDA $4E97                       ; $3712
+        CMP #$02                        ; $3715
+        BNE L_371C                      ; $3717
+        JSR play_sound_8a               ; $3719
+L_371C:
+        CLC                             ; $371C
+        ADC #$10                        ; $371D
+        LDX #$0C                        ; $371F
+        LDY #$1D                        ; $3721
+        JSR print_string                ; $3723
+L_3726:
+        DEC $4E99                       ; $3726
+        BMI L_372C                      ; $3729
+        RTS                             ; $372B
+L_372C:
+        LDA #$20                        ; $372C
+        STA $4E99                       ; $372E
+        LDA $4E98                       ; $3731
+        BEQ L_374B                      ; $3734
+        DEC $4E98                       ; $3736
+        LDA #$06                        ; $3739
+        LDX #$06                        ; $373B
+        LDY #$09                        ; $373D
+        JSR print_string                ; $373F
+        LDA #$60                        ; $3742
+        LDX #$06                        ; $3744
+        LDY #$15                        ; $3746
+        JMP print_string                ; $3748
+L_374B:
+        INC $4E98                       ; $374B
+        LDA #$60                        ; $374E
+        LDX #$06                        ; $3750
+        LDY #$09                        ; $3752
+        JSR print_string                ; $3754
+        LDA #$06                        ; $3757
+        LDX #$06                        ; $3759
+        LDY #$15                        ; $375B
+        JMP print_string                ; $375D
+; Per-frame hook for room 4.
+hook_frame_4:
+        LDA $4D70                       ; $3760
+        BEQ L_378D                      ; $3763
+        INC $4E99                       ; $3765
+        LDA $4E99                       ; $3768
+        CMP #$20                        ; $376B
+        BNE L_377B                      ; $376D
+        LDA #$34                        ; $376F
+        LDX #$04                        ; $3771
+        LDY #$0B                        ; $3773
+        JSR print_string                ; $3775
+        JMP L_378D                      ; $3778
+L_377B:
+        CMP #$40                        ; $377B
+        BNE L_378D                      ; $377D
+        LDA #$00                        ; $377F
+        STA $4E99                       ; $3781
+        LDA #$36                        ; $3784
+        LDX #$04                        ; $3786
+        LDY #$0B                        ; $3788
+        JSR print_string                ; $378A
+L_378D:
+        LDA $4D70                       ; $378D
+        BNE L_37B4                      ; $3790
+        LDA $4E97                       ; $3792
+        BMI L_37B4                      ; $3795
+        DEC $4E97                       ; $3797
+        JSR play_sound_8a               ; $379A
+        LDA #$16                        ; $379D
+        LDX #$08                        ; $379F
+        LDY #$0B                        ; $37A1
+        JSR print_string                ; $37A3
+        LDA #$16                        ; $37A6
+        LDX #$09                        ; $37A8
+        LDY #$0B                        ; $37AA
+        JSR print_string                ; $37AC
+        LDA #$06                        ; $37AF
+        JSR print_row75                 ; $37B1
+L_37B4:
+        LDA $4D74                       ; $37B4
+        BEQ L_37E1                      ; $37B7
+        INC $4E9A                       ; $37B9
+        LDA $4E9A                       ; $37BC
+        CMP #$20                        ; $37BF
+        BNE L_37CF                      ; $37C1
+        LDA #$35                        ; $37C3
+        LDX #$04                        ; $37C5
+        LDY #$1C                        ; $37C7
+        JSR print_string                ; $37C9
+        JMP L_37E1                      ; $37CC
+L_37CF:
+        CMP #$40                        ; $37CF
+        BNE L_37E1                      ; $37D1
+        LDA #$00                        ; $37D3
+        STA $4E9A                       ; $37D5
+        LDA #$37                        ; $37D8
+        LDX #$04                        ; $37DA
+        LDY #$1C                        ; $37DC
+        JSR print_string                ; $37DE
+L_37E1:
+        LDA $4D74                       ; $37E1
+        BNE L_3811                      ; $37E4
+        LDA $4E98                       ; $37E6
+        BMI L_3811                      ; $37E9
+        DEC $4E98                       ; $37EB
+        LDA #$00                        ; $37EE
+        STA $65                         ; $37F0
+        LDA #$07                        ; $37F2
+        STA $4321                       ; $37F4
+        JSR play_sound_8a               ; $37F7
+        LDA #$16                        ; $37FA
+        LDX #$08                        ; $37FC
+        LDY #$19                        ; $37FE
+        JSR print_string                ; $3800
+        LDA #$16                        ; $3803
+        LDX #$09                        ; $3805
+        LDY #$19                        ; $3807
+        JSR print_string                ; $3809
+        LDA #$06                        ; $380C
+        JSR print_row76                 ; $380E
+L_3811:
+        INC $77                         ; $3811
+        BMI L_3840                      ; $3813
+        LDA $77                         ; $3815
+        CMP #$03                        ; $3817
+        BEQ L_3825                      ; $3819
+        CMP #$07                        ; $381B
+        BEQ L_3838                      ; $381D
+L_381F:
+        JSR print_row74_later           ; $381F
+        JMP L_3840                      ; $3822
+L_3825:
+        LDX $71                         ; $3825
+        CPX #$03                        ; $3827
+        BCS L_381F                      ; $3829
+        LDA #$06                        ; $382B
+        JSR print_row74_later           ; $382D
+        INC $71                         ; $3830
+        LDA #$02                        ; $3832
+        STA $77                         ; $3834
+        BNE L_381F                      ; $3836
+L_3838:
+        LDA #$A0                        ; $3838
+        STA $77                         ; $383A
+        LDA #$01                        ; $383C
+        STA $71                         ; $383E
+L_3840:
+        LDA $4D70                       ; $3840
+        BEQ L_3874                      ; $3843
+        INC $78                         ; $3845
+        BMI L_3874                      ; $3847
+        LDA $78                         ; $3849
+        CMP #$03                        ; $384B
+        BEQ L_3859                      ; $384D
+        CMP #$07                        ; $384F
+        BEQ L_386C                      ; $3851
+L_3853:
+        JSR print_row75                 ; $3853
+        JMP L_3874                      ; $3856
+L_3859:
+        LDX $72                         ; $3859
+        CPX #$0C                        ; $385B
+        BCS L_3853                      ; $385D
+        LDA #$06                        ; $385F
+        JSR print_row75                 ; $3861
+        INC $72                         ; $3864
+        LDA #$02                        ; $3866
+        STA $78                         ; $3868
+        BNE L_3853                      ; $386A
+L_386C:
+        LDA #$E4                        ; $386C
+        STA $78                         ; $386E
+        LDA #$0B                        ; $3870
+        STA $72                         ; $3872
+L_3874:
+        LDA $4D74                       ; $3874
+        BEQ L_38A8                      ; $3877
+        INC $79                         ; $3879
+        BMI L_38A8                      ; $387B
+        LDA $79                         ; $387D
+        CMP #$03                        ; $387F
+        BEQ L_388D                      ; $3881
+        CMP #$07                        ; $3883
+        BEQ L_38A0                      ; $3885
+L_3887:
+        JSR print_row76                 ; $3887
+        JMP L_38A8                      ; $388A
+L_388D:
+        LDX $73                         ; $388D
+        CPX #$1B                        ; $388F
+        BCS L_3887                      ; $3891
+        LDA #$06                        ; $3893
+        JSR print_row76                 ; $3895
+        INC $73                         ; $3898
+        LDA #$02                        ; $389A
+        STA $79                         ; $389C
+        BNE L_3887                      ; $389E
+L_38A0:
+        LDA #$E4                        ; $38A0
+        STA $79                         ; $38A2
+        LDA #$1A                        ; $38A4
+        STA $73                         ; $38A6
+L_38A8:
+        JMP L_2C70                      ; $38A8
+; Per-frame hook for room 5. It does not read $7B, so the beams move on
+; every logic frame. These are energy beams.
+;
+; $71/$77 slides the beam under the middle gap on tile row $74.
+; $72/$78 slides the beam on tile row $75, the next row down. Both run
+; from column $1B to column $1C. $73/$79 slides the beam at the left of
+; the upper level, tile row $76, from column $01 to column $02. Count 3
+; erases with accumulator 6 and, while the column is still left of the
+; limit, steps one column right and draws accumulator 2. Count 7
+; reloads the column and the pause. $E0 is -32 and $E2 is -30.
+;
+; print_row74 and print_row75 add $1F to the frame. The two gap beams
+; use strings $1F-$25:
+;   56 / 55 / 55 56 / 54 55 / 00 55 / 00 54 / 00 00
+; print_row76_later adds 7 before that, so the upper beam uses strings
+; $26-$2C:
+;   5A / 59 / 59 5A / 58 59 / 00 59 / 00 58 / 00 00
+;
+; The second beam runs only when $4D99 is nonzero. The opening snapshot
+; holds 1 there, and nothing from $0500 to $4FFF stores $4D99.
+;
+; The blocks above the beam counters are one-shots on $4E99, $4E9A,
+; and $4E9B. Each waits while its $4Dxx flag is still clear.
+hook_frame_5:
+        LDA $4D99                       ; $38AB
+        BNE L_38CB                      ; $38AE
+        LDA $4E99                       ; $38B0
+        BMI L_38CB                      ; $38B3
+        DEC $4E99                       ; $38B5
+        LDA #$0A                        ; $38B8
+        LDY #$19                        ; $38BA
+        JSR L_3A8A                      ; $38BC
+        LDA #$0A                        ; $38BF
+        LDY #$1A                        ; $38C1
+        JSR L_3A8A                      ; $38C3
+        LDA #$06                        ; $38C6
+        JSR print_row75                 ; $38C8
+L_38CB:
+        LDA $4D91                       ; $38CB
+        BNE L_38E8                      ; $38CE
+        LDA $4E9A                       ; $38D0
+        BMI L_38E8                      ; $38D3
+        DEC $4E9A                       ; $38D5
+        LDA #$0A                        ; $38D8
+        LDY #$00                        ; $38DA
+        JSR L_3A8A                      ; $38DC
+        LDA #$15                        ; $38DF
+        LDX #$0B                        ; $38E1
+        LDY #$00                        ; $38E3
+        JSR print_string                ; $38E5
+L_38E8:
+        LDA $30                         ; $38E8
+        ORA $4D81                       ; $38EA
+        BEQ L_38F6                      ; $38ED
+        LDA $30                         ; $38EF
+        ORA $4D89                       ; $38F1
+        BNE L_3915                      ; $38F4
+L_38F6:
+        LDA $4E9B                       ; $38F6
+        BMI L_3915                      ; $38F9
+        DEC $4E9B                       ; $38FB
+        LDA #$19                        ; $38FE
+        LDX #$02                        ; $3900
+        LDY #$22                        ; $3902
+        JSR print_string                ; $3904
+        LDA #$03                        ; $3907
+        LDY #$1E                        ; $3909
+        JSR L_3A8A                      ; $390B
+        LDA #$06                        ; $390E
+        LDY #$20                        ; $3910
+        JSR L_3A8A                      ; $3912
+L_3915:
+        INC $77                         ; $3915
+        BMI L_3944                      ; $3917
+        LDA $77                         ; $3919
+        CMP #$03                        ; $391B
+        BEQ L_3929                      ; $391D
+        CMP #$07                        ; $391F
+        BEQ L_393C                      ; $3921
+L_3923:
+        JSR print_row74                 ; $3923
+        JMP L_3944                      ; $3926
+L_3929:
+        LDX $71                         ; $3929
+        CPX #$1C                        ; $392B
+        BCS L_3923                      ; $392D
+        LDA #$06                        ; $392F
+        JSR print_row74                 ; $3931
+        INC $71                         ; $3934
+        LDA #$02                        ; $3936
+        STA $77                         ; $3938
+        BNE L_3923                      ; $393A
+L_393C:
+        LDA #$E0                        ; $393C
+        STA $77                         ; $393E
+        LDA #$1B                        ; $3940
+        STA $71                         ; $3942
+L_3944:
+        LDA $4D99                       ; $3944
+        BEQ L_3978                      ; $3947
+        INC $78                         ; $3949
+        BMI L_3978                      ; $394B
+        LDA $78                         ; $394D
+        CMP #$03                        ; $394F
+        BEQ L_395D                      ; $3951
+        CMP #$07                        ; $3953
+        BEQ L_3970                      ; $3955
+L_3957:
+        JSR print_row75                 ; $3957
+        JMP L_3978                      ; $395A
+L_395D:
+        LDX $72                         ; $395D
+        CPX #$1C                        ; $395F
+        BCS L_3957                      ; $3961
+        LDA #$06                        ; $3963
+        JSR print_row75                 ; $3965
+        INC $72                         ; $3968
+        LDA #$02                        ; $396A
+        STA $78                         ; $396C
+        BNE L_3957                      ; $396E
+L_3970:
+        LDA #$E0                        ; $3970
+        STA $78                         ; $3972
+        LDA #$1B                        ; $3974
+        STA $72                         ; $3976
+L_3978:
+        INC $79                         ; $3978
+        BMI L_39A7                      ; $397A
+        LDA $79                         ; $397C
+        CMP #$03                        ; $397E
+        BEQ L_398C                      ; $3980
+        CMP #$07                        ; $3982
+        BEQ L_399F                      ; $3984
+L_3986:
+        JSR print_row76_later           ; $3986
+        JMP L_39A7                      ; $3989
+L_398C:
+        LDX $73                         ; $398C
+        CPX #$02                        ; $398E
+        BCS L_3986                      ; $3990
+        LDA #$06                        ; $3992
+        JSR print_row76_later           ; $3994
+        INC $73                         ; $3997
+        LDA #$02                        ; $3999
+        STA $79                         ; $399B
+        BNE L_3986                      ; $399D
+L_399F:
+        LDA #$E2                        ; $399F
+        STA $79                         ; $39A1
+        LDA #$01                        ; $39A3
+        STA $73                         ; $39A5
+L_39A7:
+        JMP L_2C70                      ; $39A7
+; Per-frame hook for room 6.
+hook_frame_6:
+        LDA $30                         ; $39AA
+        BNE L_39BD                      ; $39AC
+        LDA $4E97                       ; $39AE
+        BMI L_39BD                      ; $39B1
+        DEC $4E97                       ; $39B3
+        LDA #$05                        ; $39B6
+        LDY #$01                        ; $39B8
+        JSR L_3AA0                      ; $39BA
+L_39BD:
+        JSR L_3228                      ; $39BD
+        JMP L_2C70                      ; $39C0
+; Per-frame hook for room 7.
+hook_frame_7:
+        JSR L_3228                      ; $39C3
+        LDA $4DC3                       ; $39C6
+        ORA $4DC7                       ; $39C9
+        ORA $4DCB                       ; $39CC
+        ORA $4DCF                       ; $39CF
+        ORA $4DD3                       ; $39D2
+        BNE L_39E6                      ; $39D5
+        LDA $4E97                       ; $39D7
+        BMI L_39E6                      ; $39DA
+        DEC $4E97                       ; $39DC
+        LDA #$02                        ; $39DF
+        LDY #$21                        ; $39E1
+        JMP L_3AA0                      ; $39E3
+L_39E6:
+        LDA $4DD7                       ; $39E6
+        ORA $4DDB                       ; $39E9
+        ORA $4DDF                       ; $39EC
+        ORA $4DE3                       ; $39EF
+        ORA $4DE7                       ; $39F2
+        ORA $4DEB                       ; $39F5
+        BNE L_3A09                      ; $39F8
+        LDA $4E98                       ; $39FA
+        BMI L_3A09                      ; $39FD
+        DEC $4E98                       ; $39FF
+        LDA #$05                        ; $3A02
+        LDY #$26                        ; $3A04
+        JMP L_3AA0                      ; $3A06
+L_3A09:
+        INC $77                         ; $3A09
+        BMI L_3A38                      ; $3A0B
+        LDA $77                         ; $3A0D
+        CMP #$03                        ; $3A0F
+        BEQ L_3A1D                      ; $3A11
+        CMP #$07                        ; $3A13
+        BEQ L_3A30                      ; $3A15
+L_3A17:
+        JSR print_row74_later           ; $3A17
+        JMP L_3A38                      ; $3A1A
+L_3A1D:
+        LDX $71                         ; $3A1D
+        CPX #$24                        ; $3A1F
+        BCS L_3A17                      ; $3A21
+        LDA #$06                        ; $3A23
+        JSR print_row74_later           ; $3A25
+        INC $71                         ; $3A28
+        LDA #$02                        ; $3A2A
+        STA $77                         ; $3A2C
+        BNE L_3A17                      ; $3A2E
+L_3A30:
+        LDA #$22                        ; $3A30
+        STA $71                         ; $3A32
+        LDA #$E0                        ; $3A34
+        STA $77                         ; $3A36
+L_3A38:
+        LDA $4DEF                       ; $3A38
+        ORA $4DF3                       ; $3A3B
+        BEQ L_3A51                      ; $3A3E
+        LDA $6E                         ; $3A40
+        STA $70                         ; $3A42
+        INC $6E                         ; $3A44
+        CMP #$23                        ; $3A46
+        BCC L_3A4E                      ; $3A48
+        LDA #$05                        ; $3A4A
+        STA $6E                         ; $3A4C
+L_3A4E:
+        JMP L_404E                      ; $3A4E
+L_3A51:
+        LDA $6E                         ; $3A51
+        STA $70                         ; $3A53
+        DEC $6E                         ; $3A55
+        CMP #$06                        ; $3A57
+        BCS L_3A5F                      ; $3A59
+        LDA #$24                        ; $3A5B
+        STA $6E                         ; $3A5D
+L_3A5F:
+        JMP L_404E                      ; $3A5F
+; $3A62  1 bytes of data
 
 L_3A63:
         LDA $14                         ; $3A63
@@ -6018,8 +7455,9 @@ L_3A6E:
         RTS                             ; $3A6E
 ; Once per logic frame, from frame, and once more at the end of enter_room.
 ; The word at $4EC4, room*2 is the hook address minus one, because RTS adds
-; one. Room 1's hook opens the trap door. The pictures and the lamp test are
-; in rooms.asm.
+; one. Room 1's hook opens the trap door. Room 5's hook slides three energy
+; beams and does not read $7B, so those move on every logic frame.
+; hook_frame_5 is the beam code. The lamp counts are in rooms.asm.
 L_3A6F:
         LDA $29                         ; $3A6F
         ASL A                           ; $3A71
@@ -6039,7 +7477,783 @@ L_3A7C:
         STA $0B                         ; $3A87
         RTS                             ; $3A89
 
-; $3A8A  1523 bytes of data between routines
+; Calls play_sound_8a, which keeps A, then prints strings $13, $13, and $14.
+L_3A8A:
+        JSR play_sound_8a               ; $3A8A
+        STA $6C                         ; $3A8D
+        STY $6D                         ; $3A8F
+        LDA #$13                        ; $3A91
+        JSR L_3ACA                      ; $3A93
+        LDA #$13                        ; $3A96
+        JSR L_3ACA                      ; $3A98
+        LDA #$14                        ; $3A9B
+        JMP L_3ACA                      ; $3A9D
+L_3AA0:
+        JSR L_3A8A                      ; $3AA0
+        DEC $6C                         ; $3AA3
+        LDA #$17                        ; $3AA5
+        JMP L_3ACA                      ; $3AA7
+L_3AAA:
+        JSR L_3A8A                      ; $3AAA
+        DEC $6C                         ; $3AAD
+        LDA #$2D                        ; $3AAF
+        JMP L_3ACA                      ; $3AB1
+L_3AB4:
+        JSR play_sound_8a               ; $3AB4
+        STA $6C                         ; $3AB7
+        STY $6D                         ; $3AB9
+        LDA #$63                        ; $3ABB
+        JSR L_3ACA                      ; $3ABD
+        LDA #$63                        ; $3AC0
+        JSR L_3ACA                      ; $3AC2
+        LDA #$64                        ; $3AC5
+        JMP L_3ACA                      ; $3AC7
+L_3ACA:
+        LDX $6C                         ; $3ACA
+        LDY $6D                         ; $3ACC
+        JSR print_string                ; $3ACE
+        INC $6C                         ; $3AD1
+        RTS                             ; $3AD3
+; Per-frame hook for room 8.
+hook_frame_8:
+        LDA $31                         ; $3AD4
+        ORA $4E00                       ; $3AD6
+        BNE L_3AEA                      ; $3AD9
+        LDA $4E99                       ; $3ADB
+        BMI L_3AEA                      ; $3ADE
+        DEC $4E99                       ; $3AE0
+        LDA #$07                        ; $3AE3
+        LDY #$0E                        ; $3AE5
+        JSR L_3A8A                      ; $3AE7
+L_3AEA:
+        LDA $4DF8                       ; $3AEA
+        ORA $4DFC                       ; $3AED
+        BNE L_3B0F                      ; $3AF0
+        LDA $4E9A                       ; $3AF2
+        BMI L_3B0F                      ; $3AF5
+        DEC $4E9A                       ; $3AF7
+        LDA $4E04                       ; $3AFA
+        BEQ L_3B08                      ; $3AFD
+        LDA #$01                        ; $3AFF
+        STA $65                         ; $3B01
+        LDA #$07                        ; $3B03
+        STA $4321                       ; $3B05
+L_3B08:
+        LDA #$07                        ; $3B08
+        LDY #$19                        ; $3B0A
+        JSR L_3A8A                      ; $3B0C
+L_3B0F:
+        LDA $32                         ; $3B0F
+        ORA $4E11                       ; $3B11
+        ORA $4E15                       ; $3B14
+        BNE L_3B28                      ; $3B17
+        LDA $4E9B                       ; $3B19
+        BMI L_3B28                      ; $3B1C
+        DEC $4E9B                       ; $3B1E
+        LDA #$02                        ; $3B21
+        LDY #$26                        ; $3B23
+        JSR L_3AAA                      ; $3B25
+L_3B28:
+        LDA $4E00                       ; $3B28
+        BNE L_3B3C                      ; $3B2B
+        LDA $4E97                       ; $3B2D
+        BMI L_3B3C                      ; $3B30
+        DEC $4E97                       ; $3B32
+        LDA #$0A                        ; $3B35
+        LDY #$01                        ; $3B37
+        JSR L_3A8A                      ; $3B39
+L_3B3C:
+        LDA $31                         ; $3B3C
+        ORA $32                         ; $3B3E
+        BNE L_3B51                      ; $3B40
+        LDA $4E98                       ; $3B42
+        BMI L_3B51                      ; $3B45
+        DEC $4E98                       ; $3B47
+        LDA #$0A                        ; $3B4A
+        LDY #$26                        ; $3B4C
+        JSR L_3A8A                      ; $3B4E
+L_3B51:
+        INC $77                         ; $3B51
+        BMI L_3B80                      ; $3B53
+        LDA $77                         ; $3B55
+        CMP #$03                        ; $3B57
+        BEQ L_3B65                      ; $3B59
+        CMP #$07                        ; $3B5B
+        BEQ L_3B78                      ; $3B5D
+L_3B5F:
+        JSR print_row74                 ; $3B5F
+        JMP L_3B80                      ; $3B62
+L_3B65:
+        LDX $71                         ; $3B65
+        CPX #$0B                        ; $3B67
+        BCS L_3B5F                      ; $3B69
+        LDA #$06                        ; $3B6B
+        JSR print_row74                 ; $3B6D
+        INC $71                         ; $3B70
+        LDA #$02                        ; $3B72
+        STA $77                         ; $3B74
+        BNE L_3B5F                      ; $3B76
+L_3B78:
+        LDA #$06                        ; $3B78
+        STA $71                         ; $3B7A
+        LDA #$DA                        ; $3B7C
+        STA $77                         ; $3B7E
+L_3B80:
+        INC $78                         ; $3B80
+        BMI L_3BAF                      ; $3B82
+        LDA $78                         ; $3B84
+        CMP #$03                        ; $3B86
+        BEQ L_3B94                      ; $3B88
+        CMP #$07                        ; $3B8A
+        BEQ L_3BA7                      ; $3B8C
+L_3B8E:
+        JSR print_row75                 ; $3B8E
+        JMP L_3BAF                      ; $3B91
+L_3B94:
+        LDX $72                         ; $3B94
+        CPX #$20                        ; $3B96
+        BCS L_3B8E                      ; $3B98
+        LDA #$06                        ; $3B9A
+        JSR print_row75                 ; $3B9C
+        INC $72                         ; $3B9F
+        LDA #$02                        ; $3BA1
+        STA $78                         ; $3BA3
+        BNE L_3B8E                      ; $3BA5
+L_3BA7:
+        LDA #$1B                        ; $3BA7
+        STA $72                         ; $3BA9
+        LDA #$DA                        ; $3BAB
+        STA $78                         ; $3BAD
+L_3BAF:
+        JMP L_2C70                      ; $3BAF
+; Per-frame hook for room 9.
+hook_frame_9:
+        LDA $4E99                       ; $3BB2
+        BMI L_3BC8                      ; $3BB5
+        LDA $4E09                       ; $3BB7
+        BNE L_3BC8                      ; $3BBA
+        DEC $4E99                       ; $3BBC
+        LDA #$01                        ; $3BBF
+        STA $65                         ; $3BC1
+        LDA #$07                        ; $3BC3
+        STA $4321                       ; $3BC5
+L_3BC8:
+        LDA $4E0D                       ; $3BC8
+        BNE L_3BE5                      ; $3BCB
+        LDA $4E97                       ; $3BCD
+        BMI L_3BE5                      ; $3BD0
+        DEC $4E97                       ; $3BD2
+        LDA #$07                        ; $3BD5
+        LDY #$17                        ; $3BD7
+        JSR L_3A8A                      ; $3BD9
+        LDA #$00                        ; $3BDC
+        STA $65                         ; $3BDE
+        LDA #$07                        ; $3BE0
+        STA $4321                       ; $3BE2
+L_3BE5:
+        LDA $33                         ; $3BE5
+        BNE L_3C06                      ; $3BE7
+        LDA $4E98                       ; $3BE9
+        BMI L_3C06                      ; $3BEC
+        DEC $4E98                       ; $3BEE
+        LDA #$00                        ; $3BF1
+        STA $65                         ; $3BF3
+        LDA #$07                        ; $3BF5
+        STA $4321                       ; $3BF7
+        JSR play_sound_8a               ; $3BFA
+        LDA #$18                        ; $3BFD
+        LDX #$02                        ; $3BFF
+        LDY #$23                        ; $3C01
+        JSR print_string                ; $3C03
+L_3C06:
+        LDA $4E11                       ; $3C06
+        ORA $4E15                       ; $3C09
+        BNE L_3C1E                      ; $3C0C
+        LDA $6E                         ; $3C0E
+        STA $70                         ; $3C10
+        DEC $6E                         ; $3C12
+        CMP #$05                        ; $3C14
+        BCS L_3C2C                      ; $3C16
+        LDA #$18                        ; $3C18
+        STA $6E                         ; $3C1A
+        BNE L_3C2C                      ; $3C1C
+L_3C1E:
+        LDA $6E                         ; $3C1E
+        STA $70                         ; $3C20
+        INC $6E                         ; $3C22
+        CMP #$18                        ; $3C24
+        BCC L_3C2C                      ; $3C26
+        LDA #$04                        ; $3C28
+        STA $6E                         ; $3C2A
+L_3C2C:
+        JSR L_404E                      ; $3C2C
+        INC $77                         ; $3C2F
+        BMI L_3C5E                      ; $3C31
+        LDA $77                         ; $3C33
+        CMP #$03                        ; $3C35
+        BEQ L_3C43                      ; $3C37
+        CMP #$07                        ; $3C39
+        BEQ L_3C56                      ; $3C3B
+L_3C3D:
+        JSR print_row74_later           ; $3C3D
+        JMP L_3C5E                      ; $3C40
+L_3C43:
+        LDX $71                         ; $3C43
+        CPX #$14                        ; $3C45
+        BCS L_3C3D                      ; $3C47
+        LDA #$06                        ; $3C49
+        JSR print_row74_later           ; $3C4B
+        INC $71                         ; $3C4E
+        LDA #$02                        ; $3C50
+        STA $77                         ; $3C52
+        BNE L_3C3D                      ; $3C54
+L_3C56:
+        LDA #$10                        ; $3C56
+        STA $71                         ; $3C58
+        LDA #$C0                        ; $3C5A
+        STA $77                         ; $3C5C
+L_3C5E:
+        INC $78                         ; $3C5E
+        BMI L_3C8D                      ; $3C60
+        LDA $78                         ; $3C62
+        CMP #$03                        ; $3C64
+        BEQ L_3C72                      ; $3C66
+        CMP #$07                        ; $3C68
+        BEQ L_3C85                      ; $3C6A
+L_3C6C:
+        JSR print_row75_later           ; $3C6C
+        JMP L_3C8D                      ; $3C6F
+L_3C72:
+        LDX $72                         ; $3C72
+        CPX #$14                        ; $3C74
+        BCS L_3C6C                      ; $3C76
+        LDA #$06                        ; $3C78
+        JSR print_row75_later           ; $3C7A
+        INC $72                         ; $3C7D
+        LDA #$02                        ; $3C7F
+        STA $78                         ; $3C81
+        BNE L_3C6C                      ; $3C83
+L_3C85:
+        LDA #$10                        ; $3C85
+        STA $72                         ; $3C87
+        LDA #$C0                        ; $3C89
+        STA $78                         ; $3C8B
+L_3C8D:
+        JMP L_2C70                      ; $3C8D
+; Per-frame hook for room 10.
+hook_frame_10:
+        LDA $4E97                       ; $3C90
+        BMI L_3CA7                      ; $3C93
+        LDA $4E1E                       ; $3C95
+        ORA $4E22                       ; $3C98
+        BNE L_3CA7                      ; $3C9B
+        DEC $4E97                       ; $3C9D
+        LDA #$04                        ; $3CA0
+        LDY #$26                        ; $3CA2
+        JSR L_3AB4                      ; $3CA4
+L_3CA7:
+        NOP                             ; $3CA7
+        NOP                             ; $3CA8
+        NOP                             ; $3CA9
+        NOP                             ; $3CAA
+        NOP                             ; $3CAB
+        NOP                             ; $3CAC
+        NOP                             ; $3CAD
+        NOP                             ; $3CAE
+        NOP                             ; $3CAF
+        NOP                             ; $3CB0
+        NOP                             ; $3CB1
+        NOP                             ; $3CB2
+        NOP                             ; $3CB3
+        NOP                             ; $3CB4
+        NOP                             ; $3CB5
+        NOP                             ; $3CB6
+        NOP                             ; $3CB7
+        NOP                             ; $3CB8
+        NOP                             ; $3CB9
+        NOP                             ; $3CBA
+        NOP                             ; $3CBB
+        NOP                             ; $3CBC
+        JMP L_3228                      ; $3CBD
+; Per-frame hook for room 11.
+hook_frame_11:
+        LDA $4E97                       ; $3CC0
+        BMI L_3CD6                      ; $3CC3
+        LDA $4E33                       ; $3CC5
+        BNE L_3CD6                      ; $3CC8
+        DEC $4E97                       ; $3CCA
+        LDA #$00                        ; $3CCD
+        STA $65                         ; $3CCF
+        LDA #$07                        ; $3CD1
+        STA $4321                       ; $3CD3
+L_3CD6:
+        JSR L_3228                      ; $3CD6
+        JMP L_2C70                      ; $3CD9
+; Per-frame hook for room 18.
+hook_frame_18:
+        LDA $4E97                       ; $3CDC
+        BNE L_3CE4                      ; $3CDF
+        JMP L_3DAF                      ; $3CE1
+L_3CE4:
+        LDA $4E86                       ; $3CE4
+        BNE L_3D1D                      ; $3CE7
+        STA $4E97                       ; $3CE9
+        JSR L_423F                      ; $3CEC
+        LDA $D015                       ; $3CEF
+        AND #$1F                        ; $3CF2
+        STA $D015                       ; $3CF4
+        LDA #$61                        ; $3CF7
+        LDX #$0B                        ; $3CF9
+        LDY #$00                        ; $3CFB
+        JSR print_string                ; $3CFD
+        LDA #$B8                        ; $3D00
+        LDX #$02                        ; $3D02
+        JSR add_score                   ; $3D04
+        LDA #$0B                        ; $3D07
+        LDX #$01                        ; $3D09
+        JSR add_score                   ; $3D0B
+        LDX #$01                        ; $3D0E
+        LDA #$00                        ; $3D10
+        STA $4E9A                       ; $3D12
+        LDA #$50                        ; $3D15
+        STA $4E98                       ; $3D17
+        JMP L_3D4E                      ; $3D1A
+L_3D1D:
+        JSR L_4133                      ; $3D1D
+        LDA $D01E                       ; $3D20
+        TAX                             ; $3D23
+        AND #$03                        ; $3D24
+        BEQ L_3D38                      ; $3D26
+        TXA                             ; $3D28
+        AND #$C0                        ; $3D29
+        BEQ L_3D38                      ; $3D2B
+        LDX #$00                        ; $3D2D
+        LDA $BF                         ; $3D2F
+        CMP #$19                        ; $3D31
+        BEQ L_3D38                      ; $3D33
+        JSR L_407D                      ; $3D35
+L_3D38:
+        DEC $4E98                       ; $3D38
+        BNE L_3D80                      ; $3D3B
+        LDA #$08                        ; $3D3D
+        STA $4E98                       ; $3D3F
+        LDA $9E                         ; $3D42
+        LDX #$02                        ; $3D44
+L_3D46:
+        CMP $4A89,X                     ; $3D46
+        BCS L_3D4E                      ; $3D49
+        DEX                             ; $3D4B
+        BNE L_3D46                      ; $3D4C
+L_3D4E:
+        STX $4E99                       ; $3D4E
+        LDA #$38                        ; $3D51
+        CLC                             ; $3D53
+        ADC $4E99                       ; $3D54
+        LDX #$02                        ; $3D57
+        LDY #$10                        ; $3D59
+        JSR print_string                ; $3D5B
+        LDA $4E9A                       ; $3D5E
+        BNE L_3D73                      ; $3D61
+        INC $4E9A                       ; $3D63
+        LDA #$06                        ; $3D66
+        JSR L_3D81                      ; $3D68
+        LDA #$06                        ; $3D6B
+        JSR L_3D8E                      ; $3D6D
+        JMP L_3D80                      ; $3D70
+L_3D73:
+        DEC $4E9A                       ; $3D73
+        LDA #$00                        ; $3D76
+        JSR L_3D81                      ; $3D78
+        LDA #$00                        ; $3D7B
+        JSR L_3D8E                      ; $3D7D
+L_3D80:
+        RTS                             ; $3D80
+L_3D81:
+        CLC                             ; $3D81
+        ADC #$3B                        ; $3D82
+        ADC $4E99                       ; $3D84
+        LDX #$03                        ; $3D87
+        LDY #$12                        ; $3D89
+        JMP print_string                ; $3D8B
+L_3D8E:
+        CLC                             ; $3D8E
+        ADC #$3E                        ; $3D8F
+        ADC $4E99                       ; $3D91
+        LDX #$04                        ; $3D94
+        LDY #$12                        ; $3D96
+        JMP print_string                ; $3D98
+L_3D9B:
+        LDA #$00                        ; $3D9B
+        LDA #$5E                        ; $3D9D
+        LDX #$0B                        ; $3D9F
+        LDY #$25                        ; $3DA1
+        JSR print_string                ; $3DA3
+        LDA #$5F                        ; $3DA6
+        LDX #$0C                        ; $3DA8
+        LDY #$26                        ; $3DAA
+        JMP print_string                ; $3DAC
+L_3DAF:
+        LDA $4E98                       ; $3DAF
+        BEQ L_3D9B                      ; $3DB2
+        TAX                             ; $3DB4
+        JSR noise_byte                  ; $3DB5
+        AND #$0F                        ; $3DB8
+        ORA #$80                        ; $3DBA
+        CPX #$01                        ; $3DBC
+        BNE L_3DC4                      ; $3DBE
+        LDA #$00                        ; $3DC0
+        BEQ L_3DC9                      ; $3DC2
+L_3DC4:
+        JSR noise_byte                  ; $3DC4
+        AND #$07                        ; $3DC7
+L_3DC9:
+        ORA #$F8                        ; $3DC9
+        LDX #$11                        ; $3DCB
+L_3DCD:
+        STA $D8D3,X                     ; $3DCD
+        STA $D8FB,X                     ; $3DD0
+        STA $D923,X                     ; $3DD3
+        STA $D94B,X                     ; $3DD6
+        CPX #$0C                        ; $3DD9
+        BCS L_3DEF                      ; $3DDB
+        STA $D886,X                     ; $3DDD
+        STA $D8AE,X                     ; $3DE0
+        STA $D976,X                     ; $3DE3
+        STA $D99E,X                     ; $3DE6
+        STA $D9C6,X                     ; $3DE9
+        STA $D9EE,X                     ; $3DEC
+L_3DEF:
+        DEX                             ; $3DEF
+        BPL L_3DCD                      ; $3DF0
+        LDX $4E98                       ; $3DF2
+        DEC $4E98                       ; $3DF5
+        LDA #$3E                        ; $3DF8
+        STA $F2                         ; $3DFA
+        CPX #$11                        ; $3DFC
+        BCC L_3E0B                      ; $3DFE
+        JSR noise_byte                  ; $3E00
+        CMP #$10                        ; $3E03
+        BCS L_3E0B                      ; $3E05
+        LDA #$3C                        ; $3E07
+        STA $F2                         ; $3E09
+L_3E0B:
+        LDY #$8B                        ; $3E0B
+        JSR play_sound                  ; $3E0D
+        LDA $4E9A                       ; $3E10
+        EOR #$01                        ; $3E13
+        STA $4E9A                       ; $3E15
+        LDA #$47                        ; $3E18
+        CLC                             ; $3E1A
+        ADC $4E9A                       ; $3E1B
+        LDX #$03                        ; $3E1E
+        LDY #$0C                        ; $3E20
+        JSR print_string                ; $3E22
+        LDA #$49                        ; $3E25
+        CLC                             ; $3E27
+        ADC $4E9A                       ; $3E28
+        LDX #$03                        ; $3E2B
+        LDY #$19                        ; $3E2D
+        JSR print_string                ; $3E2F
+        LDA #$4B                        ; $3E32
+        CLC                             ; $3E34
+        ADC $4E9A                       ; $3E35
+        LDX #$06                        ; $3E38
+        LDY #$0E                        ; $3E3A
+        JSR print_string                ; $3E3C
+        LDA #$4D                        ; $3E3F
+        CLC                             ; $3E41
+        ADC $4E9A                       ; $3E42
+        LDX #$06                        ; $3E45
+        LDY #$17                        ; $3E47
+        JMP print_string                ; $3E49
+; Per-frame hook for room 12.
+hook_frame_12:
+        LDA $4E97                       ; $3E4C
+        BMI L_3E60                      ; $3E4F
+        LDA $4E40                       ; $3E51
+        BNE L_3E60                      ; $3E54
+        DEC $4E97                       ; $3E56
+        LDA #$0A                        ; $3E59
+        LDY #$26                        ; $3E5B
+        JSR L_3AB4                      ; $3E5D
+L_3E60:
+        LDA $4E98                       ; $3E60
+        BMI L_3E79                      ; $3E63
+        LDA $36                         ; $3E65
+        ORA $4E52                       ; $3E67
+        ORA $4E56                       ; $3E6A
+        BNE L_3E79                      ; $3E6D
+        DEC $4E98                       ; $3E6F
+        LDA #$07                        ; $3E72
+        LDY #$26                        ; $3E74
+        JSR L_3AB4                      ; $3E76
+L_3E79:
+        JMP L_3228                      ; $3E79
+; Per-frame hook for room 13.
+hook_frame_13:
+        LDA $03                         ; $3E7C
+        ASL A                           ; $3E7E
+        ASL A                           ; $3E7F
+        TAX                             ; $3E80
+        LDA $A1                         ; $3E81
+        CMP #$64                        ; $3E83
+        BCC L_3EBC                      ; $3E85
+        CMP #$8A                        ; $3E87
+        BCS L_3E96                      ; $3E89
+        LDA $014B,X                     ; $3E8B
+        BEQ L_3EBC                      ; $3E8E
+        DEC $014B,X                     ; $3E90
+        JMP L_3EAF                      ; $3E93
+L_3E96:
+        INX                             ; $3E96
+        CMP #$B6                        ; $3E97
+        BCS L_3EA6                      ; $3E99
+        LDA $014B,X                     ; $3E9B
+        BEQ L_3EBC                      ; $3E9E
+        DEC $014B,X                     ; $3EA0
+        JMP L_3EAF                      ; $3EA3
+L_3EA6:
+        INX                             ; $3EA6
+        LDA $014B,X                     ; $3EA7
+        BEQ L_3EBC                      ; $3EAA
+        DEC $014B,X                     ; $3EAC
+L_3EAF:
+        LDA #$01                        ; $3EAF
+        TAX                             ; $3EB1
+        JSR add_score                   ; $3EB2
+        LDA #$F4                        ; $3EB5
+        LDX #$02                        ; $3EB7
+        JMP add_score                   ; $3EB9
+L_3EBC:
+        LDA $7B                         ; $3EBC
+        BNE L_3EC3                      ; $3EBE
+        JSR L_104B                      ; $3EC0
+L_3EC3:
+        LDA $D015                       ; $3EC3
+        AND #$03                        ; $3EC6
+        STA $D015                       ; $3EC8
+        RTS                             ; $3ECB
+; Per-frame hook for room 14.
+hook_frame_14:
+        LDA $4E97                       ; $3ECC
+        BMI L_3EE3                      ; $3ECF
+        LDA $4E4A                       ; $3ED1
+        ORA $4E4E                       ; $3ED4
+        BNE L_3EE3                      ; $3ED7
+        DEC $4E97                       ; $3ED9
+        LDA #$04                        ; $3EDC
+        LDY #$26                        ; $3EDE
+        JSR L_3AB4                      ; $3EE0
+L_3EE3:
+        JMP L_3228                      ; $3EE3
+; Per-frame hook for room 15.
+hook_frame_15:
+        LDA $4E97                       ; $3EE6
+        BMI L_3F08                      ; $3EE9
+        LDA $4E5B                       ; $3EEB
+        BNE L_3F08                      ; $3EEE
+        LDA #$57                        ; $3EF0
+        LDX #$03                        ; $3EF2
+        LDY #$11                        ; $3EF4
+        JSR print_string                ; $3EF6
+        LDA #$58                        ; $3EF9
+        LDX #$04                        ; $3EFB
+        LDY #$11                        ; $3EFD
+        JSR print_string                ; $3EFF
+        DEC $4E97                       ; $3F02
+        JSR play_sound_8a               ; $3F05
+L_3F08:
+        LDA $4E98                       ; $3F08
+        BMI L_3F30                      ; $3F0B
+        LDA $4E5F                       ; $3F0D
+        ORA $4E63                       ; $3F10
+        ORA $4E6B                       ; $3F13
+        BNE L_3F30                      ; $3F16
+        LDA #$57                        ; $3F18
+        LDX #$03                        ; $3F1A
+        LDY #$17                        ; $3F1C
+        JSR print_string                ; $3F1E
+        LDA #$58                        ; $3F21
+        LDX #$04                        ; $3F23
+        LDY #$17                        ; $3F25
+        JSR print_string                ; $3F27
+        DEC $4E98                       ; $3F2A
+        JSR play_sound_8a               ; $3F2D
+L_3F30:
+        LDA $4E99                       ; $3F30
+        BMI L_3F5A                      ; $3F33
+        LDA $39                         ; $3F35
+        BNE L_3F5A                      ; $3F37
+        LDA #$59                        ; $3F39
+        LDX #$09                        ; $3F3B
+        LDY #$25                        ; $3F3D
+        JSR print_string                ; $3F3F
+        LDA #$5A                        ; $3F42
+        LDX #$08                        ; $3F44
+        LDY #$25                        ; $3F46
+        JSR print_string                ; $3F48
+        LDA #$5B                        ; $3F4B
+        LDX #$07                        ; $3F4D
+        LDY #$25                        ; $3F4F
+        JSR print_string                ; $3F51
+        JSR play_sound_8a               ; $3F54
+        DEC $4E99                       ; $3F57
+L_3F5A:
+        RTS                             ; $3F5A
+; Per-frame hook for room 16.
+hook_frame_16:
+        LDA $4E97                       ; $3F5B
+        BMI L_3F6E                      ; $3F5E
+        LDA $3A                         ; $3F60
+        BNE L_3F6E                      ; $3F62
+        DEC $4E97                       ; $3F64
+        LDA #$07                        ; $3F67
+        LDY #$01                        ; $3F69
+        JSR L_3AB4                      ; $3F6B
+L_3F6E:
+        JMP L_3228                      ; $3F6E
+; Per-frame hook for room 17.
+hook_frame_17:
+        DEC $4E99                       ; $3F71
+        BPL L_3F8C                      ; $3F74
+        LDA #$0A                        ; $3F76
+        STA $4E99                       ; $3F78
+        LDA $D880                       ; $3F7B
+        AND #$07                        ; $3F7E
+        EOR #$02                        ; $3F80
+        ORA #$F8                        ; $3F82
+        LDX #$1B                        ; $3F84
+L_3F86:
+        STA $D880,X                     ; $3F86
+        DEX                             ; $3F89
+        BPL L_3F86                      ; $3F8A
+L_3F8C:
+        DEC $4E9A                       ; $3F8C
+        BEQ L_3FA9                      ; $3F8F
+        BPL L_3F98                      ; $3F91
+        LDA #$01                        ; $3F93
+        STA $4E9A                       ; $3F95
+L_3F98:
+        LDA $6E                         ; $3F98
+        STA $70                         ; $3F9A
+        INC $6E                         ; $3F9C
+        CMP #$1B                        ; $3F9E
+        BCC L_3FA6                      ; $3FA0
+        LDA #$0B                        ; $3FA2
+        STA $6E                         ; $3FA4
+L_3FA6:
+        JSR L_404E                      ; $3FA6
+L_3FA9:
+        LDA $4E97                       ; $3FA9
+        BEQ L_3FBF                      ; $3FAC
+        LDA $4E7D                       ; $3FAE
+        BNE L_3FBF                      ; $3FB1
+        DEC $4E97                       ; $3FB3
+        LDA #$5D                        ; $3FB6
+        LDX #$0A                        ; $3FB8
+        LDY #$25                        ; $3FBA
+        JSR print_string                ; $3FBC
+L_3FBF:
+        LDA $4E98                       ; $3FBF
+        BEQ L_3FD5                      ; $3FC2
+        LDA $4E81                       ; $3FC4
+        BNE L_3FD5                      ; $3FC7
+        DEC $4E98                       ; $3FC9
+        LDA #$5C                        ; $3FCC
+        LDX #$0A                        ; $3FCE
+        LDY #$18                        ; $3FD0
+        JSR print_string                ; $3FD2
+L_3FD5:
+        JSR L_3228                      ; $3FD5
+        LDA #$02                        ; $3FD8
+        STA $4C                         ; $3FDA
+L_3FDC:
+        LDX $4C                         ; $3FDC
+        INC $77,X                       ; $3FDE
+        BMI L_4049                      ; $3FE0
+        LDA $77,X                       ; $3FE2
+        CMP #$03                        ; $3FE4
+        BEQ L_4006                      ; $3FE6
+        CMP #$07                        ; $3FE8
+        BEQ L_4039                      ; $3FEA
+L_3FEC:
+        CPX #$00                        ; $3FEC
+        BNE L_3FF6                      ; $3FEE
+        JSR print_row74                 ; $3FF0
+        JMP L_4049                      ; $3FF3
+L_3FF6:
+        CPX #$01                        ; $3FF6
+        BNE L_4000                      ; $3FF8
+        JSR print_row75                 ; $3FFA
+        JMP L_4049                      ; $3FFD
+L_4000:
+        JSR print_row76                 ; $4000
+        JMP L_4049                      ; $4003
+L_4006:
+        LDY $71,X                       ; $4006
+        CPX #$00                        ; $4008
+        BNE L_4012                      ; $400A
+        CPY #$23                        ; $400C
+        BCS L_3FEC                      ; $400E
+        BCC L_4016                      ; $4010
+L_4012:
+        CPY #$25                        ; $4012
+        BCS L_3FEC                      ; $4014
+L_4016:
+        LDA #$06                        ; $4016
+        CPX #$00                        ; $4018
+        BNE L_4022                      ; $401A
+        JSR print_row74                 ; $401C
+        JMP L_402F                      ; $401F
+L_4022:
+        CPX #$01                        ; $4022
+        BNE L_402C                      ; $4024
+        JSR print_row75                 ; $4026
+        JMP L_402F                      ; $4029
+L_402C:
+        JSR print_row76                 ; $402C
+L_402F:
+        LDX $4C                         ; $402F
+        INC $71,X                       ; $4031
+        LDA #$02                        ; $4033
+        STA $77,X                       ; $4035
+        BNE L_3FEC                      ; $4037
+L_4039:
+        LDA #$CA                        ; $4039
+        STA $77,X                       ; $403B
+        LDA #$08                        ; $403D
+        STA $71,X                       ; $403F
+        CPX #$00                        ; $4041
+        BNE L_4049                      ; $4043
+        LDA #$C8                        ; $4045
+        STA $77,X                       ; $4047
+L_4049:
+        DEC $4C                         ; $4049
+        BPL L_3FDC                      ; $404B
+        RTS                             ; $404D
+L_404E:
+        JSR L_4078                      ; $404E
+        LDA #$1C                        ; $4051
+        LDX $6F                         ; $4053
+        LDY $70                         ; $4055
+        JSR print_string                ; $4057
+        LDA #$1B                        ; $405A
+        LDX $6F                         ; $405C
+        LDY $6E                         ; $405E
+        JMP print_string                ; $4060
+L_4063:
+        JSR L_4078                      ; $4063
+        LDA #$55                        ; $4066
+        LDX $6F                         ; $4068
+        LDY $70                         ; $406A
+        JSR print_string                ; $406C
+        LDA #$54                        ; $406F
+        LDX $6F                         ; $4071
+        LDY $6E                         ; $4073
+        JMP print_string                ; $4075
+L_4078:
+        LDY #$89                        ; $4078
+        JMP play_sound                  ; $407A
 
 L_407D:
         LDA #$19                        ; $407D
@@ -6048,7 +8262,46 @@ L_407D:
         STA timer,X                     ; $4083
         RTS                             ; $4085
 
-; $4086  54 bytes of data between routines
+; Beam frames for room 5. A is the frame number. $1F selects the string,
+; which print_string stores as the screen code minus $20. X is the tile row
+; and Y is the column. print_row74 uses row $74 and column $71, print_row75
+; uses $75 and $72, and print_row76 uses $76 and $73. The three entries that
+; add 7 first are how the upper beam reaches its own strings. The BNE after
+; each JMP is not reached from these entries.
+print_row74:
+        CLC                             ; $4086
+        ADC #$1F                        ; $4087
+        LDX $74                         ; $4089
+        LDY $71                         ; $408B
+        JMP print_string                ; $408D
+print_row75:
+        CLC                             ; $4090
+        ADC #$1F                        ; $4091
+        LDX $75                         ; $4093
+        LDY $72                         ; $4095
+        JMP print_string                ; $4097
+print_row76:
+        CLC                             ; $409A
+        ADC #$1F                        ; $409B
+        LDX $76                         ; $409D
+        LDY $73                         ; $409F
+        JMP print_string                ; $40A1
+print_row74_later:
+        CLC                             ; $40A4
+        ADC #$07                        ; $40A5
+        JMP print_row74                 ; $40A7
+        BNE print_row74                 ; $40AA
+print_row75_later:
+        CLC                             ; $40AC
+        ADC #$07                        ; $40AD
+        JMP print_row75                 ; $40AF
+        BNE print_row75                 ; $40B2
+print_row76_later:
+        CLC                             ; $40B4
+        ADC #$07                        ; $40B5
+        JMP print_row76                 ; $40B7
+        BNE print_row76                 ; $40BA
+
 
 ; Once per logic frame, from frame, before the overlap. $0101, $0102, and
 ; $0103 each reload to a count from 1 to 15. The new row comes from
@@ -6118,7 +8371,145 @@ L_410D:
 L_4132:
         RTS                             ; $4132
 
-; $4133  268 bytes of data between routines
+L_4133:
+        LDX #$03                        ; $4133
+        LDY #$00                        ; $4135
+L_4137:
+        JSR noise_byte                  ; $4137
+        AND $4322,X                     ; $413A
+        STA $8340,Y                     ; $413D
+        JSR noise_byte                  ; $4140
+        AND $4322,X                     ; $4143
+        STA $8380,Y                     ; $4146
+        INY                             ; $4149
+        INY                             ; $414A
+        INY                             ; $414B
+        DEX                             ; $414C
+        BPL L_4137                      ; $414D
+        LDA $432E                       ; $414F
+        BNE L_4162                      ; $4152
+        LDA $4330                       ; $4154
+        BNE L_415F                      ; $4157
+        JSR L_4201                      ; $4159
+        JMP L_4175                      ; $415C
+L_415F:
+        DEC $4330                       ; $415F
+L_4162:
+        LDA $432F                       ; $4162
+        BNE L_4175                      ; $4165
+        LDA $4331                       ; $4167
+        BNE L_4172                      ; $416A
+        JSR L_4220                      ; $416C
+        JMP L_4175                      ; $416F
+L_4172:
+        DEC $4331                       ; $4172
+L_4175:
+        LDX #$01                        ; $4175
+L_4177:
+        LDA $432E,X                     ; $4177
+        BEQ L_4193                      ; $417A
+        LDA $4334,X                     ; $417C
+        CLC                             ; $417F
+        ADC #$05                        ; $4180
+        STA $4334,X                     ; $4182
+        CMP #$E0                        ; $4185
+        BCC L_4193                      ; $4187
+        LDA #$00                        ; $4189
+        STA $432E,X                     ; $418B
+        LDA #$02                        ; $418E
+        STA $4330,X                     ; $4190
+L_4193:
+        DEX                             ; $4193
+        BPL L_4177                      ; $4194
+        LDA $432E                       ; $4196
+        BEQ $419B                       ; $4199
+        LDA $432F                       ; $419B
+        BEQ $41A0                       ; $419E
+        LDX #$01                        ; $41A0
+L_41A2:
+        LDA $432E,X                     ; $41A2
+        BEQ L_41FD                      ; $41A5
+        LDY #$01                        ; $41A7
+        LDA $4334,X                     ; $41A9
+        CMP #$A8                        ; $41AC
+        BCS L_41B1                      ; $41AE
+        INY                             ; $41B0
+L_41B1:
+        LDA $4332,X                     ; $41B1
+        CMP $9E                         ; $41B4
+        BCS L_41BD                      ; $41B6
+        INC $4332,X                     ; $41B8
+        BNE L_41C2                      ; $41BB
+L_41BD:
+        BEQ L_41C2                      ; $41BD
+        DEC $4332,X                     ; $41BF
+L_41C2:
+        DEY                             ; $41C2
+        BPL L_41B1                      ; $41C3
+        LDA $4332,X                     ; $41C5
+        ASL A                           ; $41C8
+        PHA                             ; $41C9
+        LDA $D010                       ; $41CA
+        BCC L_41D4                      ; $41CD
+        ORA $42C5,X                     ; $41CF
+        BNE L_41D7                      ; $41D2
+L_41D4:
+        AND $42C7,X                     ; $41D4
+L_41D7:
+        STA $D010                       ; $41D7
+        TXA                             ; $41DA
+        ASL A                           ; $41DB
+        TAX                             ; $41DC
+        PLA                             ; $41DD
+        STA $D00C,X                     ; $41DE
+        TXA                             ; $41E1
+        LSR A                           ; $41E2
+        TAX                             ; $41E3
+        LDA $4334,X                     ; $41E4
+        CLC                             ; $41E7
+        ADC #$1D                        ; $41E8
+        PHA                             ; $41EA
+        TXA                             ; $41EB
+        ASL A                           ; $41EC
+        TAX                             ; $41ED
+        PLA                             ; $41EE
+        STA $D00D,X                     ; $41EF
+        TXA                             ; $41F2
+        LSR A                           ; $41F3
+        TAX                             ; $41F4
+        JSR noise_byte                  ; $41F5
+        ORA #$F0                        ; $41F8
+        STA $D02D,X                     ; $41FA
+L_41FD:
+        DEX                             ; $41FD
+        BPL L_41A2                      ; $41FE
+        RTS                             ; $4200
+L_4201:
+        LDA #$0D                        ; $4201
+        STA $8FFE                       ; $4203
+        LDA $D015                       ; $4206
+        ORA #$40                        ; $4209
+        STA $D015                       ; $420B
+        LDA #$01                        ; $420E
+        STA $432E                       ; $4210
+        LDA #$50                        ; $4213
+        STA $4332                       ; $4215
+        LDA #$37                        ; $4218
+        STA $4334                       ; $421A
+        JMP L_2E29                      ; $421D
+L_4220:
+        LDA #$0E                        ; $4220
+        STA $8FFF                       ; $4222
+        LDA $D015                       ; $4225
+        ORA #$80                        ; $4228
+        STA $D015                       ; $422A
+        LDA #$01                        ; $422D
+        STA $432F                       ; $422F
+        LDA #$5E                        ; $4232
+        STA $4333                       ; $4234
+        LDA #$37                        ; $4237
+        STA $4335                       ; $4239
+        JMP L_2E29                      ; $423C
 
 L_423F:
         LDX #$09                        ; $423F
@@ -6132,7 +8523,77 @@ L_4243:
         BPL L_4243                      ; $424C
         RTS                             ; $424E
 
-; $424F  1335 bytes of data between routines
+; Call play_sound with Y = $8A. A, X, and Y come back unchanged.
+play_sound_8a:
+        PHA                             ; $424F
+        TXA                             ; $4250
+        PHA                             ; $4251
+        TYA                             ; $4252
+        PHA                             ; $4253
+        LDY #$8A                        ; $4254
+        JSR play_sound                  ; $4256
+        PLA                             ; $4259
+        TAY                             ; $425A
+        PLA                             ; $425B
+        TAX                             ; $425C
+        PLA                             ; $425D
+        RTS                             ; $425E
+; Enter hook for room 19.
+hook_enter_19:
+        LDA #$58                        ; $425F
+        STA $49                         ; $4261
+        LDA #$04                        ; $4263
+        STA $4A                         ; $4265
+        LDX #$27                        ; $4267
+        LDA #$00                        ; $4269
+L_426B:
+        STA $8C00,X                     ; $426B
+        DEX                             ; $426E
+        BPL L_426B                      ; $426F
+        RTS                             ; $4271
+; Per-frame hook for room 19.
+hook_frame_19:
+        LDA $49                         ; $4272
+        ORA $4A                         ; $4274
+        BNE L_4298                      ; $4276
+        INC $40                         ; $4278
+        LDA $03                         ; $427A
+        ASL A                           ; $427C
+        ASL A                           ; $427D
+        TAX                             ; $427E
+        LDY #$03                        ; $427F
+        LDA #$01                        ; $4281
+L_4283:
+        STA $014B,X                     ; $4283
+        INX                             ; $4286
+        DEY                             ; $4287
+        BPL L_4283                      ; $4288
+        JSR copy_room_defaults          ; $428A
+        JSR L_33CA                      ; $428D
+        JSR L_10E0                      ; $4290
+        LDX #$00                        ; $4293
+        JMP enter_room_at               ; $4295
+L_4298:
+        JSR noise_byte                  ; $4298
+        AND #$07                        ; $429B
+        ORA #$F8                        ; $429D
+        LDX #$1C                        ; $429F
+L_42A1:
+        STA $DAAC,X                     ; $42A1
+        STA $DAD4,X                     ; $42A4
+        STA $DAFC,X                     ; $42A7
+        STA $DB24,X                     ; $42AA
+        STA $DB4C,X                     ; $42AD
+        STA $DB74,X                     ; $42B0
+        STA $DB9C,X                     ; $42B3
+        STA $DBC4,X                     ; $42B6
+        DEX                             ; $42B9
+        BPL L_42A1                      ; $42BA
+        LDA #$04                        ; $42BC
+        LDX #$00                        ; $42BE
+        LDY #$0A                        ; $42C0
+        JMP print_string                ; $42C2
+; $42C5  1217 bytes of data
 
 L_4786:
         INC $04                         ; $4786
@@ -6387,7 +8848,137 @@ show_screen:
         STA $D011                       ; $50E2
         RTS                             ; $50E5
 
-; $50E6  300 bytes of data between routines
+; $50E6  73 bytes of data
+; Called from boot. Spins until $CF8F and $CFAF are both $B9, then
+; builds the sprite pictures from the library pointers at $59BD, $5A8F,
+; and $5B61. $5CBF,X is the same byte place_sprites later reads.
+build_sprites:
+        LDA $CF8F                       ; $512F
+        CMP #$B9                        ; $5132
+        BNE build_sprites               ; $5134
+        EOR $CFAF                       ; $5136
+        BNE build_sprites               ; $5139
+        LDX #$D1                        ; $513B
+L_513D:
+        STX $51                         ; $513D
+        LDA $1239,X                     ; $513F
+        BEQ L_514A                      ; $5142
+        JSR L_517E                      ; $5144
+        JMP L_5154                      ; $5147
+L_514A:
+        LDY #$5F                        ; $514A
+        LDA #$00                        ; $514C
+L_514E:
+        STA $CAE0,Y                     ; $514E
+        DEY                             ; $5151
+        BPL L_514E                      ; $5152
+L_5154:
+        DEC $51                         ; $5154
+        LDX $51                         ; $5156
+        JSR L_517E                      ; $5158
+        LDX $51                         ; $515B
+        LDA $1167,X                     ; $515D
+        STA $06                         ; $5160
+        LDA $1239,X                     ; $5162
+        STA $07                         ; $5165
+        LDY #$5F                        ; $5167
+L_5169:
+        LDA ($06),Y                     ; $5169
+        ORA $CAE0,Y                     ; $516B
+        STA ($06),Y                     ; $516E
+        DEY                             ; $5170
+        BPL L_5169                      ; $5171
+        DEX                             ; $5173
+        CPX #$FF                        ; $5174
+        BEQ L_517B                      ; $5176
+        JMP L_513D                      ; $5178
+L_517B:
+        RTS                             ; $517B
+        RTS                             ; $517C
+        RTS                             ; $517D
+L_517E:
+        LDA $59BD,X                     ; $517E
+        STA $04                         ; $5181
+        LDA $5A8F,X                     ; $5183
+        STA $05                         ; $5186
+        LDY $5B61,X                     ; $5188
+        INY                             ; $518B
+        STY $1D                         ; $518C
+        LDA $1239,X                     ; $518E
+        STA $07                         ; $5191
+        LDA $1167,X                     ; $5193
+        STA $06                         ; $5196
+        CLC                             ; $5198
+        ADC #$20                        ; $5199
+        STA $08                         ; $519B
+        LDA $07                         ; $519D
+        ADC #$00                        ; $519F
+        STA $09                         ; $51A1
+        LDA $06                         ; $51A3
+        CLC                             ; $51A5
+        ADC #$40                        ; $51A6
+        STA $0A                         ; $51A8
+        LDA $07                         ; $51AA
+        ADC #$00                        ; $51AC
+        STA $0B                         ; $51AE
+        LDY #$00                        ; $51B0
+        LDA $5CBF,X                     ; $51B2
+        BNE L_51DA                      ; $51B5
+L_51B7:
+        LDA ($04),Y                     ; $51B7
+        STA $1F                         ; $51B9
+        JSR L_51FF                      ; $51BB
+        STA ($08),Y                     ; $51BE
+        JSR L_51FF                      ; $51C0
+        STA ($06),Y                     ; $51C3
+        LDA #$00                        ; $51C5
+        STA ($0A),Y                     ; $51C7
+        INY                             ; $51C9
+        CPY $1D                         ; $51CA
+        BCC L_51B7                      ; $51CC
+L_51CE:
+        STA ($06),Y                     ; $51CE
+        STA ($08),Y                     ; $51D0
+        STA ($0A),Y                     ; $51D2
+        INY                             ; $51D4
+        CPY #$20                        ; $51D5
+        BCC L_51CE                      ; $51D7
+        RTS                             ; $51D9
+L_51DA:
+        LDA ($04),Y                     ; $51DA
+        STA $1F                         ; $51DC
+        JSR L_51FF                      ; $51DE
+        STA ($08),Y                     ; $51E1
+        JSR L_51FF                      ; $51E3
+        STA ($06),Y                     ; $51E6
+        JSR L_4786                      ; $51E8
+        LDA ($04),Y                     ; $51EB
+        LSR A                           ; $51ED
+        LSR A                           ; $51EE
+        LSR A                           ; $51EF
+        LSR A                           ; $51F0
+        JSR L_51FF                      ; $51F1
+        STA ($0A),Y                     ; $51F4
+        INY                             ; $51F6
+        CPY $1D                         ; $51F7
+        BCC L_51DA                      ; $51F9
+        LDA #$00                        ; $51FB
+        BEQ L_51CE                      ; $51FD
+L_51FF:
+        LDX #$03                        ; $51FF
+        LDA #$00                        ; $5201
+L_5203:
+        LSR $1F                         ; $5203
+        BCC L_5209                      ; $5205
+        ORA #$C0                        ; $5207
+L_5209:
+        DEX                             ; $5209
+        BMI L_5211                      ; $520A
+        LSR A                           ; $520C
+        LSR A                           ; $520D
+        JMP L_5203                      ; $520E
+L_5211:
+        RTS                             ; $5211
 
 
 ; For each active actor, place his box over the room and scan it. xpos and ypos are
@@ -6587,6 +9178,11 @@ L_5363:
 
 ; One row of the overlap test. The sprite row is ANDed with the room row under it. Each
 ; half of that byte is a 4-bit pattern, and the slot for that pattern is marked.
+; The slot is the AND result. One bit of a $F nibble marks slot 1, 2, 4, or 8,
+; and slots 1 and 4 are ground. Tile $32, the left wall, is $F3 $CF on every
+; row of both halves. On an even screen X the overlap stays 3, 12, or 15. One
+; pixel to the side it becomes 1, and the column reads as ground from top to
+; bottom.
 scan_row:
         LDY $52                         ; $537E
 L_5380:
@@ -6684,7 +9280,9 @@ L_5429:
         PLA                             ; $542D
         JMP L_52A4                      ; $542E
 
-; Turn the marked patterns into flags. A set slot means that nibble occurred.
+; Turn the marked patterns into flags. A set slot means that nibble occurred
+; in the AND result. A glyph nibble of $F is not itself slot $F once the
+; sprite covers only part of it.
 ; $4F3C rolls in as bit 0, ground: nibbles 1, 4, 5, 6, 7, 9, and 13.
 ; $4F3D rolls in as bit 1, prize ink: nibbles 2, 6, 8, 9, and 10.
 ; $4F3E rolls in as bit 2 and $4F3F as bit 3. Bit 3 is the wall, nibbles
@@ -7009,7 +9607,10 @@ reset_music:
 start_tune:
         JMP L_E306                      ; $E003
 
-; $E006  762 bytes of data between routines
+; Called from game_over_raster.
+L_E006:
+        JMP L_E49E                      ; $E006
+; $E009  759 bytes of data
 
 L_E300:
         JMP L_E434                      ; $E300
@@ -7152,12 +9753,30 @@ L_E434:
         JSR L_E3DA                      ; $E434
         RTS                             ; $E437
 
-; $E438  29 bytes of data between routines
+L_E438:
+        TYA                             ; $E438
+        BPL L_E441                      ; $E439
+        AND #$7F                        ; $E43B
+        TAX                             ; $E43D
+        JMP L_E455                      ; $E43E
+L_E441:
+        AND #$02                        ; $E441
+        BNE L_E45B                      ; $E443
+        LDX $E309                       ; $E445
+        CPX $E86B                       ; $E448
+        BCC L_E454                      ; $E44B
+        LDX #$FF                        ; $E44D
+        TYA                             ; $E44F
+        AND #$01                        ; $E450
+        BEQ $E486                       ; $E452
+L_E454:
+        INX                             ; $E454
 
 L_E455:
         STX $E309                       ; $E455
         JMP L_E303                      ; $E458
-        .byte $AE, $6C, $E8
+L_E45B:
+        LDX $E86C                       ; $E45B
 
 L_E45E:
         LDA $E870,X                     ; $E45E
@@ -7186,7 +9805,140 @@ L_E47B:
         BNE L_E45E                      ; $E484
         JMP L_E3DA                      ; $E486
 
-; $E489  306 bytes of data between routines
+L_E489:
+        LDA $E30F                       ; $E489
+        ORA $E311                       ; $E48C
+        STA $D418                       ; $E48F
+        LDA $E2E8                       ; $E492
+        STA $D417                       ; $E495
+        LDA #$00                        ; $E498
+        STA $E310                       ; $E49A
+        RTS                             ; $E49D
+L_E49E:
+        LDA $E30A                       ; $E49E
+        BNE L_E4BB                      ; $E4A1
+        LDA $E30C                       ; $E4A3
+        BNE L_E4A9                      ; $E4A6
+L_E4A8:
+        RTS                             ; $E4A8
+L_E4A9:
+        LDX $E30E                       ; $E4A9
+        CPX #$FF                        ; $E4AC
+        BNE L_E4BE                      ; $E4AE
+        LDY $E314                       ; $E4B0
+        BEQ L_E4BB                      ; $E4B3
+        JSR L_E438                      ; $E4B5
+        JMP L_E49E                      ; $E4B8
+L_E4BB:
+        JMP L_E3DA                      ; $E4BB
+L_E4BE:
+        DEC $E12F                       ; $E4BE
+        BNE L_E4A8                      ; $E4C1
+        LDA $E30D                       ; $E4C3
+        STA $E12F                       ; $E4C6
+        DEC $E104                       ; $E4C9
+        BPL L_E4F4                      ; $E4CC
+        LDA $E104                       ; $E4CE
+        CMP $E107                       ; $E4D1
+        BNE L_E503                      ; $E4D4
+        LDA $E10A                       ; $E4D6
+        STA $E104                       ; $E4D9
+        LDA $E10D                       ; $E4DC
+        STA $E107                       ; $E4DF
+        LDA $E310                       ; $E4E2
+        CMP #$01                        ; $E4E5
+        BNE L_E4EC                      ; $E4E7
+        JSR L_E489                      ; $E4E9
+L_E4EC:
+        LDX #$00                        ; $E4EC
+        JSR L_E578                      ; $E4EE
+        JMP L_E503                      ; $E4F1
+L_E4F4:
+        BNE L_E503                      ; $E4F4
+        LDA $E101                       ; $E4F6
+        BNE L_E503                      ; $E4F9
+        LDA $E116                       ; $E4FB
+        AND #$FE                        ; $E4FE
+        STA $D404                       ; $E500
+L_E503:
+        DEC $E105                       ; $E503
+        BPL L_E52E                      ; $E506
+        LDA $E105                       ; $E508
+        CMP $E108                       ; $E50B
+        BNE L_E53D                      ; $E50E
+        LDA $E10B                       ; $E510
+        STA $E105                       ; $E513
+        LDA $E10E                       ; $E516
+        STA $E108                       ; $E519
+        LDA $E310                       ; $E51C
+        CMP #$02                        ; $E51F
+        BNE L_E526                      ; $E521
+        JSR L_E489                      ; $E523
+L_E526:
+        LDX #$01                        ; $E526
+        JSR L_E578                      ; $E528
+        JMP L_E53D                      ; $E52B
+L_E52E:
+        BNE L_E53D                      ; $E52E
+        LDA $E102                       ; $E530
+        BNE L_E53D                      ; $E533
+        LDA $E117                       ; $E535
+        AND #$FE                        ; $E538
+        STA $D40B                       ; $E53A
+L_E53D:
+        DEC $E106                       ; $E53D
+        BPL L_E568                      ; $E540
+        LDA $E106                       ; $E542
+        CMP $E109                       ; $E545
+        BNE L_E577                      ; $E548
+        LDA $E10C                       ; $E54A
+        STA $E106                       ; $E54D
+        LDA $E10F                       ; $E550
+        STA $E109                       ; $E553
+        LDA $E310                       ; $E556
+        CMP #$03                        ; $E559
+        BNE L_E560                      ; $E55B
+        JSR L_E489                      ; $E55D
+L_E560:
+        LDX #$02                        ; $E560
+        JSR L_E578                      ; $E562
+        JMP L_E577                      ; $E565
+L_E568:
+        BNE L_E577                      ; $E568
+        LDA $E103                       ; $E56A
+        BNE L_E577                      ; $E56D
+        LDA $E118                       ; $E56F
+        AND #$FE                        ; $E572
+        STA $D412                       ; $E574
+L_E577:
+        RTS                             ; $E577
+L_E578:
+        STX $E12E                       ; $E578
+        JSR L_E3EA                      ; $E57B
+        LDX $E12E                       ; $E57E
+        LDY $E719,X                     ; $E581
+        TAX                             ; $E584
+        BNE L_E590                      ; $E585
+        STA $D400,Y                     ; $E587
+        STA $D401,Y                     ; $E58A
+        JMP L_E5BB                      ; $E58D
+L_E590:
+        CLC                             ; $E590
+        ADC $E100                       ; $E591
+        TAX                             ; $E594
+        LDA $E254,X                     ; $E595
+        STA $D401,Y                     ; $E598
+        LDA $E200,X                     ; $E59B
+        STA $D400,Y                     ; $E59E
+        LDX $E12E                       ; $E5A1
+        LDA $E101,X                     ; $E5A4
+        BNE L_E5BB                      ; $E5A7
+        LDA $E110,X                     ; $E5A9
+        STA $D405,Y                     ; $E5AC
+        LDA $E113,X                     ; $E5AF
+        STA $D406,Y                     ; $E5B2
+        LDA $E116,X                     ; $E5B5
+        STA $D404,Y                     ; $E5B8
 
 L_E5BB:
         LDA $E130                       ; $E5BB
@@ -7278,3 +10030,356 @@ L_E6E9:
         SBC $E312                       ; $E6F4
         TAY                             ; $E6F7
         RTS                             ; $E6F8
+
+; Past the last address the earlier listing reached.
+; Voice called from irq_service. Writes the SID registers at $D400.
+; The STA before the BCC stores the branch offset, so the branch lands
+; on one of the jumps that follow.
+voice_1:
+        LDA $EB00                       ; $EB03
+        BNE L_EB09                      ; $EB06
+L_EB08:
+        RTS                             ; $EB08
+L_EB09:
+        BPL L_EB26                      ; $EB09
+        ASL A                           ; $EB0B
+        TAX                             ; $EB0C
+        LDA $EBE5,X                     ; $EB0D
+        STA $F6                         ; $EB10
+        LDA $EBE6,X                     ; $EB12
+        STA $F7                         ; $EB15
+        LDY #$01                        ; $EB17
+        STY $EB02                       ; $EB19
+        STY $EB00                       ; $EB1C
+        DEY                             ; $EB1F
+        STY $D404                       ; $EB20
+        STY $EB01                       ; $EB23
+L_EB26:
+        DEC $EB02                       ; $EB26
+        BNE L_EB08                      ; $EB29
+        LDY $EB01                       ; $EB2B
+        LDA ($F6),Y                     ; $EB2E
+        TAX                             ; $EB30
+        LDA $EC03,X                     ; $EB31
+        STA $EB39                       ; $EB34  rewrites a byte of the instruction at $EB38
+        CLC                             ; $EB37
+        BCC $EB3A                       ; $EB38
+        JMP L_EB82                      ; $EB3A
+        JMP L_EBA2                      ; $EB3D
+        JMP L_EBA9                      ; $EB40
+        JMP L_EBB3                      ; $EB43
+        JMP L_EBC0                      ; $EB46
+        JMP L_EBD0                      ; $EB49
+        JMP L_EBD0                      ; $EB4C
+        JMP L_EBDD                      ; $EB4F
+L_EB52:
+        INY                             ; $EB52
+        LDA ($F6),Y                     ; $EB53
+        STA $EB02                       ; $EB55
+        INY                             ; $EB58
+        LDA ($F6),Y                     ; $EB59
+        TAX                             ; $EB5B
+        LDA $E200,X                     ; $EB5C
+        STA $D400                       ; $EB5F
+        LDA $E254,X                     ; $EB62
+        STA $D401                       ; $EB65
+        INY                             ; $EB68
+        RTS                             ; $EB69
+L_EB6A:
+        LDA ($F6),Y                     ; $EB6A
+        TAX                             ; $EB6C
+        LDA $EC11,X                     ; $EB6D
+        STA $D405                       ; $EB70
+        LDA $EC12,X                     ; $EB73
+        STA $D406                       ; $EB76
+        INY                             ; $EB79
+        RTS                             ; $EB7A
+L_EB7B:
+        LDA ($F6),Y                     ; $EB7B
+        STA $D404                       ; $EB7D
+        INY                             ; $EB80
+        RTS                             ; $EB81
+L_EB82:
+        LDA #$00                        ; $EB82
+        STA $D400                       ; $EB84
+        STA $D401                       ; $EB87
+        STA $EB00                       ; $EB8A
+        STA $EB01                       ; $EB8D
+        RTS                             ; $EB90
+L_EB91:
+        LDA ($F6),Y                     ; $EB91
+        INY                             ; $EB93
+        TAX                             ; $EB94
+        LDA $EC1B,X                     ; $EB95
+        STA $D402                       ; $EB98
+        LDA $EC1C,X                     ; $EB9B
+        STA $D403                       ; $EB9E
+        RTS                             ; $EBA1
+L_EBA2:
+        JSR L_EB52                      ; $EBA2
+        STY $EB01                       ; $EBA5
+        RTS                             ; $EBA8
+L_EBA9:
+        JSR L_EB52                      ; $EBA9
+        JSR L_EB7B                      ; $EBAC
+        STY $EB01                       ; $EBAF
+        RTS                             ; $EBB2
+L_EBB3:
+        JSR L_EB52                      ; $EBB3
+        JSR L_EB6A                      ; $EBB6
+        JSR L_EB7B                      ; $EBB9
+        STY $EB01                       ; $EBBC
+        RTS                             ; $EBBF
+L_EBC0:
+        JSR L_EB52                      ; $EBC0
+        JSR L_EB6A                      ; $EBC3
+        JSR L_EB91                      ; $EBC6
+        JSR L_EB7B                      ; $EBC9
+        STY $EB01                       ; $EBCC
+        RTS                             ; $EBCF
+L_EBD0:
+        JSR L_EB52                      ; $EBD0
+        JSR L_EB91                      ; $EBD3
+        JSR L_EB7B                      ; $EBD6
+        STY $EB01                       ; $EBD9
+        RTS                             ; $EBDC
+L_EBDD:
+        INY                             ; $EBDD
+        JSR L_EB7B                      ; $EBDE
+        STY $EB01                       ; $EBE1
+        RTS                             ; $EBE4
+
+; Voice called from irq_service. Writes the SID registers at $D407.
+; The STA before the BCC stores the branch offset.
+voice_2:
+        LDA $EF70                       ; $EF73
+        BNE L_EF79                      ; $EF76
+L_EF78:
+        RTS                             ; $EF78
+L_EF79:
+        BPL L_EF96                      ; $EF79
+        ASL A                           ; $EF7B
+        TAX                             ; $EF7C
+        LDA $EBE5,X                     ; $EF7D
+        STA $F8                         ; $EF80
+        LDA $EBE6,X                     ; $EF82
+        STA $F9                         ; $EF85
+        LDY #$01                        ; $EF87
+        STY $EF72                       ; $EF89
+        STY $EF70                       ; $EF8C
+        DEY                             ; $EF8F
+        STY $D40B                       ; $EF90
+        STY $EF71                       ; $EF93
+L_EF96:
+        DEC $EF72                       ; $EF96
+        BNE L_EF78                      ; $EF99
+        LDY $EF71                       ; $EF9B
+        LDA ($F8),Y                     ; $EF9E
+        TAX                             ; $EFA0
+        LDA $EC03,X                     ; $EFA1
+        STA $EFA9                       ; $EFA4  rewrites a byte of the instruction at $EFA8
+        CLC                             ; $EFA7
+L_EFA8:
+        BCC L_EFA8                      ; $EFA8
+        JMP L_EFF2                      ; $EFAA
+        JMP L_F012                      ; $EFAD
+        JMP L_F019                      ; $EFB0
+        JMP L_F023                      ; $EFB3
+        JMP L_F030                      ; $EFB6
+        JMP L_F040                      ; $EFB9
+        JMP L_F040                      ; $EFBC
+        JMP L_F04D                      ; $EFBF
+L_EFC2:
+        INY                             ; $EFC2
+        LDA ($F8),Y                     ; $EFC3
+        STA $EF72                       ; $EFC5
+        INY                             ; $EFC8
+        LDA ($F8),Y                     ; $EFC9
+        TAX                             ; $EFCB
+        LDA $E200,X                     ; $EFCC
+        STA $D407                       ; $EFCF
+        LDA $E254,X                     ; $EFD2
+        STA $D408                       ; $EFD5
+        INY                             ; $EFD8
+        RTS                             ; $EFD9
+L_EFDA:
+        LDA ($F8),Y                     ; $EFDA
+        TAX                             ; $EFDC
+        LDA $EC11,X                     ; $EFDD
+        STA $D40C                       ; $EFE0
+        LDA $EC12,X                     ; $EFE3
+        STA $D40D                       ; $EFE6
+        INY                             ; $EFE9
+        RTS                             ; $EFEA
+L_EFEB:
+        LDA ($F8),Y                     ; $EFEB
+        STA $D40B                       ; $EFED
+        INY                             ; $EFF0
+        RTS                             ; $EFF1
+L_EFF2:
+        LDA #$00                        ; $EFF2
+        STA $D407                       ; $EFF4
+        STA $D408                       ; $EFF7
+        STA $EF70                       ; $EFFA
+        STA $EF71                       ; $EFFD
+        RTS                             ; $F000
+L_F001:
+        LDA ($F8),Y                     ; $F001
+        INY                             ; $F003
+        TAX                             ; $F004
+        LDA $EC1B,X                     ; $F005
+        STA $D409                       ; $F008
+        LDA $EC1C,X                     ; $F00B
+        STA $D40A                       ; $F00E
+        RTS                             ; $F011
+L_F012:
+        JSR L_EFC2                      ; $F012
+        STY $EF71                       ; $F015
+        RTS                             ; $F018
+L_F019:
+        JSR L_EFC2                      ; $F019
+        JSR L_EFEB                      ; $F01C
+        STY $EF71                       ; $F01F
+        RTS                             ; $F022
+L_F023:
+        JSR L_EFC2                      ; $F023
+        JSR L_EFDA                      ; $F026
+        JSR L_EFEB                      ; $F029
+        STY $EF71                       ; $F02C
+        RTS                             ; $F02F
+L_F030:
+        JSR L_EFC2                      ; $F030
+        JSR L_EFDA                      ; $F033
+        JSR L_F001                      ; $F036
+        JSR L_EFEB                      ; $F039
+        STY $EF71                       ; $F03C
+        RTS                             ; $F03F
+L_F040:
+        JSR L_EFC2                      ; $F040
+        JSR L_F001                      ; $F043
+        JSR L_EFEB                      ; $F046
+        STY $EF71                       ; $F049
+        RTS                             ; $F04C
+L_F04D:
+        INY                             ; $F04D
+        JSR L_EFEB                      ; $F04E
+        STY $EF71                       ; $F051
+        RTS                             ; $F054
+
+; Voice called from irq_service. Writes the SID registers at $D40E.
+; The STA before the BCC stores the branch offset.
+voice_3:
+        LDA $F070                       ; $F073
+        BNE L_F079                      ; $F076
+L_F078:
+        RTS                             ; $F078
+L_F079:
+        BPL L_F096                      ; $F079
+        ASL A                           ; $F07B
+        TAX                             ; $F07C
+        LDA $EBE5,X                     ; $F07D
+        STA $FA                         ; $F080
+        LDA $EBE6,X                     ; $F082
+        STA $FB                         ; $F085
+        LDY #$01                        ; $F087
+        STY $F072                       ; $F089
+        STY $F070                       ; $F08C
+        DEY                             ; $F08F
+        STY $D412                       ; $F090
+        STY $F071                       ; $F093
+L_F096:
+        DEC $F072                       ; $F096
+        BNE L_F078                      ; $F099
+        LDY $F071                       ; $F09B
+        LDA ($FA),Y                     ; $F09E
+        TAX                             ; $F0A0
+        LDA $EC03,X                     ; $F0A1
+        STA $F0A9                       ; $F0A4  rewrites a byte of the instruction at $F0A8
+        CLC                             ; $F0A7
+L_F0A8:
+        BCC L_F0A8                      ; $F0A8
+        JMP L_F0F2                      ; $F0AA
+        JMP L_F112                      ; $F0AD
+        JMP L_F119                      ; $F0B0
+        JMP L_F123                      ; $F0B3
+        JMP L_F130                      ; $F0B6
+        JMP L_F140                      ; $F0B9
+        JMP L_F140                      ; $F0BC
+        JMP L_F14D                      ; $F0BF
+L_F0C2:
+        INY                             ; $F0C2
+        LDA ($FA),Y                     ; $F0C3
+        STA $F072                       ; $F0C5
+        INY                             ; $F0C8
+        LDA ($FA),Y                     ; $F0C9
+        TAX                             ; $F0CB
+        LDA $E200,X                     ; $F0CC
+        STA $D40E                       ; $F0CF
+        LDA $E254,X                     ; $F0D2
+        STA $D40F                       ; $F0D5
+        INY                             ; $F0D8
+        RTS                             ; $F0D9
+L_F0DA:
+        LDA ($FA),Y                     ; $F0DA
+        TAX                             ; $F0DC
+        LDA $EC11,X                     ; $F0DD
+        STA $D413                       ; $F0E0
+        LDA $EC12,X                     ; $F0E3
+        STA $D414                       ; $F0E6
+        INY                             ; $F0E9
+        RTS                             ; $F0EA
+L_F0EB:
+        LDA ($FA),Y                     ; $F0EB
+        STA $D412                       ; $F0ED
+        INY                             ; $F0F0
+        RTS                             ; $F0F1
+L_F0F2:
+        LDA #$00                        ; $F0F2
+        STA $D40E                       ; $F0F4
+        STA $D40F                       ; $F0F7
+        STA $F070                       ; $F0FA
+        STA $F071                       ; $F0FD
+        RTS                             ; $F100
+L_F101:
+        LDA ($FA),Y                     ; $F101
+        INY                             ; $F103
+        TAX                             ; $F104
+        LDA $EC1B,X                     ; $F105
+        STA $D410                       ; $F108
+        LDA $EC1C,X                     ; $F10B
+        STA $D411                       ; $F10E
+        RTS                             ; $F111
+L_F112:
+        JSR L_F0C2                      ; $F112
+        STY $F071                       ; $F115
+        RTS                             ; $F118
+L_F119:
+        JSR L_F0C2                      ; $F119
+        JSR L_F0EB                      ; $F11C
+        STY $F071                       ; $F11F
+        RTS                             ; $F122
+L_F123:
+        JSR L_F0C2                      ; $F123
+        JSR L_F0DA                      ; $F126
+        JSR L_F0EB                      ; $F129
+        STY $F071                       ; $F12C
+        RTS                             ; $F12F
+L_F130:
+        JSR L_F0C2                      ; $F130
+        JSR L_F0DA                      ; $F133
+        JSR L_F101                      ; $F136
+        JSR L_F0EB                      ; $F139
+        STY $F071                       ; $F13C
+        RTS                             ; $F13F
+L_F140:
+        JSR L_F0C2                      ; $F140
+        JSR L_F101                      ; $F143
+        JSR L_F0EB                      ; $F146
+        STY $F071                       ; $F149
+        RTS                             ; $F14C
+L_F14D:
+        INY                             ; $F14D
+        JSR L_F0EB                      ; $F14E
+        STY $F071                       ; $F151
+        RTS                             ; $F154
+
