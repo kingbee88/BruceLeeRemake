@@ -127,6 +127,26 @@
 ; $4BAE xpos, $4BC2 ypos, rooms 0-19:
 ; 1A 18 30 20 94 22 86 1C 14 12 34 40 18 98 18 1C 18 18 18 12
 ; C4 62 C4 C0 B4 51 B3 44 46 C6 8C 4C 5C 32 5C C3 5C B4 C6 95
+;
+; The same two bytes are the main spot for the Ninja and for Yamo.
+; alt_spawn reads $4BD6 xpos and $4BEA ypos:
+; 9F 95 96 38 96 28 81 1F 00 00 96 00 70 00 92 7A 81 00 00 00
+; 62 92 C4 C4 B4 C2 72 74 00 00 5C 00 5C 00 BE C4 8E 00 00 00
+;
+; Wake counts, rooms 0-19. $135B is the Ninja ($5E), $131F is Yamo ($5D).
+; tick_wake_counts subtracts one each logic frame. 0 wakes on the first
+; check. load_wake_counts reloads both on entry and the one who just left
+; after retire_actor. A long visit or a set $40 stores 3. A middle visit
+; halves the byte. $42CA stores $30 over the Ninja's count.
+; EE EE EE 00 EE 60 EE C0 00 00 30 00 20 EE 30 50 30 EE 00 00
+; A0 A0 A0 00 70 0C 30 18 00 00 0C 00 04 08 08 08 08 08 00 00
+;
+; Side flags, rooms 0-19. $136F is the Ninja, $1333 is Yamo. 0, or a noise
+; byte of $C0 or more, is a fresh coin toss. Otherwise bit 7 set is the
+; alternate spot. Yamo's own byte only decides whether he tosses. When it
+; holds, the sign he follows is the Ninja's $136F.
+; 80 80 00 00 80 02 00 80 00 00 80 00 80 00 00 00 02 00 00 00
+; 02 02 00 00 80 80 02 02 00 00 02 00 80 00 02 00 80 00 00 00
 
 ; ---------------------------------------------------------------------------
 ; Exits. match_special tests tiles 2, 3, 4, and 5 before the bit-1 gate.

@@ -48,6 +48,31 @@
 ;   $17          carried on the scrolling surface. Tile $62 with the ladder bit.
 ;   $1A          duck
 ;
+; Actor 1 is the Ninja. spawn_ninja calls wake_actor with A = $80, so active
+; is $81. Actor 2 is Yamo. spawn_yamo passes A = $40, so active is $41.
+; wake_actor stores $0F in $98,X, and enemy_turn does not read it. With $42CA
+; set, the second port is stored in $99 and actor 1 is left out of enemy_turn.
+;   $0F   flinch. A non-Bruce leaves once the timer in Y is below 2.
+;   $10   Ninja's first picture. Library $2A for $0A counts, then state $12.
+;   $12   second picture. Library $2C facing left, $2E facing right.
+;   $13   knockdown. Libraries $38-$3F. $D1 gone negative is forced here.
+;   $14   chase. On ground, Bruce above by $10 or more is a stand. Bit 7
+;         of $62 means this fighter is above Bruce, and he walks. A ladder
+;         with the ground bit clear walks as well. Climb is never started.
+;   $15   sidestep. Ground is bit 0 only. Bit 0 clear is a fall.
+;   $16   Yamo's strike. Libraries $30-$37. xpos stays put.
+;   $1B   stomp. The knockdown libraries, split at timer 4.
+; $D1,X is health. wake_actor stores $24. spawn_ninja caps a fresh value at
+; $14. spawn_yamo caps it at 7. 0 is still standing. Negative is down.
+; check_bruce_down leaves state $13 and state $19 while the timer remains.
+;
+; $5E counts down to the Ninja's wake, $5D to Yamo's. tick_wake_counts
+; subtracts one from each on every logic frame, including while that
+; fighter is on screen. A 0 in the room table wakes him on the first
+; check. The bytes are $135B and $131F, listed in rooms.asm. A long visit
+; or a set $40 reloads 3. A middle visit halves the reloaded count. A
+; human opponent ($42CA) reloads the Ninja's count with $30.
+;
 ; Where to start reading
 ;   boot              fill, charset expand, sprite pictures, then start
 ;   start             cold start
@@ -95,6 +120,19 @@
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
 ;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
+;   spawn_ninja       actor 1, state $10, health capped at $14
+;   spawn_yamo        actor 2, timer $10, health capped at 7, faces Bruce
+;   try_ninja         $5E is 0 and actor 1 is inactive
+;   try_yamo          $5D is 0, then the $96 gate
+;   tick_wake_counts  $5D and $5E, every logic frame
+;   load_wake_counts  X = 1 Ninja, X = 2 Yamo, X = 0 both
+;   stand_down        state 0, timer 6. A kick then stores $18 over it.
+;   load_library      one library. Actor 2's color byte is $F0.
+;   expand_library    one source library into a 24-pixel sprite
+;   range_to_bruce    $62 dy, $63 dx. Sign in bit 7, magnitude capped at $30.
+;   reach_test        in front of the attacker, inside the reach in $61
+;   force_knockdown   $D1 went negative. State $13, timer $0C, kill score.
+;   retire_actor      clear active bit 0, then load that fighter's count
 ;
 ; $40 counts finished games. hook_frame_19 adds one when the treasure
 ; timer reaches 0, and the next visit is harder: enter_room forces the
@@ -1101,7 +1139,11 @@ L_0B5F:
 ; $0B6A  36 bytes of data between routines
 
 ; Mark this actor present and give him a standing picture. A carries the extra active
-; flags. X is the actor. $98,X starts at $0F, which is no direction.
+; flags. X is the actor. $98,X starts at $0F, which is no direction. The three
+; rolls of the value just stored pick a column of $59A8. $01, $41, and $81
+; land on 0, 1, and 2 whether carry came in set or clear. store_pose uses
+; the same rolls on $59A5, whose room 0 bytes are 00 8C 46 04: Bruce, Yamo,
+; the Ninja, and a fourth copy.
 wake_actor:
         ORA #$01                        ; $0B8E
         STA active,X                    ; $0B90
@@ -1143,10 +1185,10 @@ L_0BAE:
         STA $D1,X                       ; $0BDB
         STX $51                         ; $0BDD
         LDA $0104                       ; $0BDF
-        BEQ L_0BE7                      ; $0BE2
+        BEQ main_spawn                      ; $0BE2
         TXA                             ; $0BE4
         BNE L_0BFA                      ; $0BE5
-L_0BE7:
+main_spawn:
         LDX $29                         ; $0BE7
         LDA $4BC2,X                     ; $0BE9
         TAY                             ; $0BEC
@@ -1157,40 +1199,51 @@ L_0BF0:
         TYA                             ; $0BF4
         STA ypos,X                      ; $0BF5
         JMP L_0C4D                      ; $0BF7
+; $0104 clear, and Bruce himself, use main_spawn ($4BAE/$4BC2). A fighter
+; with $8A,X clear picks a side. The Ninja reads $136F for this room. 0, or
+; a noise byte of $C0 or more, is toss_side: the low bit of a new noise
+; byte, clear for main_spawn and set for alt_spawn ($4BD6/$4BEA). A smaller
+; noise byte follows bit 7 of $136F, set for the alternate spot. Yamo reads
+; $1333 the same way, and when that byte is keeping him he follows bit 7 of
+; the Ninja's $136F. A nonzero $8A,X resumes: that byte is the xpos, $8C,X
+; the ypos, and $8E,X the health, and the xpos byte is then cleared. Actor 1's
+; bytes are $8B, $8D, and $8F. Actor 2's are $8C, $8E, and $90. finish_exit
+; writes Bruce's position and this fighter's $D1 there when he was active.
+; The four position tables are listed in rooms.asm.
 L_0BFA:
         LDA $8A,X                       ; $0BFA
         BNE L_0C3F                      ; $0BFC
         CPX #$01                        ; $0BFE
-        BNE L_0C2A                      ; $0C00
+        BNE yamo_side                      ; $0C00
         LDX $29                         ; $0C02
         LDA $136F,X                     ; $0C04
-        BEQ L_0C17                      ; $0C07
+        BEQ toss_side                      ; $0C07
         JSR noise_byte                      ; $0C09
         CMP #$C0                        ; $0C0C
-        BCS L_0C17                      ; $0C0E
+        BCS toss_side                      ; $0C0E
         LDA $136F,X                     ; $0C10
-        BPL L_0BE7                      ; $0C13
-        BMI L_0C1E                      ; $0C15
-L_0C17:
+        BPL main_spawn                      ; $0C13
+        BMI alt_spawn                      ; $0C15
+toss_side:
         JSR noise_byte                      ; $0C17
         AND #$01                        ; $0C1A
-        BEQ L_0BE7                      ; $0C1C
-L_0C1E:
+        BEQ main_spawn                      ; $0C1C
+alt_spawn:
         LDX $29                         ; $0C1E
         LDA $4BEA,X                     ; $0C20
         TAY                             ; $0C23
         LDA $4BD6,X                     ; $0C24
         JMP L_0BF0                      ; $0C27
-L_0C2A:
+yamo_side:
         LDX $29                         ; $0C2A
         LDA $1333,X                     ; $0C2C
-        BEQ L_0C17                      ; $0C2F
+        BEQ toss_side                      ; $0C2F
         JSR noise_byte                      ; $0C31
         CMP #$C0                        ; $0C34
-        BCS L_0C17                      ; $0C36
+        BCS toss_side                      ; $0C36
         LDA $136F,X                     ; $0C38
-        BPL L_0BE7                      ; $0C3B
-        BMI L_0C1E                      ; $0C3D
+        BPL main_spawn                      ; $0C3B
+        BMI alt_spawn                      ; $0C3D
 L_0C3F:
         STA xpos,X                      ; $0C3F
         LDA $8C,X                       ; $0C41
@@ -1270,7 +1323,11 @@ L_0CBA:
         STA $D015                       ; $0CD1
 L_0CD4:
         RTS                             ; $0CD4
-L_0CD5:
+; Actor 1. Active becomes $81. State $10, timer $0A. $D1 above $14 is
+; brought down to $14. The four stores name libraries $2A/$2B and absolute
+; $6C/$6D. choose_pose runs before blit_sprites and writes $4F4E from state
+; $10, so the picture drawn is relative library $2A.
+spawn_ninja:
         JSR blip_and_return                      ; $0CD5
         LDA $CF79                       ; $0CD8
         EOR $CF99                       ; $0CDB
@@ -1297,14 +1354,19 @@ L_0CD5:
         STA $D1,X                       ; $0D0C
 L_0D0E:
         RTS                             ; $0D0E
-L_0D0F:
+; Wake the Ninja when $5E has reached 0 and actor 1's active bit 0 is
+; clear. $135B for this room is then stored back into $5E. $42CA set
+; replaces that with $30. test_visit: V set (long, $88 >= $20) or $40 set
+; stores 3, carry set (middle, $88 >= $19) halves it, and a short visit
+; leaves the table byte.
+try_ninja:
         LDA $5E                         ; $0D0F
         BNE L_0D3C                      ; $0D11
         LDX #$01                        ; $0D13
         LDA active,X                    ; $0D15
         AND #$01                        ; $0D17
         BNE L_0D3C                      ; $0D19
-        JSR L_0CD5                      ; $0D1B
+        JSR spawn_ninja                      ; $0D1B
         LDX $29                         ; $0D1E
         LDA $135B,X                     ; $0D20
         STA $5E                         ; $0D23
@@ -1315,23 +1377,28 @@ L_0D0F:
         STA $5E                         ; $0D2C
 L_0D2E:
         JSR test_visit                      ; $0D2E
-        BVS L_0D3D                      ; $0D31
+        BVS ninja_soon                      ; $0D31
         BCS L_0D3A                      ; $0D33
         LDA $40                         ; $0D35
-        BNE L_0D3D                      ; $0D37
+        BNE ninja_soon                      ; $0D37
         RTS                             ; $0D39
 L_0D3A:
         LSR $5E                         ; $0D3A
 L_0D3C:
         RTS                             ; $0D3C
-L_0D3D:
+ninja_soon:
         LDA #$03                        ; $0D3D
         STA $5E                         ; $0D3F
         RTS                             ; $0D41
-L_0D42:
+; X = 1 reloads the Ninja only. X = 2 branches to the Yamo count.
+; Any other X, including the 0 finish_exit passes before a room starts,
+; reloads both. retire_actor jumps here with the fighter who just left.
+; The LDA $E000 is rewritten to $135B+room or $131F+room. The visit
+; adjustments match try_ninja and try_yamo.
+load_wake_counts:
         CPX #$01                        ; $0D42
         BNE L_0D72                      ; $0D44
-L_0D46:
+load_ninja_count:
         LDA #$5B                        ; $0D46
         CLC                             ; $0D48
         ADC $29                         ; $0D49
@@ -1348,10 +1415,10 @@ L_0D46:
         STA $5E                         ; $0D61
 L_0D63:
         JSR test_visit                      ; $0D63
-        BVS L_0D3D                      ; $0D66
+        BVS ninja_soon                      ; $0D66
         BCS L_0D6F                      ; $0D68
         LDA $40                         ; $0D6A
-        BNE L_0D3D                      ; $0D6C
+        BNE ninja_soon                      ; $0D6C
         RTS                             ; $0D6E
 L_0D6F:
         LSR $5E                         ; $0D6F
@@ -1359,7 +1426,7 @@ L_0D6F:
 L_0D72:
         CPX #$02                        ; $0D72
         BNE L_0D9E                      ; $0D74
-L_0D76:
+load_yamo_count:
         LDA #$1F                        ; $0D76
         CLC                             ; $0D78
         ADC $29                         ; $0D79
@@ -1370,22 +1437,25 @@ L_0D76:
         LDA $E000                       ; $0D85
         STA $5D                         ; $0D88
         JSR test_visit                      ; $0D8A
-        BVS L_0D99                      ; $0D8D
+        BVS yamo_soon                      ; $0D8D
         BCS L_0D96                      ; $0D8F
         LDA $40                         ; $0D91
-        BNE L_0D99                      ; $0D93
+        BNE yamo_soon                      ; $0D93
         RTS                             ; $0D95
 L_0D96:
         LSR $5D                         ; $0D96
         RTS                             ; $0D98
-L_0D99:
+yamo_soon:
         LDA #$03                        ; $0D99
         STA $5D                         ; $0D9B
         RTS                             ; $0D9D
 L_0D9E:
-        JSR L_0D46                      ; $0D9E
-        JMP L_0D76                      ; $0DA1
-L_0DA4:
+        JSR load_ninja_count                      ; $0D9E
+        JMP load_yamo_count                      ; $0DA1
+; frame calls this once per logic frame, and skips it while $7A is set.
+; A count of 0 is left at 0, which is why a table byte of 0 wakes on the
+; first check. Both counts move while the fighters are already on screen.
+tick_wake_counts:
         LDA $5D                         ; $0DA4
         BEQ L_0DAA                      ; $0DA6
         DEC $5D                         ; $0DA8
@@ -1395,7 +1465,12 @@ L_0DAA:
         DEC $5E                         ; $0DAE
 L_0DB0:
         RTS                             ; $0DB0
-L_0DB1:
+; Wake Yamo when $5D has reached 0 and actor 2's active bit 0 is clear.
+; Bit 0 of $96 can hold that off: $40 clear, $42CA clear, and test_visit
+; returning a short visit, a noise byte of $19 or more stores $10 back
+; into $5D and returns. Otherwise $131F for this room is stored into $5D
+; and the same visit adjustment as the Ninja's is applied.
+try_yamo:
         LDA $5D                         ; $0DB1
         BNE L_0DF7                      ; $0DB3
         LDA $96                         ; $0DB5
@@ -1419,21 +1494,28 @@ L_0DD7:
         LDA active,X                    ; $0DD9
         AND #$01                        ; $0DDB
         BNE L_0DF7                      ; $0DDD
-        JSR L_0DF8                      ; $0DDF
+        JSR spawn_yamo                      ; $0DDF
         LDX $29                         ; $0DE2
         LDA $131F,X                     ; $0DE4
         STA $5D                         ; $0DE7
         JSR test_visit                      ; $0DE9
-        BVS L_0D99                      ; $0DEC
+        BVS yamo_soon                      ; $0DEC
         BCS L_0DF5                      ; $0DEE
         LDA $40                         ; $0DF0
-        BNE L_0D99                      ; $0DF2
+        BNE yamo_soon                      ; $0DF2
         RTS                             ; $0DF4
 L_0DF5:
         LSR $5D                         ; $0DF5
 L_0DF7:
         RTS                             ; $0DF7
-L_0DF8:
+; Actor 2. Active becomes $41. $D1 above 7 is brought down to 7. Timer
+; $10 of state 0, so he stands until it expires. $4F4B and $4F51 are
+; cleared: $2770 for actor 2 is $FF, and blit_sprites skips his second
+; image on its own. $4F4E is set to $82. choose_pose on this same frame
+; replaces it from state 0 before the blit. range_to_bruce and
+; face_from_dx turn him toward Bruce. Bit 7 of $63 means Bruce is to his
+; right.
+spawn_yamo:
         JSR blip_and_return                      ; $0DF8
         LDA #$40                        ; $0DFB
         JSR wake_actor                  ; $0DFD
@@ -1450,8 +1532,8 @@ L_0DF8:
 L_0E17:
         LDA #$10                        ; $0E17
         STA timer,X                     ; $0E19
-        JSR L_2DDD                      ; $0E1B
-        JMP L_2E1C                      ; $0E1E
+        JSR range_to_bruce                      ; $0E1B
+        JMP face_from_dx                      ; $0E1E
 L_0E21:
         SEC                             ; $0E21
         SBC #$03                        ; $0E22
@@ -2659,7 +2741,7 @@ L_1826:
 ; Count $28 down. Two-player mode swaps the saved block at $439F before the next room.
 between_lives:
         LDA #$24                        ; $182A
-        STA $D1                         ; $182C
+        STA $D1                         ; $182C  Bruce, the Ninja, and Yamo. The caps apply again at the next wake.
         STA $D2                         ; $182E
         STA $D3                         ; $1830
         LDA #$00                        ; $1832
@@ -3171,9 +3253,9 @@ L_1BDF:
         JSR flicker_lamps                      ; $1BEE
         LDA $7A                         ; $1BF1
         BNE L_1BFE                      ; $1BF3
-        JSR L_0DA4                      ; $1BF5
-        JSR L_0D0F                      ; $1BF8
-        JSR L_0DB1                      ; $1BFB
+        JSR tick_wake_counts                      ; $1BF5
+        JSR try_ninja                      ; $1BF8
+        JSR try_yamo                      ; $1BFB
 ; $7B flips every logic frame. The room hook sees 1 on the skipped frame
 ; and 0 on the frame it runs, so it advances every other tick.
 L_1BFE:
@@ -4146,10 +4228,16 @@ L_226A:
         LDY $52                         ; $2281
 L_2283:
         CPY #$01                        ; $2283
-        BEQ L_228C                      ; $2285
+        BEQ stand_down                      ; $2285
         LDA #$11                        ; $2287
         JMP keep_state                  ; $2289
-L_228C:
+; State 0 and timer 6, and the pose hold is cleared. A timer still running
+; keeps actor_tick inside move_for_state, so these frames do not fall.
+; Bruce: a long or middle visit doubles the 6, a short visit halves it.
+; Another fighter: a long visit or a set $40 stores 1, a middle visit
+; halves the 6, and a short visit with $40 clear keeps 6. The kick path in
+; enemy_turn calls this and then stores $18 over the timer.
+stand_down:
         LDA #$00                        ; $228C
         STA state,X                     ; $228E
         LDA #$06                        ; $2290
@@ -4181,6 +4269,9 @@ L_22B8:
         STA timer,X                     ; $22BA
         RTS                             ; $22BC
 L_22BD:
+; State $16, Yamo's strike. Wall bit 3 goes to land. The INCs add to the
+; push counters, $4F60 when he faces right and $4F5D when he faces left.
+; xpos is left where it is. Timer 1 goes to stand_down.
         CMP #$16                        ; $22BD
         BNE L_22F3                      ; $22BF
         LDA hit,X                       ; $22C1
@@ -4210,7 +4301,7 @@ L_22EB:
         LDA #$16                        ; $22EB
         JMP keep_state                  ; $22ED
 L_22F0:
-        JMP L_228C                      ; $22F0
+        JMP stand_down                      ; $22F0
 L_22F3:
         CMP #$14                        ; $22F3
         BEQ L_22FA                      ; $22F5
@@ -4219,7 +4310,7 @@ L_22FA:
         LDA hit,X                       ; $22FA
         AND #$01                        ; $22FC
         BEQ L_2372                      ; $22FE
-        JSR L_2DDD                      ; $2300
+        JSR range_to_bruce                      ; $2300
         LDA $62                         ; $2303
         AND #$7F                        ; $2305
         CMP #$10                        ; $2307
@@ -4276,11 +4367,15 @@ L_235B:
         INC $52                         ; $235B
         LDA #$14                        ; $235D
         JMP keep_state                  ; $235F
+; |dy| is at least $10, and hit bit 0 was set. Bit 7 of $62 means this
+; fighter is above Bruce, so he keeps walking. Bruce above: face_from_dx,
+; then stand_down. The ladder test at $2372 is the bit-0-clear path, and
+; that one walks without this compare.
 L_2362:
         LDA $62                         ; $2362
         BMI L_2352                      ; $2364
-        JSR L_2E1C                      ; $2366
-        JMP L_228C                      ; $2369
+        JSR face_from_dx                      ; $2366
+        JMP stand_down                      ; $2369
 L_236C:
         JSR L_1E6D                      ; $236C
         JMP L_235B                      ; $236F
@@ -4308,7 +4403,7 @@ L_2389:
         BNE L_2399                      ; $2396
         RTS                             ; $2398
 L_2399:
-        JMP L_228C                      ; $2399
+        JMP stand_down                      ; $2399
 L_239C:
         CMP #$13                        ; $239C
         BCS L_2352                      ; $239E
@@ -4338,6 +4433,8 @@ L_23B8:
         LDA #$13                        ; $23C8
         STA timer,X                     ; $23CA
         RTS                             ; $23CC
+; State $15, the sidestep. Bit 0 clear is a fall, ladder or otherwise.
+; Timer 1 turns him around and stores state $14 with timer $80.
 L_23CD:
         CMP #$15                        ; $23CD
         BNE L_2407                      ; $23CF
@@ -4373,6 +4470,9 @@ L_2407:
         BNE L_240E                      ; $2409
         JMP keep_state                  ; $240B
 L_240E:
+; State $0F, the flinch. A non-Bruce whose timer in Y is below 2 goes to
+; stand_down. Facing right slides two steps left, facing left two steps
+; right, and the facing is written back. The picture is the stand.
         CMP #$0F                        ; $240E
         BNE L_2440                      ; $2410
         TXA                             ; $2412
@@ -4397,7 +4497,13 @@ L_242E:
         LDA #$0F                        ; $2438
         JMP keep_state                  ; $243A
 L_243D:
-        JMP L_228C                      ; $243D
+        JMP stand_down                      ; $243D
+; State $13, the knockdown. A non-Bruce whose $D1 is still positive leaves
+; through stand_down once Y is below 2. Negative $D1 stays here until the
+; timer reaches 0 and check_bruce_down removes him. Bits 0 and 2 both clear
+; drops one pixel. Facing right slides left, facing left slides right, two
+; steps, and the facing is written back. Yamo on the frame Y is $0A adds
+; eight steps to that left slide, or four steps to that right slide.
 L_2440:
         CMP #$13                        ; $2440
         BNE L_24B3                      ; $2442
@@ -4452,7 +4558,7 @@ L_24A1:
         LDA #$13                        ; $24AB
         JMP keep_state                  ; $24AD
 L_24B0:
-        JMP L_228C                      ; $24B0
+        JMP stand_down                      ; $24B0
 L_24B3:
         CMP #$18                        ; $24B3
         BNE keep_state                  ; $24B5
@@ -4588,7 +4694,7 @@ L_2586:
         JSR L_2704                      ; $2591
         LDA $4F4E,X                     ; $2594
         TAX                             ; $2597
-        JSR L_2719                      ; $2598
+        JSR load_library                      ; $2598
         PHA                             ; $259B
         TXA                             ; $259C
         LDX $51                         ; $259D
@@ -4602,6 +4708,9 @@ L_2586:
         LDA $D4,X                       ; $25A9
         JSR copy_sprite_image                      ; $25AB
         LDX $51                         ; $25AE
+; Actor 2 stops here. In the room 0 snapshot $276D is 00 02 04 and $2770
+; is 01 03 FF: Bruce is sprites 0 and 1, the Ninja is 2 and 3, Yamo is
+; sprite 4. The $FF also makes the BMI below skip a second image.
         CPX #$02                        ; $25B0
         BEQ L_25D7                      ; $25B2
         LDA $2770,X                     ; $25B4
@@ -4610,7 +4719,7 @@ L_2586:
         LDA $4F4E,X                     ; $25BC
         TAX                             ; $25BF
         INX                             ; $25C0
-        JSR L_2719                      ; $25C1
+        JSR load_library                      ; $25C1
         PHA                             ; $25C4
         TXA                             ; $25C5
         LDX $51                         ; $25C6
@@ -4636,10 +4745,15 @@ L_25D7:
 ; Collision keeps testing the unshifted xpos.
 ;
 ; The body's hardware X is xpos times two, the expanded sprite coordinate.
-; $D4,X is the $5CBF byte L_2719 returned. When it is nonzero and facing is
+; $D4,X is the $5CBF byte load_library returned. When it is nonzero and facing is
 ; left, 8 is subtracted first, so the picture is drawn 16 screen pixels to
-; the left of the collision box. The second sprite does that subtract when
-; its library, $4F4B,X, is $05, $3F, $43, or $19. Actor 2 has no second
+; the left of the collision box. The Ninja's relative libraries $18 and $3E
+; are nonzero there, and Bruce's copies of those two are zero, so the
+; extended left kick and the late left knockdown slide for the Ninja only.
+; Yamo's relative $32, $36, $38, $3A, $3C, and $3E hold $55. Any nonzero
+; byte takes this shift. The second sprite does that subtract when its
+; library, $4F4B,X, is $05, $3F, $43, or $19: punch left, the late left
+; knockdown, duck right, and the extended left kick. Actor 2 has no second
 ; sprite here. The hardware Y of both sprites is ypos+$1D. The carry out of
 ; the ASL is that sprite's bit in $D010.
 ;
@@ -4828,7 +4942,14 @@ L_270D:
         LDA $2750,Y                     ; $2713
         STA $0F                         ; $2716
         RTS                             ; $2718
-L_2719:
+; Library X: pointer from $59BD/$5A8F, height from $5B61, color from
+; $5C33. A returns the color, Y the height, X the $5CBF byte. $51 = 2
+; stores $F0 in place of the table color. The VIC takes the low nibble, so
+; Yamo is black. The Ninja's table bytes are $F5 then $F0, green under
+; black, except relative $04, $06, $18, $1C, and $3E, where the first byte
+; is $F0 and the second is $F5. Those are the two punches, the extended
+; kicks, and the late left knockdown.
+load_library:
         LDA $59BD,X                     ; $2719
         STA $26AB                       ; $271C
         STA $26E4                       ; $271F
@@ -4957,6 +5078,7 @@ L_2821:
         LDY #$3A                        ; $2821
         JMP store_pose                  ; $2823
 L_2826:
+; State $10. The Ninja's first picture, library $2A, both facings.
         CMP #$10                        ; $2826
         BNE L_282F                      ; $2828
         LDY #$2A                        ; $282A
@@ -4972,6 +5094,7 @@ L_283C:
         LDY #$04                        ; $283C
         JMP store_pose                  ; $283E
 L_2841:
+; State $12. Facing right is library $2E, facing left is $2C.
         CMP #$12                        ; $2841
         BNE L_2853                      ; $2843
         CPY #$01                        ; $2845
@@ -4982,6 +5105,8 @@ L_284E:
         LDY #$2C                        ; $284E
         JMP store_pose                  ; $2850
 L_2853:
+; State $16, Yamo's strike. Timer >= $0B is library $34 facing right and
+; $30 facing left. Below $0B that is $36 and $32.
         CMP #$16                        ; $2853
         BNE L_2879                      ; $2855
         LDA timer,X                     ; $2857
@@ -5184,8 +5309,11 @@ L_2996:
 L_299F:
         LDY #$02                        ; $299F
 
-; Y is the library number. It is stored for this actor, and the following library is stored
-; beside it. $95,X selects which of four copies of the library table to use.
+; Y is the relative library. It is kept at $4F48, and the next one at $4F4B.
+; Three rolls of active,X pick the base in $59A5. Room 0 holds 00 8C 46 04,
+; and $01, $41, and $81 select the first three. The sum is the absolute
+; library blit_sprites reads from $4F4E. The following absolute library is
+; $4F51. Carry into the rolls does not change those three results.
 store_pose:
         TYA                             ; $29A1
         STA $4F48,X                     ; $29A2
@@ -5319,7 +5447,7 @@ L_2A7B:
         BCS L_2A76                      ; $2A80
         LDA #$04                        ; $2A82
         STA $61                         ; $2A84
-        JSR L_2C54                      ; $2A86
+        JSR reach_test                      ; $2A86
         BCC L_2A76                      ; $2A89
         BMI L_2A76                      ; $2A8B
         TXA                             ; $2A8D
@@ -5340,7 +5468,7 @@ L_2A7B:
 L_2AA5:
         LDA #$06                        ; $2AA5
         STA $61                         ; $2AA7
-        JSR L_2C54                      ; $2AA9
+        JSR reach_test                      ; $2AA9
         BCC L_2A76                      ; $2AAC
         BMI L_2A76                      ; $2AAE
         LDA $00A1,Y                     ; $2AB0
@@ -5368,7 +5496,7 @@ L_2AD4:
         BCS L_2B3B                      ; $2AD9
         LDA #$06                        ; $2ADB
         STA $61                         ; $2ADD
-        JSR L_2C54                      ; $2ADF
+        JSR reach_test                      ; $2ADF
         BCC L_2B3B                      ; $2AE2
         BMI L_2B3B                      ; $2AE4
         JSR L_2E29                      ; $2AE6
@@ -5424,6 +5552,10 @@ L_2B3E:
         EOR #$01                        ; $2B49
         STA facing,X                    ; $2B4B
         RTS                             ; $2B4D
+; Bit 0 of $BC was set on the attacker by $2B3E. He leaves the attack for
+; state 0. Bruce keeps timer $18. Another fighter keeps $18 on a short
+; visit with $40 clear, stores $0A on a middle visit, and stores 2 on a
+; long visit or when $40 is set.
 L_2B4E:
         LDX #$02                        ; $2B4E
 L_2B50:
@@ -5495,7 +5627,7 @@ L_2BC4:
         SEC                             ; $2BC6
         SBC #$03                        ; $2BC7
         STA $D1,X                       ; $2BC9
-        BMI L_2C24                      ; $2BCB
+        BMI force_knockdown                      ; $2BCB
         LDA #$0F                        ; $2BCD
         STA state,X                     ; $2BCF
         LDA #$04                        ; $2BD1
@@ -5516,7 +5648,7 @@ L_2BE8:
         SBC #$07                        ; $2BEB
         STA $D1,X                       ; $2BED
 L_2BEF:
-        BMI L_2C24                      ; $2BEF
+        BMI force_knockdown                      ; $2BEF
         LDA #$13                        ; $2BF1
         STA state,X                     ; $2BF3
         LDA #$0C                        ; $2BF5
@@ -5536,7 +5668,7 @@ L_2C0C:
         SEC                             ; $2C0E
         SBC #$05                        ; $2C0F
         STA $D1,X                       ; $2C11
-        BMI L_2C24                      ; $2C13
+        BMI force_knockdown                      ; $2C13
         LDA #$1B                        ; $2C15
         STA state,X                     ; $2C17
         LDA #$08                        ; $2C19
@@ -5547,7 +5679,14 @@ L_2C1D:
         JMP L_2B50                      ; $2C20
 L_2C23:
         RTS                             ; $2C23
-L_2C24:
+; $D1 just went negative. Punch, kick, and stomp all arrive here, and each
+; one becomes state $13 with timer $0C, so the knockdown plays before
+; check_bruce_down removes him. Bit 7 of $BC is set when the attacker was
+; actor 0. That pays the kill on top of the blow: actor 1 adds $01 through
+; the score slot pay_height uses and $C2 through the slot the punch's $64
+; uses, which is 450. Actor 2 adds $C8 through that same low slot, 200.
+; It then rejoins the stomp test at $2BF9.
+force_knockdown:
         LDA $BC,X                       ; $2C24
         AND #$80                        ; $2C26
         BEQ L_2C47                      ; $2C28
@@ -5572,7 +5711,12 @@ L_2C47:
         LDA #$0C                        ; $2C4D
         STA timer,X                     ; $2C4F
         JMP L_2BF9                      ; $2C51
-L_2C54:
+; Y is the attacker, X the victim. A is the attacker's xpos minus the
+; victim's, negated when the attacker faces right, so a positive A is in
+; front of him. Carry set means A >= the reach in $61. Bit 7 means he is
+; behind, or the gap is $80 or more. Callers treat carry clear or minus
+; as a miss. The strike passes 4, the punch and the kick pass 6.
+reach_test:
         LDA $009E,Y                     ; $2C54
         SEC                             ; $2C57
         SBC xpos,X                      ; $2C58
@@ -5760,8 +5904,9 @@ L_2D4B:
         BPL L_2CF3                      ; $2D52
         RTS                             ; $2D54
 
-; If Bruce (X = 0) has $D1 negative, he has lost a life. The other actors call $3001
-; instead.
+; If Bruce (X = 0) has $D1 negative, he has lost a life. The other actors
+; call retire_actor. State $13 and state $19 are skipped while the timer
+; is still running, so the knockdown from force_knockdown is drawn through.
 check_bruce_down:
         LDX #$02                        ; $2D55
 L_2D57:
@@ -5781,15 +5926,20 @@ L_2D6B:
         BPL L_2D75                      ; $2D6D
         TXA                             ; $2D6F
         BEQ L_2D79                      ; $2D70
-        JSR L_3001                      ; $2D72
+        JSR retire_actor                      ; $2D72
 L_2D75:
         DEX                             ; $2D75
         BPL L_2D57                      ; $2D76
         RTS                             ; $2D78
 L_2D79:
         JMP lose_life                      ; $2D79
-; The other fighters. An actor whose active flags say he should move this frame is stepped
-; here.
+; The other fighters. State 0, timer already 0, and hit bit 0 or bit 2 set:
+; $C2 still $0C or $0D is a kick that just ended, and stand_down's 6 is
+; replaced with $18. A long visit or a set $40 then stores 1. A middle
+; visit stores 3. Any other remembered state starts state $14 with timer
+; $14. A timer still counting, or a fighter in the air, is left for
+; actor_tick. $42CA set skips the $81 test, so actor 1 is not started here.
+; Actor 2 is still accepted when active is $41.
 enemy_turn:
         LDX #$02                        ; $2D7C
 L_2D7E:
@@ -5830,7 +5980,7 @@ L_2DBC:
         BPL L_2D7E                      ; $2DBD
         RTS                             ; $2DBF
 L_2DC0:
-        JSR L_228C                      ; $2DC0
+        JSR stand_down                      ; $2DC0
         LDA #$18                        ; $2DC3
         STA timer,X                     ; $2DC5
         JSR test_visit                      ; $2DC7
@@ -5847,7 +5997,11 @@ L_2DD8:
         LDA #$01                        ; $2DD8
         STA timer,X                     ; $2DDA
         RTS                             ; $2DDC
-L_2DDD:
+; $62 is this fighter's ypos minus Bruce's, $63 the same for xpos. The
+; magnitude is capped at $30. Bit 7 is set when this fighter's coordinate
+; is the smaller one: he is above Bruce, or Bruce is to his right.
+; face_from_dx writes facing 1 when bit 7 of $63 is set.
+range_to_bruce:
         LDA ypos,X                      ; $2DDD
         SEC                             ; $2DDF
         SBC ypos                        ; $2DE0
@@ -5890,7 +6044,7 @@ L_2E10:
         STA timer,X                     ; $2E16
         STA $0106,X                     ; $2E18
         RTS                             ; $2E1B
-L_2E1C:
+face_from_dx:
         LDA $63                         ; $2E1C
         BPL L_2E24                      ; $2E1E
         LDA #$01                        ; $2E20
@@ -6144,7 +6298,7 @@ exit_tile_5:
 finish_exit:
         LDX $51                         ; $2F8E
         BEQ finish_exit_bruce           ; $2F90
-        JSR L_3001                      ; $2F92
+        JSR retire_actor                      ; $2F92
         PLA                             ; $2F95
         PLA                             ; $2F96
         JMP L_2E68                      ; $2F97
@@ -6155,6 +6309,9 @@ finish_exit_bruce:
         LDA $4E                         ; $2F9F
         STA $29                         ; $2FA1
         LDX #$02                        ; $2FA3
+; Active: keep Bruce's xpos and ypos, and this fighter's $D1, for the next
+; wake. Inactive: the xpos and ypos bytes are cleared, so that wake uses
+; the room's spawn tables.
 L_2FA5:
         LDA active,X                    ; $2FA5
         AND #$01                        ; $2FA7
@@ -6171,11 +6328,11 @@ L_2FB9:
         STA $8A,X                       ; $2FBB
         STA $8C,X                       ; $2FBD
 L_2FBF:
-        JSR L_3001                      ; $2FBF
+        JSR retire_actor                      ; $2FBF
         DEX                             ; $2FC2
         BNE L_2FA5                      ; $2FC3
         SEI                             ; $2FC5
-        JSR L_0D42                      ; $2FC6
+        JSR load_wake_counts                      ; $2FC6
         LDX #$FF                        ; $2FC9
         TXS                             ; $2FCB
         JSR enter_room                      ; $2FCC
@@ -6206,7 +6363,10 @@ L_2FDA:
         LDX #$0B                        ; $2FFA
         LDY #$24                        ; $2FFC
         JMP print_string                      ; $2FFE
-L_3001:
+; Clear active bit 0, turn off his hardware sprites, and drop the two
+; object slots at $EC,X and $EF,X, then jumps to load_wake_counts to arm
+; the next wake for this X.
+retire_actor:
         LDA #$01                        ; $3001
         EOR #$FF                        ; $3003
         AND active,X                    ; $3005
@@ -6240,7 +6400,7 @@ L_303B:
 L_3045:
         JSR clear_upper_sprites                      ; $3045
 L_3048:
-        JMP L_0D42                      ; $3048
+        JMP load_wake_counts                      ; $3048
 ; Hot tiles from match_special: $0F, $40, $64, $66 from room 10 on, $54-$5A
 ; except $57, and $71-$7C. Sound $8C. Room 18 returns without a shock.
 ; Bruce, $51 = 0, goes to state $19 for $10 frames. Any other actor loses
@@ -6265,7 +6425,7 @@ L_3052:
         PLA                             ; $3060
         LDX $51                         ; $3061
         BEQ L_3068                      ; $3063
-        JMP L_3001                      ; $3065
+        JMP retire_actor                      ; $3065
 L_3068:
         JMP shock_bruce                 ; $3068
 ; Tile $60 with hit bit 1 set. Room 7's nozzles are this tile, on tile row 4
@@ -9236,7 +9396,7 @@ L_513D:
         STX $51                         ; $513D
         LDA $1239,X                     ; $513F
         BEQ L_514A                      ; $5142
-        JSR L_517E                      ; $5144
+        JSR expand_library                      ; $5144
         JMP L_5154                      ; $5147
 L_514A:
         LDY #$5F                        ; $514A
@@ -9248,7 +9408,7 @@ L_514E:
 L_5154:
         DEC $51                         ; $5154
         LDX $51                         ; $5156
-        JSR L_517E                      ; $5158
+        JSR expand_library                      ; $5158
         LDX $51                         ; $515B
         LDA $1167,X                     ; $515D
         STA $06                         ; $5160
@@ -9269,7 +9429,15 @@ L_517B:
         RTS                             ; $517B
         RTS                             ; $517C
         RTS                             ; $517D
-L_517E:
+; One library into a hardware sprite. $1D is the height byte plus one.
+; $5CBF zero reads one source byte per row. L_51FF turns four source
+; bits into one sprite byte, each set bit the pair $C0, so one byte fills
+; the two left columns and the third column is cleared. A nonzero $5CBF
+; reads two source bytes per row: the first fills those two columns, and
+; the high nibble of the second fills the right column. The pointer is
+; bumped once inside the row, and Y once, so the next row starts two source
+; bytes on. Rows from there through $20 are cleared.
+expand_library:
         LDA $59BD,X                     ; $517E
         STA $04                         ; $5181
         LDA $5A8F,X                     ; $5183

@@ -103,12 +103,14 @@ void AddCurrent(Contact& hit, int sx, int sy, int row0, int row1) {
     // A walk tests both strides, so the wider one cannot step into a wall
     // the other stride would be unable to leave. Every other state uses the
     // picture already chosen.
-    if (g.action == kWalkLeft || g.action == kWalkRight) {
-        const int base = g.facing < 0 ? 2 : 4;
+    const int action = ViewAction();
+    const int facing = ViewFacing();
+    if (action == kWalkLeft || action == kWalkRight) {
+        const int base = facing < 0 ? 2 : 4;
         AddPose(hit, base, sx, sy, row0, row1);
         AddPose(hit, base + 1, sx, sy, row0, row1);
     } else {
-        AddPose(hit, g.pose, sx, sy, row0, row1);
+        AddPose(hit, ViewPose(), sx, sy, row0, row1);
     }
 }
 

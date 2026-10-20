@@ -7,6 +7,7 @@
 #include "collision.h"
 #include "config.h"
 #include "draw.h"
+#include "fighter.h"
 #include "game.h"
 #include "pad.h"
 #include "room.h"
@@ -34,6 +35,11 @@ int PlaneShift(int pose, int plane) {
         return -16;
     }
     if (pose == kPoseDuckRight && plane == 1) {
+        return -16;
+    }
+    // $3F is the late left knockdown's detail. $264B slides it with the
+    // punch, the extended kick, and the duck.
+    if (pose == kPoseKnockLeft1 && plane == 1) {
         return -16;
     }
     return 0;
@@ -634,8 +640,42 @@ void OnGround(int stick, bool fire, const Contact& here) {
 
 }  // namespace
 
+namespace {
+
+const uint8_t* viewFrames = nullptr;
+int viewAction = -1;
+int viewFacing = 1;
+int viewPose = 0;
+
+}  // namespace
+
+void SetActorView(const uint8_t* frames, int action, int facing, int pose) {
+    viewFrames = frames;
+    viewAction = action;
+    viewFacing = facing;
+    viewPose = pose;
+}
+
+void ClearActorView() {
+    viewFrames = nullptr;
+    viewAction = -1;
+}
+
+int ViewAction() {
+    return viewFrames ? viewAction : g.action;
+}
+
+int ViewFacing() {
+    return viewFrames ? viewFacing : g.facing;
+}
+
+int ViewPose() {
+    return viewFrames ? viewPose : g.pose;
+}
+
 const uint8_t* PoseBytes(int pose, int plane) {
-    return g.frames.data() + static_cast<size_t>(pose * 2 + plane) * kFrameBytes;
+    const uint8_t* base = viewFrames ? viewFrames : g.frames.data();
+    return base + static_cast<size_t>(pose * 2 + plane) * kFrameBytes;
 }
 
 namespace {
@@ -644,14 +684,76 @@ namespace {
 int carryDelay = 0;
 
 void RespawnHere() {
-    if (!gConfig.infiniteLives) {
-        g.lives -= 1;
-        if (g.lives < 0) {
-            g.lives = 4;
-        }
+    BruceFell();
+}
+
+int KnockPicture(bool early) {
+    if (g.facing > 0) {
+        return early ? kPoseKnockRight0 : kPoseKnockRight1;
     }
-    if (EnterRoom(g.roomId)) {
-        PlaceBruce();
+    return early ? kPoseKnockLeft0 : kPoseKnockLeft1;
+}
+
+// $242E and $2458. Two steps away from the way he faces, then the facing is
+// put back, so the picture still looks at the fighter who hit him.
+void SlideBack() {
+    const int face = g.facing;
+    const int back = face < 0 ? 1 : -1;
+    MoveSideRaw(back);
+    MoveSideRaw(back);
+    g.facing = face;
+    if (g.actionTimer > 0) {
+        g.actionTimer -= 1;
+    }
+}
+
+// States $0F, $13, and $1B. The stick is not read. $13 with $D1 negative
+// spends the life on the frame the timer reaches 0.
+void HitReact() {
+    if (g.action == kFlinch) {
+        if (g.actionTimer <= 0) {
+            Land();
+            g.pose = StandPose();
+            return;
+        }
+        SlideBack();
+        g.action = kFlinch;
+        g.pose = StandPose();
+        return;
+    }
+    if (g.action == kKnock) {
+        if (g.actionTimer <= 0) {
+            if (g.health < 0) {
+                BruceFell();
+                return;
+            }
+            Land();
+            g.pose = StandPose();
+            return;
+        }
+        const Contact here = Probe(g.x, g.y);
+        if (!here.ground && !here.ladder) {
+            Drop(1);
+        }
+        const bool early = g.actionTimer >= 0x0A;
+        SlideBack();
+        g.action = kKnock;
+        g.pose = KnockPicture(early);
+        return;
+    }
+    if (g.action == kStomp) {
+        if (g.actionTimer <= 0) {
+            if (g.health < 0) {
+                BruceFell();
+                return;
+            }
+            Land();
+            g.pose = StandPose();
+            return;
+        }
+        const bool early = g.actionTimer >= 4;
+        g.actionTimer -= 1;
+        g.pose = KnockPicture(early);
     }
 }
 
@@ -820,7 +922,9 @@ void PlaceBruce() {
     // inside a wall.
     RoomSpawn(g.roomId, g.x, g.y);
     g.facing = 1;
+    g.health = 0x24;
     StandStill();
+    ResetFighters();
     ClearSteps();
     wentLeft = false;
     wentRight = false;
@@ -828,6 +932,32 @@ void PlaceBruce() {
     for (int n = 0; n < 48 && PoseWall(g.pose, g.x, g.y); ++n) {
         g.y -= 1;
     }
+}
+
+// between_lives shows the PLAYER page before enter_room_at. The room stays
+// as it was until that page's countdown reaches 0.
+bool awaitingLife = false;
+
+void BruceFell() {
+    if (!gConfig.infiniteLives) {
+        g.lives -= 1;
+        if (g.lives < 0) {
+            g.lives = 4;
+        }
+    }
+    awaitingLife = true;
+}
+
+bool BetweenLives() {
+    return awaitingLife;
+}
+
+void ResumeAfterFall() {
+    awaitingLife = false;
+    if (EnterRoom(g.roomId)) {
+        PlaceBruce();
+    }
+    Compose();
 }
 
 void Tick() {
@@ -855,6 +985,7 @@ void Tick() {
         wentRight = false;
         wentUp = false;
         StandStill();
+        ResetFighters();
         Compose();
         return;
     }
@@ -870,6 +1001,22 @@ void Tick() {
         wentRight = false;
         wentUp = false;
         StandStill();
+        ResetFighters();
+        Compose();
+        return;
+    }
+
+    // Hits use the pictures already on screen. The fighters then step, and a
+    // life lost here has already put Bruce back on the spawn.
+    if (TickFighters()) {
+        Compose();
+        return;
+    }
+    if (g.action == kFlinch || g.action == kKnock || g.action == kStomp) {
+        wentLeft = false;
+        wentRight = false;
+        wentUp = false;
+        HitReact();
         Compose();
         return;
     }

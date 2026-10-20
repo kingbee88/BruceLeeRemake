@@ -27,7 +27,10 @@ constexpr int kFlyRight = 0x0D;
 constexpr int kFall = 0x0E;
 constexpr int kCarry = 0x17;  // caught on a scrolling floor, tile $62
 constexpr int kStuck = 0x18;  // $1CC7 reversed a step that still overlaps a wall
+constexpr int kFlinch = 0x0F; // punched. Slides back in the stand picture.
 constexpr int kPunch = 0x11;
+constexpr int kKnock = 0x13;  // kicked. Libraries $38-$3F, then a fall if $D1 is negative.
+constexpr int kStomp = 0x1B;  // someone fell on him. Same pictures as the knock.
 constexpr int kZap = 0x19;    // beam or hot floor, library 8, then a life
 constexpr int kDuck = 0x1A;
 
@@ -40,6 +43,35 @@ constexpr int kPoseClimb0 = 19;
 constexpr int kPoseClimb1 = 20;
 constexpr int kPoseDuckLeft = 21;
 constexpr int kPoseDuckRight = 22;
+// Libraries $2A, $2C, $2E, $30-$37, and $38-$3F. Spawn, Yamo's strike, knockdown.
+constexpr int kPoseSpawn = 23;
+constexpr int kPoseAppearLeft = 24;
+constexpr int kPoseAppearRight = 25;
+constexpr int kPoseStrikeLeft0 = 26;
+constexpr int kPoseStrikeLeft1 = 27;
+constexpr int kPoseStrikeRight0 = 28;
+constexpr int kPoseStrikeRight1 = 29;
+constexpr int kPoseKnockRight0 = 30;
+constexpr int kPoseKnockRight1 = 31;
+constexpr int kPoseKnockLeft0 = 32;
+constexpr int kPoseKnockLeft1 = 33;
+
+// While this is set, PoseBytes and the overlap test read this actor instead
+// of Bruce. Clear it before the next Bruce probe.
+void SetActorView(const uint8_t* frames, int action, int facing, int pose);
+void ClearActorView();
+int ViewAction();
+int ViewFacing();
+int ViewPose();
+
+// $1826. One fall. The PLAYER page runs before the room is entered again.
+void BruceFell();
+
+// True from BruceFell until ResumeAfterFall. between_rooms is that page.
+bool BetweenLives();
+
+// The PLAYER page has finished. Same room, health reloaded in PlaceBruce.
+void ResumeAfterFall();
 
 // The stand picture for g.facing.
 int StandPose();

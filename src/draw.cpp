@@ -1,6 +1,7 @@
 #include "draw.h"
 
 #include "bruce.h"
+#include "fighter.h"
 #include "game.h"
 #include "room.h"
 #include "scene.h"
@@ -229,6 +230,9 @@ void Compose() {
     }
     DrawSpark(0);
     DrawSpark(1);
+    // Yamo, then the Ninja, then Bruce. Lower sprite numbers are in front,
+    // and Bruce is sprites 0 and 1.
+    DrawFighters();
     // The body is yellow. The second image is the black hair, eyes, and legs,
     // drawn on top. One sprite pixel is one screen pixel, which is the shape
     // in the reference picture.

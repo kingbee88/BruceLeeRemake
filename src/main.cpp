@@ -7,6 +7,7 @@
 #include "bruce.h"
 #include "config.h"
 #include "draw.h"
+#include "fighter.h"
 #include "front.h"
 #include "game.h"
 #include "load.h"
@@ -38,6 +39,9 @@ bool gPrevF5 = false;
 // This loop sleeps three PAL frames. 21 passes is 63 of the 64. 43 is 129
 // of the 128.
 int gPlayerFrames = 0;
+// A fall, rather than the opening page. The countdown then returns to the
+// room instead of starting a new game.
+bool gAfterFall = false;
 
 void ReleaseTarget() {
     if (gBitmap) {
@@ -154,6 +158,14 @@ void BeginPlay() {
     Compose();
 }
 
+void ShowPlayerPage(bool afterFall) {
+    gAfterFall = afterFall;
+    gPlayerFrames = gTwoPlayers ? 43 : 21;
+    gStage = Stage::Player;
+    // $03 stays 0. This port plays as one Bruce, so the page says PLAYER 1.
+    ComposePlayerUp(0);
+}
+
 void PollMenu() {
     const bool f3 = KeyDown(VK_F3);
     const bool f5 = KeyDown(VK_F5);
@@ -174,10 +186,7 @@ void PollMenu() {
     }
     if (gMenuStart && !start) {
         gMenuStart = false;
-        gPlayerFrames = gTwoPlayers ? 43 : 21;
-        gStage = Stage::Player;
-        // $03 is 0 at cold start, so the page says PLAYER 1.
-        ComposePlayerUp(0);
+        ShowPlayerPage(false);
     }
 }
 
@@ -194,8 +203,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         start = kRoomCount - 1;
     }
     g.frames = LoadFile(L"bruce.bin", static_cast<size_t>(kFrames * 2 * kFrameBytes));
-    if (g.frames.empty() || !EnterRoom(start)) {
-        MessageBoxW(nullptr, L"Could not read data\\bruce.bin and the room files.",
+    // front.bin holds the PLAYER page. A fall shows it even when the title is skipped.
+    if (g.frames.empty() || !LoadFighters() || !LoadFront() || !EnterRoom(start)) {
+        MessageBoxW(nullptr, L"Could not read data\\bruce.bin, the fighter pictures, the player page, and the room files.",
                     L"Bruce Lee", MB_ICONERROR);
         return 1;
     }
@@ -204,10 +214,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         const std::vector<uint8_t> title = LoadFile(L"title.bin", 8000);
         if (title.empty()) {
             MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
-            return 1;
-        }
-        if (!LoadFront()) {
-            MessageBoxW(nullptr, L"Could not read data\\front.bin.", L"Bruce Lee", MB_ICONERROR);
             return 1;
         }
         ComposeTitle(title.data());
@@ -283,10 +289,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         } else if (gStage == Stage::Player) {
             gPlayerFrames--;
             if (gPlayerFrames <= 0) {
-                BeginPlay();
+                if (gAfterFall) {
+                    gAfterFall = false;
+                    ResumeAfterFall();
+                    gStage = Stage::Play;
+                } else {
+                    BeginPlay();
+                }
             }
         } else {
             Tick();
+            // lose_life has spent the fall. between_rooms runs before the
+            // room is entered again.
+            if (BetweenLives()) {
+                ShowPlayerPage(true);
+            }
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateWindow(hwnd);

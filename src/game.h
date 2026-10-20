@@ -9,7 +9,9 @@ constexpr int kSpriteRows = 21;
 constexpr int kSpriteCols = 32;
 constexpr int kSpriteRowBytes = kSpriteCols / 8;
 constexpr int kFrameBytes = kSpriteRows * kSpriteRowBytes;
-constexpr int kFrames = 23;
+// 0-22 are the poses DESIGN.md lists. 23-33 are libraries $2A-$3F: the
+// spawn, the strike, and the knockdown. Bruce uses those when he is hit.
+constexpr int kFrames = 34;
 
 // Colodore C64 colors, packed as 0xAARRGGBB. Index 0 is black. See DESIGN.md.
 extern const uint32_t kPalette[16];
@@ -36,6 +38,7 @@ struct Game {
     int fallSlide = 0;     // $B0. One sideways nudge on the second falling frame
     int score = 0;         // $41..$43, a 24-bit count. A lamp adds 125.
     int lives = 4;         // $28. The status line shows this as FALLS.
+    int health = 0x24;     // $D1. A hit subtracts from this. Below 0 is a fall.
     int roomId = 0;        // $29. 0 is the opening room. StartRoom uses this same number.
     int charsetId = 0;     // 0 is $A000, 1 is $A800, 2 is $B000.
     // Four bands of background, $D022, $D023. The low nibble is the VIC color.
