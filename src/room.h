@@ -54,6 +54,12 @@ bool TakeExit(int tile, int xpos, int ypos, bool left, bool right, bool up, bool
 // True means the hook moved him to another room, the way an exit does.
 bool AdvanceRoom();
 
+// Room 19, from step_actors at $17C4. Call once per logic frame, before the
+// stick is used. irq_service has already counted this frame's three rasters
+// into $87, and $88 steps each time that byte wraps. Below 2 the stick is
+// $0E, up. From 2 on it is $0F, no direction. The fire button is not touched.
+int Room19Stick();
+
 // The enter hook at $4E9C, after taken lamps are painted.
 void BeginRoomEffects();
 

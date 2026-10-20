@@ -99,9 +99,10 @@ void DrawLine(const char* text, int column, int top) {
 }
 
 void DrawStatus() {
+    // hook_frame_19 prints string 4 on row 0, column $0A, every logic frame.
+    // The score digits stay on row 1, where init_hardware put them.
     if (g.roomId == 19) {
-        DrawLine("** CONGRATULATIONS **", 0x0A, 8);
-        return;
+        DrawLine("** CONGRATULATIONS **", 0x0A, 0);
     }
     char text[40];
     const int shown = g.score > 999999 ? 999999 : g.score;
@@ -112,7 +113,8 @@ void DrawStatus() {
         lives = 99;
     }
     std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS %02d", shown, lives);
-    // The words sit on character row 1. Row 0 above them is the black bar.
+    // The words sit on character row 1. Row 0 above them is the black bar,
+    // except in room 19, where that row is the congratulations line.
     DrawLine(text, 8, 8);
 }
 
@@ -212,9 +214,11 @@ void Compose() {
             // an empty glyph, so it shows $D021. raster_irq holds that at
             // $FC (grey) until raster $40, inside the bottom of this row.
             // The set bits of the score glyphs are color 0, drawn afterwards.
+            // hook_enter_19 writes 0 across row 0. Glyph 0 is blank, so that
+            // bar is the same grey, and the congratulations line sits on it.
             // Row 2: glyph $06 in the room charset is solid $FF. Color $08
             // is multicolor ink black, so the row above the picture is black.
-            if (y < 8 || (y >= 16 && y < 24)) {
+            if ((y < 8 && g.roomId != 19) || (y >= 16 && y < 24)) {
                 row[x] = kPalette[0];
             } else if (y < 16) {
                 row[x] = kPalette[0x0C];

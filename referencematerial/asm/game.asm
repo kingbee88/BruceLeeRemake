@@ -83,6 +83,11 @@
 ;   exit_tile_2       door slot 0. exit_tile_3, exit_tile_4, exit_tile_5 follow.
 ;   title_loop        the options page. F3, F5, F7, and the handedness keys
 ;   step_actors       hold, then choose a picture, for each actor
+;   treasure_stick    room 19 replaces Bruce's stick from $88
+;   test_visit        $88 against $19 and $20. V and C come back.
+;   hook_frame_13     room 13. Three height bonuses at $014B, 500 each.
+;   hook_enter_19     treasure room. Blanks the black bar, arms $49/$4A.
+;   hook_frame_19     congratulations, the flames, then room 0.
 ;   choose_pose       state and facing to a library number
 ;   blit_sprites      copy those pictures into the sprite slots
 ;   place_sprites     hardware X and Y. A left-facing body can sit 8 xpos left.
@@ -90,6 +95,14 @@
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
 ;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
+;
+; $40 counts finished games. hook_frame_19 adds one when the treasure
+; timer reaches 0, and the next visit is harder: enter_room forces the
+; wake counts to 3, and test_visit's callers take their long-visit branch.
+; $87/$88 are the visit clock, cleared by enter_room. irq_service adds one
+; to $87 on every raster during play, and adds one to $88 when $87 wraps,
+; until bit 7 of $88 is set. Room 19's treasure_stick reads $88. Below 2
+; Bruce is forced up. From 2 on he is forced to stand.
 ;
 ; Room entry. $29 is the room, 0 through 19. $2A,X is the lamps still left
 ; in room X, copied from $4CCE. $36, $38, and $3A are rooms 12, 14, and 16.
@@ -524,7 +537,8 @@ init_hardware:
 ; there. Its color is the $F8 fill left at $D850, nibble $8, so the cell is
 ; multicolor ink black. enter_room repaints $8C00 with $20 and starts its
 ; color fill at $D878, the first picture row, so these three rows survive
-; every room change.
+; every room change. hook_enter_19 then stores 0 in row 0. Glyph 0 is
+; empty, so the treasure room shows the grey of $D021 on that bar too.
         LDX #$27                        ; $079A
 L_079C:
         LDA #$00                        ; $079C
@@ -843,6 +857,7 @@ L_09D4:
         LDX #$00                        ; $09DF
 ; $D878 is character row 3. Rows 0 and 1 keep the black written at $079C.
 ; Row 2 keeps the $F8 from fill_color_ram, which is multicolor black.
+; hook_enter_19 runs later and stores 0 over the $20 just written on row 0.
 L_09E1:
         STA $D878,X                     ; $09E1
         STA $D900,X                     ; $09E4
@@ -878,6 +893,9 @@ enter_room_body:
         ASL A                           ; $0A10
         ADC $03                         ; $0A11
         TAX                             ; $0A13
+; $0300 + room*2 + player. A nonzero flag pays 2000, $07 into score byte 1
+; and $D0 into byte 2, and the LSR spends it. rearm_room_bonus puts the
+; flags back when the treasure room ends. Room 0's flag stays clear.
         LDA $0300,X                     ; $0A14
         BEQ L_0A2A                      ; $0A17
         LSR $0300,X                     ; $0A19
@@ -894,6 +912,8 @@ L_0A2E:
         STA $4F57,Y                     ; $0A2E
         DEY                             ; $0A31
         BPL L_0A2E                      ; $0A32
+; Visit clock. Both bytes start at 0, so treasure_stick begins on up and
+; test_visit reports a fresh room. See count_visit.
         STA $87                         ; $0A34
         STA $88                         ; $0A36
 ; scroll_surface direction and delay slot. 0 moves the picture up. Slot 7
@@ -1294,7 +1314,7 @@ L_0D0F:
         LDA #$30                        ; $0D2A
         STA $5E                         ; $0D2C
 L_0D2E:
-        JSR L_10D0                      ; $0D2E
+        JSR test_visit                      ; $0D2E
         BVS L_0D3D                      ; $0D31
         BCS L_0D3A                      ; $0D33
         LDA $40                         ; $0D35
@@ -1327,7 +1347,7 @@ L_0D46:
         LDA #$30                        ; $0D5F
         STA $5E                         ; $0D61
 L_0D63:
-        JSR L_10D0                      ; $0D63
+        JSR test_visit                      ; $0D63
         BVS L_0D3D                      ; $0D66
         BCS L_0D6F                      ; $0D68
         LDA $40                         ; $0D6A
@@ -1349,7 +1369,7 @@ L_0D76:
         STA $0D87                       ; $0D82
         LDA $E000                       ; $0D85
         STA $5D                         ; $0D88
-        JSR L_10D0                      ; $0D8A
+        JSR test_visit                      ; $0D8A
         BVS L_0D99                      ; $0D8D
         BCS L_0D96                      ; $0D8F
         LDA $40                         ; $0D91
@@ -1385,7 +1405,7 @@ L_0DB1:
         BNE L_0DD7                      ; $0DBD
         LDA $42CA                       ; $0DBF
         BNE L_0DD7                      ; $0DC2
-        JSR L_10D0                      ; $0DC4
+        JSR test_visit                      ; $0DC4
         BVS L_0DD7                      ; $0DC7
         BCS L_0DD7                      ; $0DC9
         JSR noise_byte                      ; $0DCB
@@ -1403,7 +1423,7 @@ L_0DD7:
         LDX $29                         ; $0DE2
         LDA $131F,X                     ; $0DE4
         STA $5D                         ; $0DE7
-        JSR L_10D0                      ; $0DE9
+        JSR test_visit                      ; $0DE9
         BVS L_0D99                      ; $0DEC
         BCS L_0DF5                      ; $0DEE
         LDA $40                         ; $0DF0
@@ -1662,7 +1682,7 @@ L_0FA8:
         LDA #$00                        ; $0FAE
         STA $0300                       ; $0FB0
         STA $0301                       ; $0FB3
-        JSR L_33CA                      ; $0FB6
+        JSR restore_lamps               ; $0FB6
         JSR fill_0340                      ; $0FB9
 ; Falls. 4 against the computer. 9 when $42CA is the human opponent.
 ; The Remember trainer can turn the later DEC and INC of $28 into LDA.
@@ -1838,29 +1858,40 @@ L_10C7:
         DEX                             ; $10CC
         BPL L_10C7                      ; $10CD
         RTS                             ; $10CF
-L_10D0:
+; $88 against two marks. Carry comes back set when $88 is at least $19.
+; Overflow comes back set when $88 is at least $20. A fresh room has $88
+; at 0, so both are clear. Callers that BVS take the long visit: the spawn
+; wait becomes 3, and a hit recovery uses the short timer. Callers that
+; BCS, with V clear, take the middle visit and halve the wait. The
+; two-player idle path stores $20, which is a long visit on the next test.
+; $10DF is the RTS below. BIT of that $60 sets V from bit 6.
+test_visit:
         LDA $88                         ; $10D0
         CMP #$20                        ; $10D2
-        BCS L_10DA                      ; $10D4
+        BCS visit_hard                  ; $10D4
         CMP #$19                        ; $10D6
         CLV                             ; $10D8
         RTS                             ; $10D9
-L_10DA:
+visit_hard:
         LDA #$FF                        ; $10DA
         BIT $10DF                       ; $10DC
         RTS                             ; $10DF
 
-L_10E0:
+; The current player's room-entry flags, $0300 + room*2 + player. Every
+; room is set back to 1, then room 0 is cleared, so the opening room does
+; not pay again. enter_room spends a set flag. Only the treasure ending
+; calls this.
+rearm_room_bonus:
         LDA $03                         ; $10E0
         CLC                             ; $10E2
         ADC #$26                        ; $10E3
         TAX                             ; $10E5
         LDA #$01                        ; $10E6
-L_10E8:
+rearm_slot:
         STA $0300,X                     ; $10E8
         DEX                             ; $10EB
         DEX                             ; $10EC
-        BPL L_10E8                      ; $10ED
+        BPL rearm_slot                  ; $10ED
         LDX $03                         ; $10EF
         LDA #$00                        ; $10F1
         STA $0300,X                     ; $10F3
@@ -2295,6 +2326,10 @@ L_160F:
         LDA #$2C                        ; $160F
 L_1611:
         STA $8C4D                       ; $1611
+; One raster of the visit clock. $0104 clear is the demo, and a negative
+; $0105 is the idle timeout, so neither one advances it. $88 stops when
+; its own sign bit is set, at $80. That is 128 wraps, 32768 rasters.
+count_visit:
         LDA $0104                       ; $1614
         BEQ L_1628                      ; $1617
         LDA $0105                       ; $1619
@@ -2486,6 +2521,8 @@ L_173F:
         BCC L_179D                      ; $1766
         LDA #$00                        ; $1768
         STA $42CA                       ; $176A
+; $20 is the mark test_visit treats as a long visit. The penalty below
+; also takes five falls from each player.
         LDA #$20                        ; $176D
         STA $88                         ; $176F
         JSR play_sound_8a               ; $1771
@@ -2540,27 +2577,40 @@ L_17BE:
         LDA active,X                    ; $17BE
         AND #$01                        ; $17C0
         BEQ L_17DE                      ; $17C2
+; Room 19, the treasure room. The stick irq_service just stored is thrown
+; away. $88 below 2 writes $0E, up. With the ladder bit clear that is the
+; standing jump, state 5, so he leaves the ledge and lands, then jumps
+; again. $88 at 2 or more writes $0F, no direction, and he stands where he
+; landed. $9B, the fire button, is not stored over. $88 reaches 2 after
+; 512 rasters, two wraps of $87, and the congratulations timer at $49/$4A
+; is 1112 rasters, so the jump ends while the line is still up. The store
+; is $98, not $98,X, so only Bruce is replaced. The other fighters keep
+; the stick enemy_turn gave them.
+treasure_stick:
         LDA $29                         ; $17C4
         CMP #$13                        ; $17C6
-        BNE L_17D8                      ; $17C8
+        BNE release_actor               ; $17C8
         LDA $88                         ; $17CA
         CMP #$02                        ; $17CC
-        BCS L_17D4                      ; $17CE
+        BCS treasure_idle               ; $17CE
         LDA #$0E                        ; $17D0
-        BNE L_17D6                      ; $17D2
-L_17D4:
+        BNE treasure_store              ; $17D2
+treasure_idle:
         LDA #$0F                        ; $17D4
-L_17D6:
+treasure_store:
         STA $98                         ; $17D6
-L_17D8:
+release_actor:
         JSR release_hold                      ; $17D8
         JSR choose_pose                      ; $17DB
 L_17DE:
         DEX                             ; $17DE
         BPL L_17BE                      ; $17DF
         RTS                             ; $17E1
-; A selects a string from the table at $43BE. Copies until the $A0 terminator. The plain
+; A selects a string from the table at $43BE. X is the row passed to
+; point_at_row. Y is the column. Copies until the $A0 terminator. The plain
 ; byte goes to ($04), the same byte with bit 7 set goes to ($08).
+; Subtracting $20 from the stored bytes is what makes them screen codes
+; in the score font: glyph 0 is a space, $0A is a star, and $21 is A.
 print_string:
         PHA                             ; $17E2
         JSR point_at_row                      ; $17E3
@@ -4108,13 +4158,13 @@ L_228C:
         STA $0106,X                     ; $2296
         TXA                             ; $2299
         BNE L_22A6                      ; $229A
-        JSR L_10D0                      ; $229C
+        JSR test_visit                      ; $229C
         BVS L_22B5                      ; $229F
         BCS L_22B5                      ; $22A1
         LSR timer,X                     ; $22A3
         RTS                             ; $22A5
 L_22A6:
-        JSR L_10D0                      ; $22A6
+        JSR test_visit                      ; $22A6
         BVS L_22B8                      ; $22A9
         BCS L_22B2                      ; $22AB
         LDA $40                         ; $22AD
@@ -5390,7 +5440,7 @@ L_2B50:
         INC $4FDB,X                     ; $2B65
         TXA                             ; $2B68
         BEQ L_2B83                      ; $2B69
-        JSR L_10D0                      ; $2B6B
+        JSR test_visit                      ; $2B6B
         BVS L_2B7F                      ; $2B6E
         BCS L_2B79                      ; $2B70
         LDA $40                         ; $2B72
@@ -5404,7 +5454,7 @@ L_2B7F:
         LDA #$02                        ; $2B7F
         STA timer,X                     ; $2B81
 L_2B83:
-        JSR L_10D0                      ; $2B83
+        JSR test_visit                      ; $2B83
         BVS L_2B96                      ; $2B86
         BCS L_2B90                      ; $2B88
         LDA #$03                        ; $2B8A
@@ -5783,7 +5833,7 @@ L_2DC0:
         JSR L_228C                      ; $2DC0
         LDA #$18                        ; $2DC3
         STA timer,X                     ; $2DC5
-        JSR L_10D0                      ; $2DC7
+        JSR test_visit                      ; $2DC7
         BVS L_2DD8                      ; $2DCA
         BCS L_2DD3                      ; $2DCC
         LDA $40                         ; $2DCE
@@ -6787,31 +6837,36 @@ L_33B7:
         LDA $4E9C,X                     ; $33C5
         PHA                             ; $33C8
         RTS                             ; $33C9
-L_33CA:
+; Put every lamp flag back to 1. A flag with bit 7 set is the end of that
+; room's list and is left alone. step_lamp advances four bytes, one record.
+; Cold start calls this, and so does the treasure ending, so a finished
+; game collects the lamps again. The counts at $2A are a separate copy.
+; copy_room_defaults reloads those.
+restore_lamps:
         LDA #$13                        ; $33CA
         STA $4E                         ; $33CC
-L_33CE:
+restore_next:
         LDA $4E                         ; $33CE
         ASL A                           ; $33D0
         TAX                             ; $33D1
-        JSR L_33DA                      ; $33D2
+        JSR restore_room                ; $33D2
         DEC $4E                         ; $33D5
-        BPL L_33CE                      ; $33D7
+        BPL restore_next                ; $33D7
         RTS                             ; $33D9
-L_33DA:
+restore_room:
         LDA $4CE2,X                     ; $33DA
         STA $14                         ; $33DD
         LDA $4CE3,X                     ; $33DF
         STA $15                         ; $33E2
         LDY #$00                        ; $33E4
-L_33E6:
+next_flag:
         LDA ($14),Y                     ; $33E6
-        BMI L_33F4                      ; $33E8
+        BMI list_end                    ; $33E8
         LDA #$01                        ; $33EA
         STA ($14),Y                     ; $33EC
-        JSR L_3A63                      ; $33EE
-        JMP L_33E6                      ; $33F1
-L_33F4:
+        JSR step_lamp                   ; $33EE
+        JMP next_flag                   ; $33F1
+list_end:
         RTS                             ; $33F4
 
 ; Per-room hooks. The word at $4E9C, room*2 is the enter hook, and the
@@ -7711,7 +7766,9 @@ L_3A5F:
         JMP L_404E                      ; $3A5F
 ; $3A62  1 bytes of data
 
-L_3A63:
+; Add 4 to the lamp-list pointer in $14/$15. restore_lamps uses this
+; to walk from one record to the next.
+step_lamp:
         LDA $14                         ; $3A63
         CLC                             ; $3A65
         ADC #$04                        ; $3A66
@@ -8264,7 +8321,12 @@ L_3E60:
         JSR L_3AB4                      ; $3E76
 L_3E79:
         JMP step_crumble                ; $3E79
-; Per-frame hook for room 13.
+; Per-frame hook for room 13. $014B + player*4 holds three one-shot
+; flags. ypos below $64 pays nothing. From $64 to $89 the first flag
+; pays, from $8A to $B5 the second, and from $B6 down the third. Each
+; pays 500: $01 into score byte 1 and $F4 into byte 2. The fourth byte
+; of the group is not read. hook_frame_19 writes 1 back into all four
+; when the treasure room ends.
 hook_frame_13:
         LDA $03                         ; $3E7C
         ASL A                           ; $3E7E
@@ -8274,25 +8336,25 @@ hook_frame_13:
         CMP #$64                        ; $3E83
         BCC L_3EBC                      ; $3E85
         CMP #$8A                        ; $3E87
-        BCS L_3E96                      ; $3E89
+        BCS height_lower                ; $3E89
         LDA $014B,X                     ; $3E8B
         BEQ L_3EBC                      ; $3E8E
         DEC $014B,X                     ; $3E90
-        JMP L_3EAF                      ; $3E93
-L_3E96:
+        JMP pay_height                  ; $3E93
+height_lower:
         INX                             ; $3E96
         CMP #$B6                        ; $3E97
-        BCS L_3EA6                      ; $3E99
+        BCS height_low                  ; $3E99
         LDA $014B,X                     ; $3E9B
         BEQ L_3EBC                      ; $3E9E
         DEC $014B,X                     ; $3EA0
-        JMP L_3EAF                      ; $3EA3
-L_3EA6:
+        JMP pay_height                  ; $3EA3
+height_low:
         INX                             ; $3EA6
         LDA $014B,X                     ; $3EA7
         BEQ L_3EBC                      ; $3EAA
         DEC $014B,X                     ; $3EAC
-L_3EAF:
+pay_height:
         LDA #$01                        ; $3EAF
         TAX                             ; $3EB1
         JSR add_score                   ; $3EB2
@@ -8815,7 +8877,12 @@ play_sound_8a:
         TAX                             ; $425C
         PLA                             ; $425D
         RTS                             ; $425E
-; Enter hook for room 19.
+; Enter hook for room 19, the treasure room. enter_room has already
+; stored screen code $20 across $8C00, the solid black bar. Writing 0
+; selects glyph 0, which is empty, so $D021 shows through. raster_irq
+; holds that at $FC, grey, for this row and for the score row under it.
+; $49/$4A become $0458. irq_service counts that pair down, one per
+; raster, 1112 rasters.
 hook_enter_19:
         LDA #$58                        ; $425F
         STA $49                         ; $4261
@@ -8823,16 +8890,25 @@ hook_enter_19:
         STA $4A                         ; $4265
         LDX #$27                        ; $4267
         LDA #$00                        ; $4269
-L_426B:
+blank_top_row:
         STA $8C00,X                     ; $426B
         DEX                             ; $426E
-        BPL L_426B                      ; $426F
+        BPL blank_top_row               ; $426F
         RTS                             ; $4271
-; Per-frame hook for room 19.
+; Per-frame hook for room 19. While $49 or $4A is still set, the flame
+; rows are recoloured and string 4 is printed. String 4 is
+; "** CONGRATULATIONS **". X = 0 is row 0 and Y = $0A is the column, so
+; the line sits on the grey bar. The score on row 1 is left alone. The
+; line is printed again every logic frame.
+; When both timer bytes are 0, $40 gains one finished game. This
+; player's four bytes at $014B go back to 1. Room 13 spends the first
+; three of those, once each. copy_room_defaults reloads the lamp counts,
+; restore_lamps rearms the lamp flags, and rearm_room_bonus rearms the
+; entry bonuses. Room 0 then opens.
 hook_frame_19:
         LDA $49                         ; $4272
         ORA $4A                         ; $4274
-        BNE L_4298                      ; $4276
+        BNE treasure_hold               ; $4276
         INC $40                         ; $4278
         LDA $03                         ; $427A
         ASL A                           ; $427C
@@ -8840,22 +8916,25 @@ hook_frame_19:
         TAX                             ; $427E
         LDY #$03                        ; $427F
         LDA #$01                        ; $4281
-L_4283:
+reset_band:
         STA $014B,X                     ; $4283
         INX                             ; $4286
         DEY                             ; $4287
-        BPL L_4283                      ; $4288
+        BPL reset_band                  ; $4288
         JSR copy_room_defaults          ; $428A
-        JSR L_33CA                      ; $428D
-        JSR L_10E0                      ; $4290
+        JSR restore_lamps               ; $428D
+        JSR rearm_room_bonus            ; $4290
         LDX #$00                        ; $4293
         JMP enter_room_at               ; $4295
-L_4298:
+; Inks 8 through 15, with the high nibble $F the rest of color RAM uses.
+; Eight rows of 29 columns, from $D800+$2AC: character row 17, column 4,
+; through column 32, and the seven rows under it. The flames.
+treasure_hold:
         JSR noise_byte                  ; $4298
         AND #$07                        ; $429B
         ORA #$F8                        ; $429D
         LDX #$1C                        ; $429F
-L_42A1:
+flicker_flames:
         STA $DAAC,X                     ; $42A1
         STA $DAD4,X                     ; $42A4
         STA $DAFC,X                     ; $42A7
@@ -8865,15 +8944,16 @@ L_42A1:
         STA $DB9C,X                     ; $42B3
         STA $DBC4,X                     ; $42B6
         DEX                             ; $42B9
-        BPL L_42A1                      ; $42BA
+        BPL flicker_flames              ; $42BA
         LDA #$04                        ; $42BC
         LDX #$00                        ; $42BE
         LDY #$0A                        ; $42C0
         JMP print_string                ; $42C2
 ; $42C5  1217 bytes of data. $42C9 and $42CA are the two option flags inside
 ; this block, then $42CB and $42CC, their copies. print_string reads the
-; table at $43BE. String $4F is the F3 line, $50 the F5 line, $51 the F7
-; line. $08, $09, $0A, and $0D are the four handedness lines.
+; table at $43BE. String $04 is "** CONGRATULATIONS **", printed on the
+; blanked top row by hook_frame_19. String $4F is the F3 line, $50 the F5
+; line, $51 the F7 line. $08, $09, $0A, and $0D are the four handedness lines.
 
 L_4786:
         INC $04                         ; $4786

@@ -100,12 +100,21 @@
 ; Room 11. Bands 04 0E 0B, 0E 06 01, 0E 06 0B, 0C 0E 01. Splits FD.
 ; Room 12. Same bands and splits as room 10.
 ; Room 13. Bands 0E 06 01, 0E 06 0B, 0C 0E 01, 0F 08 0C. Splits FD.
+;          hook_frame_13 pays 500 once at each of three heights, from
+;          the flags at $014B. The treasure ending writes those back to 1.
 ; Room 14. Same bands and splits as room 10.
 ; Room 15. Bands 0E 06 0B, 0C 0E 01, 0F 08 0C, 0C 08 0B. Splits B6 C7 FD C8.
 ; Room 16. Same bands and splits as room 10.
 ; Room 17. Bands 0C 08 0B, 00 0E 04, 06 02 01, 08 07 0D. Splits FD.
 ; Room 18. Bands 00 0E 04, 06 02 01, 08 07 0D, 08 08 07. Splits FD.
 ; Room 19. Bands 06 02 01, 08 07 0D, 08 08 07, 0D 08 07. Splits FD.
+;          The treasure room. No doors. hook_enter_19 blanks the black
+;          bar, so row 0 is the same grey as the score row. hook_frame_19
+;          prints "** CONGRATULATIONS **" on that row, at column $0A,
+;          and recolours the bottom flames. treasure_stick forces the
+;          stick to $0E until $88 reaches 2, then to $0F. When $49/$4A
+;          reach 0, $40 gains one, the lamps and the entry bonuses are
+;          restored, and room 0 opens.
 
 ; ---------------------------------------------------------------------------
 ; Where Bruce appears. Cold start calls wake_actor with X = 0 and A = 0,
@@ -175,8 +184,11 @@
 ; of the flag ends the list. $4CCE is the remaining count copied to $2A.
 ; $2A,X is room X, so the room 11 gate's $36, $38, and $3A are rooms 12,
 ; 14, and 16. The byte counts lamps still to take, so rooms 13 and 19 are
-; 00 even though each list has a dummy record at column 0, row 0, tile 0. A taken flag stays 0, and
-; coming back into the room paints the mount again.
+; 00 even though each list has a dummy record at column 0, row 0, tile 0.
+; A taken flag stays 0, and coming back into the room paints the mount
+; again. restore_lamps puts every flag back to 1 when the treasure room
+; ends, and copy_room_defaults reloads $2A, so the next game collects
+; them again.
 ;
 ; $4CCE: 06 06 0A 02 02 0A 08 0D 04 05 03 03 03 00 04 06 02 02 01 00
 ;

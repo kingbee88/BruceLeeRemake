@@ -87,6 +87,12 @@ uint8_t boltShape[2][63] = {};
 // $49/$4A. Room 19 counts 1112 raster ticks. A logic frame is three of them.
 int victory = 0;
 
+// $87/$88. enter_room stores 0 in both. irq_service adds one to $87 on every
+// raster, and adds one to $88 when $87 wraps, until bit 7 of $88 is set.
+// step_actors reads $88 in room 19.
+int play87 = 0;
+int play88 = 0;
+
 // Set when the hook itself changes the room, so Tick does not also move him.
 bool relocated = false;
 
@@ -1029,9 +1035,25 @@ void Enter18() {
 
 void Enter19() {
     victory = 0x0458;
+    play87 = 0;
+    play88 = 0;
 }
 
 }  // namespace
+
+int Room19Stick() {
+    // The three rasters of the wait at the end of the previous logic frame.
+    // The first call of a visit therefore sees the entry frame's wait, and
+    // $88 is still 0.
+    play87 += 3;
+    if (play87 >= 256) {
+        play87 -= 256;
+        if (play88 < 0x80) {
+            play88 += 1;
+        }
+    }
+    return play88 < 2 ? 0x0E : 0x0F;
+}
 
 bool AdvanceRoom() {
     if (hookGate == 0) {

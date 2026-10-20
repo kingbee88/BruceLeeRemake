@@ -831,6 +831,11 @@ void PlaceBruce() {
 }
 
 void Tick() {
+    // $17C4 runs on every logic frame, including a hold, and the raster
+    // count in $87 does too. The value is applied where the stick is built.
+    const bool treasure = g.roomId == 19;
+    const int treasureStick = treasure ? Room19Stick() : 0;
+
     const PadInput pad = ReadPad();
     const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 || pad.left;
     const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0 || pad.right;
@@ -881,6 +886,11 @@ void Tick() {
     }
     if (right && !left) {
         stick &= ~0x08;
+    }
+    // Room 19. $98 becomes $0E while $88 is below 2, so he jumps or climbs
+    // with no say in it, and $0F after that. $9B, fire, is left as pressed.
+    if (treasure) {
+        stick = treasureStick;
     }
 
     // $0106. The picture stays, and this frame does not read the stick.
