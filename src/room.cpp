@@ -82,6 +82,12 @@ bool EnterRoom(int roomId) {
     if (roomId < 0 || roomId >= kRoomCount) {
         return false;
     }
+    // $09F6. Entering room 11 with $36, $38, and $3A all zero opens room
+    // 13 instead. Those bytes are the lamps left in rooms 12, 14, and 16.
+    // enter_room_at then places him on room 13's spawn.
+    if (roomId == 0x0B && LampsLeft(12) == 0 && LampsLeft(14) == 0 && LampsLeft(16) == 0) {
+        roomId = 0x0D;
+    }
     const RoomInfo& info = kRooms[roomId];
     const wchar_t* charsetName = L"charset.bin";
     if (info.charset == 1) {
@@ -231,8 +237,14 @@ bool TakeExit(int tile, int xpos, int ypos, bool left, bool right, bool up, bool
         if (!EnterRoom(dest)) {
             return false;
         }
-        g.x = destX * 2 - 24;
-        g.y = destY - 21;
+        // $3217. Room 11's redirect has already loaded room 13, and that
+        // arrival is the spawn, not this exit's xpos and ypos.
+        if (g.roomId != dest) {
+            RoomSpawn(g.roomId, g.x, g.y);
+        } else {
+            g.x = destX * 2 - 24;
+            g.y = destY - 21;
+        }
         return true;
     }
     return false;

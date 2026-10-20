@@ -121,18 +121,30 @@
 
 ; ---------------------------------------------------------------------------
 ; Exits. match_special tests tiles 2, 3, 4, and 5 before the bit-1 gate.
-; Tile 2 reads $4B5E (room), $4BFE (xpos), $4C12 (ypos). Tile 3 reads $4B72,
-; $4C26, $4C3A. Tile 4 reads $4B86, $4C4E, $4C62. Tile 5 reads $4B9A, $4C76,
-; $4C8A. Tiles 2, 3, and 4 fall through to the next slot when the xpos byte
-; is 0. Tile 5 does not test xpos. Every real arrival has a nonzero xpos, and
-; a slot of 00 00 00 is unused. Room 18 draws tiles 4 and 5 as part of the
-; boss while those two slots are 00 00 00. Taking them would send him to room
-; 0 at sprite 0, 0. Room 19 has no door tiles and every slot is zero.
+; exit_tile_2 reads $4B5E (room), $4BFE (xpos), $4C12 (ypos). exit_tile_3
+; reads $4B72, $4C26, $4C3A. exit_tile_4 reads $4B86, $4C4E, $4C62.
+; exit_tile_5 reads $4B9A, $4C76, $4C8A. Tiles 2, 3, and 4 fall through
+; to the next slot when the xpos byte is 0. Tile 5 does not test xpos.
+; Every real arrival has a nonzero xpos, and a slot of 00 00 00 is unused.
+; Room 18 draws tiles 4 and 5 as part of the boss while those two slots
+; are 00 00 00. Taking them would send him to room 0 at sprite 0, 0.
+; Room 19 has no door tiles and every slot is zero.
 ;
-; L_30D4 allows the exit when the room is $0B, or when he is leaving through
-; the edge he stands on. The four step counters are described there. Room $0D
-; adds 4 to ypos in cell_of_actor before the row is chosen. That changes which
-; row is scanned. It does not change the edge test or the overlap.
+; exit_allowed allows the exit when the room is $0B, or when he is leaving
+; through the edge he stands on. The step counters are $4F57 up, $4F5A
+; down, $4F5D left, and $4F60 right. Up, left, and right are read. The
+; down counter is not. State $0E below the bottom edge is allowed on its
+; own. Room $0D adds 4 to ypos in cell_of_actor before the row is chosen.
+; That changes which row is scanned. It does not change the edge test or
+; the overlap.
+;
+; Room 11's tile 2 returns to room 10. Tiles 3, 4, and 5 are the three side
+; doors, to rooms 12, 14, and 16. Each of those rooms has a slot back to $0B,
+; and room 10's way forward stores $0B as well. room_11_to_13 in enter_room
+; does not load room $0B when $36, $38, and $3A are zero. Those are $2A+room
+; for rooms 12, 14, and 16. It jumps to enter_room_at with X = $0D, so
+; finish_exit places him on room 13's spawn in $4BAE/$4BC2, not on the exit
+; that pointed at room 11.
 ;
 ; Each line is room, xpos, ypos for tiles 2, 3, 4, 5. An xpos of 00 is unused.
 ;
@@ -160,9 +172,10 @@
 ; ---------------------------------------------------------------------------
 ; Lamps. $4CE2, room*2 points at the records. A record is the flag, the
 ; replacement tile with bit 7 set, the column, and the tile row. The high bit
-; of the flag ends the list. $4CCE is the remaining count copied to $2A. It
-; counts lamps still to take, so rooms 13 and 19 are 00 even though each list
-; has a dummy record at column 0, row 0, tile 0. A taken flag stays 0, and
+; of the flag ends the list. $4CCE is the remaining count copied to $2A.
+; $2A,X is room X, so the room 11 gate's $36, $38, and $3A are rooms 12,
+; 14, and 16. The byte counts lamps still to take, so rooms 13 and 19 are
+; 00 even though each list has a dummy record at column 0, row 0, tile 0. A taken flag stays 0, and
 ; coming back into the room paints the mount again.
 ;
 ; $4CCE: 06 06 0A 02 02 0A 08 0D 04 05 03 03 03 00 04 06 02 02 01 00

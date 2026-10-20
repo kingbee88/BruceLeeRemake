@@ -7,6 +7,7 @@ constexpr int kRoomCount = 20;
 // Load room 0..19. The screen, the colors, and the charset are the expanded
 // bytes described in referencematerial/asm/rooms.asm. Lamps already taken in this room are
 // painted as the bare mount. Returns false when a data file is missing.
+// Asking for room 11 loads room 13 once rooms 12, 14, and 16 are clear.
 bool EnterRoom(int roomId);
 
 // wake_actor's cold-start position for this room, in screen pixels.

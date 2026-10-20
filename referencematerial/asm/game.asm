@@ -76,7 +76,11 @@
 ; More names
 ;   frame             one frame, then wait for the raster count
 ;   init_hardware     VIC bank, colors, row pointers
-;   enter_room        load room $29
+;   enter_room        load room $29. room_11_to_13 may open room 13 instead.
+;   enter_room_at     spawn of room X, then finish_exit
+;   finish_exit       A is xpos, Y is ypos, $4E is the room
+;   exit_allowed      carry clear means the door can be taken. Room 11 always can.
+;   exit_tile_2       door slot 0. exit_tile_3, exit_tile_4, exit_tile_5 follow.
 ;   title_loop        the options page. F3, F5, F7, and the handedness keys
 ;   step_actors       hold, then choose a picture, for each actor
 ;   choose_pose       state and facing to a library number
@@ -86,6 +90,12 @@
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
 ;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
+;
+; Room entry. $29 is the room, 0 through 19. $2A,X is the lamps still left
+; in room X, copied from $4CCE. $36, $38, and $3A are rooms 12, 14, and 16.
+; room_11_to_13 ORs those three and, when all are zero, opens room 13.
+; $47 is the sprite mask enter_room saved from $D015 & $1F. $4E, while an
+; exit is resolving, is the room finish_exit is about to open.
 ;
 ; Front end. The title picture is not drawn by this file. In boot01_title.vsf
 ; the loader at $C500 still has it: multicolor bitmap at $2000, video matrix
@@ -816,6 +826,9 @@ enter_room:
         STA $D011                       ; $09C1
         LDA $D015                       ; $09C4
         AND #$1F                        ; $09C7
+; $47 is the actors' sprites. $0B3B writes it back after the unpack.
+; Sprites are blank until then. room_11_to_13 restores $47 before it
+; calls enter_room_at, so the second entry saves this mask and not 0.
         STA $47                         ; $09C9
         LDA #$00                        ; $09CB
         STA $D015                       ; $09CD
@@ -839,18 +852,28 @@ L_09E1:
         BNE L_09E1                      ; $09EE
         JSR L_423F                      ; $09F0
         JSR silence_sid                      ; $09F3
+; Room 11's tile 2 returns to room 10. Tiles 3, 4, and 5 are the three
+; side doors, to rooms 12, 14, and 16. Each of those has a slot back to
+; room 11, and room 10's way forward stores 11 as well, so every entry
+; reaches here: a door, a respawn through enter_room_at, or the inlined
+; copy of that sequence at $24DB.
+;
+; $36, $38, and $3A are $2A+room for rooms 12, 14, and 16. Any lamp still
+; left in those three loads room 11. None left, and room 13 opens at its
+; spawn. The packed picture and the enter hook of room 11 do not run.
+room_11_to_13:
         LDA $29                         ; $09F6
         CMP #$0B                        ; $09F8
-        BNE L_0A0E                      ; $09FA
+        BNE enter_room_body             ; $09FA
         LDA $36                         ; $09FC
         ORA $38                         ; $09FE
         ORA $3A                         ; $0A00
-        BNE L_0A0E                      ; $0A02
+        BNE enter_room_body             ; $0A02
         LDA $47                         ; $0A04
         STA $D015                       ; $0A06
         LDX #$0D                        ; $0A09
-        JMP enter_room_at                      ; $0A0B
-L_0A0E:
+        JMP enter_room_at               ; $0A0B
+enter_room_body:
         LDA $29                         ; $0A0E
         ASL A                           ; $0A10
         ADC $03                         ; $0A11
@@ -1803,7 +1826,10 @@ blip_and_return:
         TAX                             ; $10C2
         PLA                             ; $10C3
         RTS                             ; $10C4
-; Copy the 20 default bytes at $4CCE into $2A.
+; Copy the 20 default bytes at $4CCE into $2A. $2A,X is the lamps still
+; to take in room X. claim_lamp decrements that byte. Rooms 13 and 19
+; start at 0. The room 11 gate reads three of them by address:
+;   $36 room 12, $38 room 14, $3A room 16.
 copy_room_defaults:
         LDX #$13                        ; $10C5
 L_10C7:
@@ -4405,6 +4431,9 @@ L_24CC:
         TAX                             ; $24D7
         TYA                             ; $24D8
         BNE L_24ED                      ; $24D9
+; Same registers as enter_room_at, for the room already in $29. finish_exit
+; places him on that room's spawn. enter_room then runs, so room 11 can
+; still open room 13 when rooms 12, 14, and 16 are clear.
         LDA #$00                        ; $24DB
         STA $51                         ; $24DD
         LDX $29                         ; $24DF
@@ -4412,7 +4441,7 @@ L_24CC:
         LDA $4BC2,X                     ; $24E3
         TAY                             ; $24E6
         LDA $4BAE,X                     ; $24E7
-        JMP L_2F8E                      ; $24EA
+        JMP finish_exit                 ; $24EA
 L_24ED:
         LDA facing,X                    ; $24ED
         STA $4C                         ; $24EF
@@ -5893,22 +5922,26 @@ L_2E7C:
 ; test xpos. The whole table is in rooms.asm. A slot whose xpos is 0 is the
 ; unused marker, including the tile 4 and tile 5 records in room 18, which
 ; are drawn as part of the boss and are not doors.
+;
+; Room 11's tile 2 goes to room 10. Tiles 3, 4, and 5 go to rooms 12, 14,
+; and 16. The way back from those three stores room 11, and room_11_to_13
+; may turn that arrival into room 13.
 match_special:
         CMP #$05                        ; $2E89
         BNE L_2E90                      ; $2E8B
-        JMP L_2F7B                      ; $2E8D
+        JMP exit_tile_5                 ; $2E8D
 L_2E90:
         CMP #$02                        ; $2E90
         BNE L_2E97                      ; $2E92
-        JMP L_2F3C                      ; $2E94
+        JMP exit_tile_2                 ; $2E94
 L_2E97:
         CMP #$03                        ; $2E97
         BNE L_2E9E                      ; $2E99
-        JMP L_2F51                      ; $2E9B
+        JMP exit_tile_3                 ; $2E9B
 L_2E9E:
         CMP #$04                        ; $2E9E
         BNE L_2EA5                      ; $2EA0
-        JMP L_2F66                      ; $2EA2
+        JMP exit_tile_4                 ; $2EA2
 L_2EA5:
         CMP #$62                        ; $2EA5
         BEQ L_2EF4                      ; $2EA7
@@ -6011,8 +6044,12 @@ take_lamp:
         JSR play_sound                  ; $2F36
 L_2F39:
         JMP restore_axy                      ; $2F39
-L_2F3C:
-        JSR L_30D4                      ; $2F3C
+; One slot. exit_allowed returns carry clear to take it. $4E becomes
+; the destination room, Y the ypos, A the xpos. A zero xpos falls
+; through to the next slot. Tile 5 does not test A. $51 is the actor
+; the scan is on. Bruce, $51 = 0, is the one who changes rooms.
+exit_tile_2:
+        JSR exit_allowed                ; $2F3C
 L_2F3F:
         BCS L_2EE9                      ; $2F3F
         LDX $29                         ; $2F41
@@ -6021,9 +6058,9 @@ L_2F3F:
         LDA $4C12,X                     ; $2F48
         TAY                             ; $2F4B
         LDA $4BFE,X                     ; $2F4C
-        BNE L_2F8E                      ; $2F4F
-L_2F51:
-        JSR L_30D4                      ; $2F51
+        BNE finish_exit                 ; $2F4F
+exit_tile_3:
+        JSR exit_allowed                ; $2F51
         BCS L_2F3F                      ; $2F54
         LDX $29                         ; $2F56
         LDA $4B72,X                     ; $2F58
@@ -6031,9 +6068,9 @@ L_2F51:
         LDA $4C3A,X                     ; $2F5D
         TAY                             ; $2F60
         LDA $4C26,X                     ; $2F61
-        BNE L_2F8E                      ; $2F64
-L_2F66:
-        JSR L_30D4                      ; $2F66
+        BNE finish_exit                 ; $2F64
+exit_tile_4:
+        JSR exit_allowed                ; $2F66
 L_2F69:
         BCS L_2F3F                      ; $2F69
         LDX $29                         ; $2F6B
@@ -6042,9 +6079,9 @@ L_2F69:
         LDA $4C62,X                     ; $2F72
         TAY                             ; $2F75
         LDA $4C4E,X                     ; $2F76
-        BNE L_2F8E                      ; $2F79
-L_2F7B:
-        JSR L_30D4                      ; $2F7B
+        BNE finish_exit                 ; $2F79
+exit_tile_5:
+        JSR exit_allowed                ; $2F7B
         BCS L_2F69                      ; $2F7E
         LDX $29                         ; $2F80
         LDA $4B9A,X                     ; $2F82
@@ -6052,14 +6089,16 @@ L_2F7B:
         LDA $4C8A,X                     ; $2F87
         TAY                             ; $2F8A
         LDA $4C76,X                     ; $2F8B
-L_2F8E:
+; A is xpos, Y is ypos, $4E is the room. Facing is left as it was.
+; Anyone other than Bruce is removed and the scan goes on to the next actor.
+finish_exit:
         LDX $51                         ; $2F8E
-        BEQ L_2F9A                      ; $2F90
+        BEQ finish_exit_bruce           ; $2F90
         JSR L_3001                      ; $2F92
         PLA                             ; $2F95
         PLA                             ; $2F96
         JMP L_2E68                      ; $2F97
-L_2F9A:
+finish_exit_bruce:
         STA xpos,X                      ; $2F9A
         TYA                             ; $2F9C
         STA ypos,X                      ; $2F9D
@@ -6246,44 +6285,46 @@ crumble_return:
         SBC #$4C                        ; $30CF
         STA $05                         ; $30D1
         RTS                             ; $30D3
-; Carry clear means the exit is allowed. Room $0B always is. Otherwise the
-; actor has to be leaving through the edge he is standing on: xpos below $10
+; Carry clear means the exit is allowed. Room 11 always is: its three
+; side doors, and the door back to room 10, sit in the middle of the
+; screen, so the edge tests would reject them. Otherwise the actor has
+; to be leaving through the edge he is standing on: xpos below $10
 ; with $4F5D set, xpos above $A1 with $4F60 set, ypos above $C5 while the
 ; state is $0E, or ypos below $31 with $4F57 set. $4F5A, the down counter,
 ; is not read here.
-L_30D4:
+exit_allowed:
         LDA $29                         ; $30D4
         CMP #$0B                        ; $30D6
-        BEQ L_310A                      ; $30D8
+        BEQ exit_yes                    ; $30D8
         SEC                             ; $30DA
         LDA xpos,X                      ; $30DB
         CMP #$10                        ; $30DD
         BCS L_30E6                      ; $30DF
         LDA $4F5D,X                     ; $30E1
-        BNE L_310A                      ; $30E4
+        BNE exit_yes                    ; $30E4
 L_30E6:
         LDA #$A1                       ; $30E6
         CMP xpos,X                      ; $30E8
         BCS L_30F1                      ; $30EA
         LDA $4F60,X                     ; $30EC
-        BNE L_310A                      ; $30EF
+        BNE exit_yes                    ; $30EF
 L_30F1:
         LDA #$C5                        ; $30F1
         CMP ypos,X                      ; $30F3
         BCS L_30FD                      ; $30F5
         LDA state,X                     ; $30F7
         CMP #$0E                        ; $30F9
-        BEQ L_310A                      ; $30FB
+        BEQ exit_yes                    ; $30FB
 L_30FD:
         LDA ypos,X                      ; $30FD
         CMP #$31                        ; $30FF
-        BCS L_3108                      ; $3101
+        BCS exit_no                     ; $3101
         LDA $4F57,X                     ; $3103
-        BNE L_310A                      ; $3106
-L_3108:
+        BNE exit_yes                    ; $3106
+exit_no:
         SEC                             ; $3108
         RTS                             ; $3109
-L_310A:
+exit_yes:
         CLC                             ; $310A
         RTS                             ; $310B
 L_310C:
@@ -6443,7 +6484,11 @@ high_nibble:
         RTS                             ; $3214
         .byte $A6, $29
 
-; X is the room number. The room's entry bytes are read from $4BAE and $4BC2.
+; X is the room. $51 is forced to 0, so finish_exit treats the caller as
+; Bruce. A and Y are that room's spawn at $4BAE,X and $4BC2,X, not an
+; exit slot. room_11_to_13 calls this with X = $0D once rooms 12, 14, and
+; 16 are clear. between_lives calls it with X = $29. $24DB is this same
+; sequence inlined for the current room.
 enter_room_at:
         LDA #$00                        ; $3217
         STA $51                         ; $3219
@@ -6452,7 +6497,7 @@ enter_room_at:
         LDA $4BC2,X                     ; $321E
         TAY                             ; $3221
         LDA $4BAE,X                     ; $3222
-        JMP L_2F8E                      ; $3225
+        JMP finish_exit                 ; $3225
 
 ; Slots armed by start_crumble. The per-frame hooks of rooms 6, 7, 10, 11,
 ; 12, 14, 16, and 17 call this, and the hook runs before the overlap. The
@@ -6620,11 +6665,13 @@ restore_axy:
 ; with its high bit set, the column, and the tile row. $5A is the column
 ; under the scan and $5B is the tile row. A match stores 0 in the flag,
 ; decrements the room's remaining count at $2A,X, and returns the replacement
-; with the high bit clear. Carry set means there was no match. The remaining
-; counts copied to $2A are the twenty bytes at $4CCE. Rooms 13 and 19 have a
-; dummy record whose column and row are 0. Room 0's list is at $4D0C: columns
-; 31 and 38 of tile row 7, and columns 2, 25, 29, and 38 of tile row 10. The
-; mounts are $1F and $12. The other lists are in rooms.asm.
+; with the high bit clear. Carry set means there was no match. $2A,X is
+; $2A plus the room. room_11_to_13 reads $36, $38, and $3A, which are
+; rooms 12, 14, and 16. The counts copied to $2A are the twenty bytes at
+; $4CCE. Rooms 13 and 19 have a dummy record whose column and row are 0.
+; Room 0's list is at $4D0C: columns 31 and 38 of tile row 7, and columns
+; 2, 25, 29, and 38 of tile row 10. The mounts are $1F and $12. The other
+; lists are in rooms.asm.
 claim_lamp:
         LDX $51                         ; $331C
         LDA $E9,X                       ; $331E
