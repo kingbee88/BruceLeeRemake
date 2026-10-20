@@ -37,6 +37,11 @@
 ;   $0106,X          how many frames to hold the picture chosen for the state.
 ;   $98,X            the move he wants. $0E up, $0D down, $0B left, $07 right, $0F none.
 ;   $9B              fire. 0 means the button is held. irq_service stores it.
+;   $AA,X            state $17's step mark. ride_surface stores 1, and his own
+;                    step shifts it to 0. pose_carry keeps the old library while
+;                    it is set. catch_surface clears it. The surface shove does not.
+;   $AD,X            frames left before that step. A step stores 4. clear_carry
+;                    does not touch it, so a dropped catch keeps the wait.
 ;
 ; States used by Bruce:
 ;   1 and 2      climb up, climb down
@@ -45,7 +50,8 @@
 ;   $0C and $0D  flying kick, left and right
 ;   $0E          fall
 ;   $11          punch
-;   $17          carried on the scrolling surface. Tile $62 with the ladder bit.
+;   $17          carried on the scrolling surface. catch_surface, from tile $62
+;                with the ladder bit. ride_surface moves him. Not a climb.
 ;   $1A          duck
 ;
 ; Actor 1 is the Ninja. spawn_ninja calls wake_actor with A = $80, so active
@@ -59,6 +65,8 @@
 ;   $14   chase. On ground, Bruce above by $10 or more is a stand. Bit 7
 ;         of $62 means this fighter is above Bruce, and he walks. A ladder
 ;         with the ground bit clear walks as well. Climb is never started.
+;         Room 4's moving ladder is the same catch Bruce gets, state $17.
+;         chase does not aim at it, and the computer stick is never $0E.
 ;   $15   sidestep. Ground is bit 0 only. Bit 0 clear is a fall.
 ;   $16   Yamo's strike. Libraries $30-$37. xpos stays put.
 ;   $1B   stomp. The knockdown libraries, split at timer 4.
@@ -90,6 +98,18 @@
 ;   scan_row          the overlap test for one row of his sprite
 ;   flags_from_nibbles  nibbles to the hit bits
 ;   scan_specials     tiles under him, a 3 by 2 window
+;   catch_surface     tile $62 and the ladder bit. State $17, timer $10.
+;   clear_carry       drop state $17 before those cells are read. $AD stays.
+;   ride_surface      state $17. His own step, then the surface shove.
+;   shove_with_surface  $60 is 1. Two pixels, up when $65 is clear.
+;   pose_carry        state $17. $AA set keeps the picture already showing.
+;   flip_climb        libraries $0A and $0C, the two climb pictures.
+;   pose_stand        state 0. A ladder keeps $0A or $0C. Otherwise he stands.
+;   carry_step        state $17's own step. Two pixels, pure directions only.
+;   own_step_taken    that step finished. $AA becomes 0 and $AD is 4.
+;   chase_walk        state $14 walks the way he is facing.
+;   bruce_above       |dy| >= $10. Above Bruce he walks. Bruce above, he stands.
+;   chase_ladder      ground bit clear and ladder bit set. Walk, no climb.
 ;   start_crumble     tile $60 with bit 1. $FD goes to color RAM, not the screen.
 ;   step_crumble      the three nozzle slots. Rooms 6, 7, 10-12, 14, 16, and 17.
 ;   shock             hot tiles, including the nozzle flames $71-$7C
@@ -3227,9 +3247,14 @@ L_1BB6:
         LDX #$01                        ; $1BBB
         LDY #$0F                        ; $1BBD
         JMP L_1BAD                      ; $1BBF
-; One frame. flicker_lamps runs first, then the overlap, then scan_specials,
-; then the three actors. Wait until the raster count in $48 reaches 0.
-; irq_service decrements $48 once per frame, from the interrupt at raster $FB.
+; One frame. flicker_lamps runs first, then the room hook. That hook is
+; where scroll_surface decrements $60, so ride_surface sees the value
+; after the decrement. overlap_actors, then scan_specials, then
+; read_sprite_hits, then the three actors. A blow replaces a catch
+; scan_specials just stored, and ride_surface has not run yet. push_out
+; is inside release_hold, so a wall bit skips the ride that frame.
+; Wait until the raster count in $48 reaches 0. irq_service decrements
+; $48 once per frame, from the interrupt at raster $FB.
 frame:
         LDA #$03                        ; $1BC2
         STA $48                         ; $1BC4
@@ -4087,9 +4112,25 @@ L_217D:
         JMP land                        ; $217D
 L_2180:
         CMP #$17                        ; $2180
-        BEQ L_2187                      ; $2182
+        BEQ ride_surface                      ; $2182
         JMP L_2235                      ; $2184
-L_2187:
+; State $17, the scrolling surface. scan_specials has caught him on tile
+; $62, or clear_carry has already dropped the state when the tile was
+; missed. Hit bit 2 clear leaves through land. $AA is set here and shifted
+; to 0 only when his own step runs, which is what pose_carry keeps or flips.
+; A computer fighter, X not 0 and $42CA clear, has his stick replaced from
+; facing: 1 is $07, anything else is $0B. Bruce, and a human opponent, keep
+; the stick they brought. $0E and $0D are not stored for the computer, so
+; this routine does not climb and does not jump. $AD counts the frames
+; between his own steps. While it is set the step is skipped and $AA stays
+; 1. A step is exactly two calls, and only a pure direction is taken. It
+; stores 4 back into $AD. move_up refuses ypos below $2E and does not test
+; a wall. push_out has already run, and a wall bit means this was not
+; entered. $C8 is 0 on the path through actor_tick, so bit 0 of $C8 does
+; not block the step either. A refused pixel returns through clear_state,
+; and keep_state below stores $17 again, so the edge skips that pixel and
+; the ride stays in force.
+ride_surface:
         LDA hit,X                       ; $2187
         AND #$04                        ; $2189
         BEQ L_217D                      ; $218B
@@ -4110,34 +4151,38 @@ L_21A5:
         STA $98,X                       ; $21A7
 L_21A9:
         LDA $AD,X                       ; $21A9
-        BEQ L_21B2                      ; $21AB
+        BEQ carry_step                      ; $21AB
         DEC $AD,X                       ; $21AD
-        JMP L_21EE                      ; $21AF
-L_21B2:
+        JMP shove_with_surface                      ; $21AF
+; $AD has run out. Two pixels, and only a pure direction. A diagonal
+; leaves $AA set and does not arm the next wait.
+carry_step:
         LDA $98,X                       ; $21B2
         CMP #$0E                        ; $21B4
         BNE L_21C1                      ; $21B6
         JSR move_up                     ; $21B8
         JSR move_up                     ; $21BB
-        JMP L_21E5                      ; $21BE
+        JMP own_step_taken                      ; $21BE
 L_21C1:
         CMP #$0D                        ; $21C1
         BNE L_21CE                      ; $21C3
         JSR move_down                   ; $21C5
         JSR move_down                   ; $21C8
-        JMP L_21E5                      ; $21CB
+        JMP own_step_taken                      ; $21CB
 L_21CE:
         CMP #$0B                        ; $21CE
         BNE L_21DB                      ; $21D0
         JSR move_left                   ; $21D2
         JSR move_left                   ; $21D5
-        JMP L_21E5                      ; $21D8
+        JMP own_step_taken                      ; $21D8
 L_21DB:
         CMP #$07                        ; $21DB
-        BNE L_21EE                      ; $21DD
+        BNE shove_with_surface                      ; $21DD
         JSR move_right                  ; $21DF
         JSR move_right                  ; $21E2
-L_21E5:
+; His own step was taken. $AA shifts to 0, so pose_carry will flip, and
+; the next step waits four frames.
+own_step_taken:
         LSR $AA,X                       ; $21E5
         LDA #$04                        ; $21E7
         STA $AD,X                       ; $21E9
@@ -4147,7 +4192,7 @@ L_21E5:
 ; compare is exact: the $84 pause has bit 7 set and does not shove. $65
 ; clear moves him up two pixels, the same two rows one pattern byte covers.
 ; $65 set moves him down.
-L_21EE:
+shove_with_surface:
         LDA $60                         ; $21EE
         CMP #$01                        ; $21F0
         BNE L_2207                      ; $21F2
@@ -4159,6 +4204,14 @@ L_21EE:
 L_2201:
         JSR move_up                     ; $2201
         JSR move_up                     ; $2204
+; Stick back to none, and fire released. $52 still holds the timer from
+; the start of move_for_state. The increment cancels the decrement in
+; keep_state, so the $10 catch_surface stored is not consumed. The steps
+; above zeroed that timer on their way through set_state, and this write
+; puts it back. The two counters are then reduced to the difference.
+; $4F57 keeps the extra upward pixels, $4F5A the extra downward ones, and
+; the other is cleared. A frame that stepped both ways records only the
+; net. exit_allowed reads $4F57 and does not read $4F5A.
 L_2207:
         LDA #$0F                        ; $2207
         STA $98,X                       ; $2209
@@ -4309,12 +4362,12 @@ L_22F3:
 L_22FA:
         LDA hit,X                       ; $22FA
         AND #$01                        ; $22FC
-        BEQ L_2372                      ; $22FE
+        BEQ chase_ladder                      ; $22FE
         JSR range_to_bruce                      ; $2300
         LDA $62                         ; $2303
         AND #$7F                        ; $2305
         CMP #$10                        ; $2307
-        BCS L_2362                      ; $2309
+        BCS bruce_above                      ; $2309
         LDA facing,X                    ; $230B
         LDY $63                         ; $230D
         BMI L_2313                      ; $230F
@@ -4329,7 +4382,7 @@ L_2313:
         LDA facing,X                    ; $231E
         EOR #$01                        ; $2320
         STA facing,X                    ; $2322
-        JMP L_2352                      ; $2324
+        JMP chase_walk                      ; $2324
 L_2327:
         LDA xpos                        ; $2327
         LDY $63                         ; $2329
@@ -4358,7 +4411,10 @@ L_2344:
         STA $0106,X                     ; $234C
         STA $C8,X                       ; $234F
         RTS                             ; $2351
-L_2352:
+; Facing 1 walks right and facing 0 walks left. State $14 is kept.
+; bruce_above and chase_ladder both arrive here when he should keep
+; walking. The walk is the two-or-three xpos burst, not a climb.
+chase_walk:
         LDA facing,X                    ; $2352
         CMP #$01                        ; $2354
         BNE L_236C                      ; $2356
@@ -4368,21 +4424,24 @@ L_235B:
         LDA #$14                        ; $235D
         JMP keep_state                  ; $235F
 ; |dy| is at least $10, and hit bit 0 was set. Bit 7 of $62 means this
-; fighter is above Bruce, so he keeps walking. Bruce above: face_from_dx,
-; then stand_down. The ladder test at $2372 is the bit-0-clear path, and
-; that one walks without this compare.
-L_2362:
+; fighter is above Bruce, so he keeps walking at chase_walk. Bruce above:
+; face_from_dx, then stand_down. chase_ladder is the bit-0-clear path,
+; and that one walks without this compare. Neither path climbs.
+bruce_above:
         LDA $62                         ; $2362
-        BMI L_2352                      ; $2364
+        BMI chase_walk                      ; $2364
         JSR face_from_dx                      ; $2366
         JMP stand_down                      ; $2369
 L_236C:
         JSR L_1E6D                      ; $236C
         JMP L_235B                      ; $236F
-L_2372:
+; Ground bit clear. The ladder bit walks, at chase_walk. Neither bit
+; set falls. This is a ladder with no floor under him, and he does not
+; climb it.
+chase_ladder:
         LDA hit,X                       ; $2372
         AND #$04                        ; $2374
-        BNE L_2352                      ; $2376
+        BNE chase_walk                      ; $2376
 L_2378:
         JMP L_1DC4                      ; $2378
 L_237B:
@@ -4406,7 +4465,7 @@ L_2399:
         JMP stand_down                      ; $2399
 L_239C:
         CMP #$13                        ; $239C
-        BCS L_2352                      ; $239E
+        BCS chase_walk                      ; $239E
         LDA facing,X                    ; $23A0
         CMP #$01                        ; $23A2
         BEQ L_23B4                      ; $23A4
@@ -4425,7 +4484,7 @@ L_23B8:
         LDA $63                         ; $23B8
         AND #$7F                        ; $23BA
         CMP #$0B                        ; $23BC
-        BCS L_2352                      ; $23BE
+        BCS chase_walk                      ; $23BE
         CMP #$05                        ; $23C0
         BCC L_2389                      ; $23C2
         LDA #$16                        ; $23C4
@@ -5183,7 +5242,7 @@ L_28CB:
         LDA hit,X                       ; $28CB
         AND #$04                        ; $28CD
         BEQ L_28D4                      ; $28CF
-        JMP L_2985                      ; $28D1
+        JMP flip_climb                      ; $28D1
 L_28D4:
         LDY $4F48,X                     ; $28D4
         CPY #$0E                        ; $28D7
@@ -5200,7 +5259,7 @@ L_28E9:
         LDA hit,X                       ; $28E9
         AND #$04                        ; $28EB
         BEQ L_28F2                      ; $28ED
-        JMP L_2985                      ; $28EF
+        JMP flip_climb                      ; $28EF
 L_28F2:
         LDY $4F48,X                     ; $28F2
         CPY #$12                        ; $28F5
@@ -5261,7 +5320,7 @@ L_2941:
 ; Picture for sideways jump right, state 7. Libraries $26 and $28.
 pose_side_right:
         CMP #$07                        ; $294A
-        BNE L_2962                      ; $294C
+        BNE pose_carry                      ; $294C
         LDY timer,X                     ; $294E
         CPY #$0C                        ; $2950
         BCC L_2959                      ; $2952
@@ -5273,16 +5332,22 @@ L_2959:
         BCC L_2954                      ; $295B
         LDY #$28                        ; $295D
         JMP store_pose                  ; $295F
-L_2962:
+; State $17. $4F54 is the library stored last time. $AA still set means
+; this frame did not take its own step, and that library is kept. $AA
+; clear falls into flip_climb. The surface shove does not change $AA.
+pose_carry:
         CMP #$17                        ; $2962
-        BNE L_2970                      ; $2964
+        BNE pose_stand                      ; $2964
         LDY $4F54,X                     ; $2966
         LDA $AA,X                       ; $2969
-        BEQ L_2985                      ; $296B
+        BEQ flip_climb                      ; $296B
         JMP store_pose                  ; $296D
-L_2970:
+; State 0. On a ladder, $0A or $0C stays up. Any other picture on a
+; ladder, and every state not named above, falls into flip_climb. Off
+; the ladder, facing left is library 0 and facing right is library 2.
+pose_stand:
         CMP #$00                        ; $2970
-        BNE L_2985                      ; $2972
+        BNE flip_climb                      ; $2972
         LDA hit,X                       ; $2974
         AND #$04                        ; $2976
         BEQ L_2996                      ; $2978
@@ -5291,7 +5356,13 @@ L_2970:
         BEQ L_298E                      ; $297F
         CPY #$0C                        ; $2981
         BEQ L_298E                      ; $2983
-L_2985:
+; Libraries $0A and $0C, the two climb pictures. $0A is showing, so the
+; next one is $0C. Anything else becomes $0A. State $17 reaches this only
+; on the frame his own step shifted $AA to 0. A walk that overlaps a
+; ladder jumps here too. State 0 on a ladder keeps $0A or $0C, and only
+; arrives here when the picture is neither. A state choose_pose does not
+; name falls through to here as well, and the climbs are that case.
+flip_climb:
         LDY $4F54,X                     ; $2985
         CPY #$0A                        ; $2988
         BEQ L_2991                      ; $298A
@@ -6037,7 +6108,10 @@ L_2E08:
 L_2E0D:
         STA $63                         ; $2E0D
         RTS                             ; $2E0F
-L_2E10:
+; Drop state $17 before the tile window is read. The timer and the pose
+; hold go with it. $AA and $AD are left as they were, so a step that was
+; still waiting keeps waiting if the next cell catches him again.
+clear_carry:
         LDA #$00                        ; $2E10
         STA state,X                     ; $2E12
         LDA #$00                        ; $2E14
@@ -6071,7 +6145,11 @@ L_2E29:
 ; For each active actor except state $19, look at his tile row and the row
 ; below. cell_of_actor has his column in $E6,X and his tile row in $E9,X.
 ; Each of those rows checks that column and the two to the right. Hit bit 1
-; is kept in $53 and gates the prize tiles, the lamps among them.
+; is kept in $53 and gates the prize tiles, the lamps among them. State $17
+; is cleared first, through clear_carry, and catch_surface puts it back
+; only when tile $62 is in this window and hit bit 2 is set. $AD is left
+; alone. The same window still tests the doors and the other tiles after
+; the catch, so a hot tile can shock him on the frame he was caught.
 scan_specials:
         LDA #$00                        ; $2E39
         STA $0100                       ; $2E3B
@@ -6086,7 +6164,7 @@ L_2E40:
         BEQ L_2E68                      ; $2E4C
         CMP #$17                        ; $2E4E
         BNE L_2E55                      ; $2E50
-        JSR L_2E10                      ; $2E52
+        JSR clear_carry                      ; $2E52
 L_2E55:
         LDA hit,X                       ; $2E55
         AND #$02                        ; $2E57
@@ -6146,6 +6224,8 @@ L_2E9E:
         CMP #$04                        ; $2E9E
         BNE L_2EA5                      ; $2EA0
         JMP exit_tile_4                 ; $2EA2
+; Tile $62 is the scrolling ladder. $61 and $63 move with it and do not
+; catch. Bit 7 was masked, so the shadow's $E2 matches this compare too.
 L_2EA5:
         CMP #$62                        ; $2EA5
         BEQ L_2EF4                      ; $2EA7
@@ -6200,7 +6280,7 @@ L_2EEA:
 L_2EF1:
         JMP L_2FD6                      ; $2EF1
 L_2EF4:
-        JMP L_310C                      ; $2EF4
+        JMP catch_surface                      ; $2EF4
 L_2EF7:
         JMP start_crumble               ; $2EF7
 L_2EFA:
@@ -6537,7 +6617,13 @@ exit_no:
 exit_yes:
         CLC                             ; $310A
         RTS                             ; $310B
-L_310C:
+; Tile $62. State $19 does not catch. Hit bit 2 clear does not catch.
+; Otherwise state $17, timer $10, the pose hold cleared, and $AA cleared.
+; $AD is not written. Control then continues at L_2EA9, so a later test
+; on the same cell can still shock him. Every actor is tested. This is
+; how the Ninja and Yamo get onto the moving ladder. They do not jump,
+; and chase never climbs.
+catch_surface:
         LDA state,X                     ; $310C
         CMP #$19                        ; $310E
         BEQ L_3127                      ; $3110

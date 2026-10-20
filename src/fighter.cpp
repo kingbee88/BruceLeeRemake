@@ -5,6 +5,7 @@
 #include "config.h"
 #include "game.h"
 #include "load.h"
+#include "room.h"
 
 namespace {
 
@@ -61,6 +62,9 @@ struct Fighter {
     int actionTimer = 0;
     int health = 0;
     int step = 0;
+    int carryDelay = 0;  // $AD. Counts down between his own steps on the ladder.
+    int carryMark = 0;   // $AA. Set while state $17 runs. A step shifts it to 0.
+    bool overlapWall = false;  // Hit bit 3 from this frame's overlap, before the move.
     const uint8_t* frames = nullptr;
 };
 
@@ -131,7 +135,8 @@ void StepX(Fighter& f, int dir) {
 
 void StepY(Fighter& f, int dir) {
     if (dir < 0) {
-        if (f.y <= kMinY) {
+        // move_up refuses ypos below $2E. ypos $2E itself still steps.
+        if (f.y < kMinY) {
             return;
         }
         f.y -= 1;
@@ -458,6 +463,79 @@ void Idle(Fighter& f) {
     Chase(f);
 }
 
+// $2E52 clears state $17 before the cells are read. $310C puts it back when
+// one of those cells is tile $62 and hit bit 2 is set. Timer $10, and $AA
+// cleared. The same test catches Bruce in TouchRoomTile.
+void CatchSurface(Fighter& f) {
+    f.overlapWall = false;
+    if (f.action == kCarry) {
+        f.action = 0;
+        f.actionTimer = 0;
+    }
+    if (f.action == kZap || !f.on) {
+        return;
+    }
+    const int xpos = XposOf(f.x);
+    const int ypos = YposOf(f.y);
+    if (xpos < 0x0C) {
+        return;
+    }
+    int rowY = ypos;
+    if (g.roomId == 0x0D) {
+        rowY += 4;
+    }
+    if (rowY < 0x0C) {
+        return;
+    }
+    const Contact pose = At(f);
+    f.overlapWall = pose.wall;
+    if (!pose.ladder) {
+        return;
+    }
+    const int col0 = (xpos - 0x0C) >> 2;
+    const int row0 = (rowY - 0x0C) >> 4;
+    for (int dr = 0; dr < 2; ++dr) {
+        for (int dc = 0; dc < 3; ++dc) {
+            if (TileAt(col0 + dc, row0 + dr) != 0x62) {
+                continue;
+            }
+            f.action = kCarry;
+            f.actionTimer = 0x10;
+            f.carryMark = 0;
+            return;
+        }
+    }
+}
+
+// $2187. Bit 2 clear leaves the ladder. A computer fighter's stick is the way
+// he is facing, right $07 or left $0B, and that step waits on $AD. $60 == 1
+// then moves him two pixels with the surface, up when $65 is clear.
+void CarryFighter(Fighter& f) {
+    // Bit 2 was already required to get here, from the overlap before the
+    // move. $1CC7, not this routine, deals with a wall. choose_pose reads
+    // $AA after this and flips libraries $0A and $0C only when a step
+    // shifted it back to 0.
+    f.carryMark = 1;
+    const int dir = f.facing < 0 ? -1 : 1;
+    if (f.carryDelay > 0) {
+        f.carryDelay -= 1;
+    } else {
+        StepX(f, dir);
+        StepX(f, dir);
+        f.carryMark >>= 1;
+        f.carryDelay = 4;
+    }
+    const int shove = SurfaceShove();
+    if (shove < 0) {
+        StepY(f, -1);
+        StepY(f, -1);
+    } else if (shove > 0) {
+        StepY(f, 1);
+        StepY(f, 1);
+    }
+    f.action = kCarry;
+}
+
 void Act(Fighter& f) {
     if (f.actionTimer > 0 && f.action != 0 && f.action != kFall) {
         switch (f.action) {
@@ -531,6 +609,12 @@ void Choose(Fighter& f) {
         } else {
             f.pose = early ? kPoseKnockRight0 : kPoseKnockRight1;
         }
+    } else if (f.action == kCarry) {
+        // $2962. $AA still set keeps the picture already showing. Cleared,
+        // the picture becomes $0A, or $0C when it was already $0A.
+        if (f.carryMark == 0) {
+            f.pose = f.pose == kPoseClimb0 ? kPoseClimb1 : kPoseClimb0;
+        }
     } else if (f.action == 0x14 || f.action == 0x15) {
         if (here.ladder) {
             f.pose = (f.step & 1) ? kPoseClimb1 : kPoseClimb0;
@@ -578,6 +662,8 @@ void Wake(Fighter& f) {
     f.facing = 1;
     f.pose = 0;
     f.step = 0;
+    f.carryDelay = 0;
+    f.carryMark = 0;
     f.health = 0x24;
     f.on = true;
     if (f.kind == 1) {
@@ -857,7 +943,18 @@ void StepFighter(Fighter& f) {
         Bury(f);
         return;
     }
+    // scan_specials has already run. A wall bit takes push_out instead of
+    // the mover, so state $17 does not step on that frame.
     ShoveOut(f);
+    if (f.action == kCarry) {
+        if (f.overlapWall) {
+            f.carryMark = 1;
+        } else {
+            CarryFighter(f);
+        }
+        Choose(f);
+        return;
+    }
     Act(f);
     Choose(f);
 }
@@ -910,15 +1007,27 @@ void ResetFighters() {
     ninja.action = 0;
     ninja.actionTimer = 0;
     ninja.delay = RoomDelay(1);
+    ninja.carryDelay = 0;
+    ninja.carryMark = 0;
     yamo.on = false;
     yamo.action = 0;
     yamo.actionTimer = 0;
     yamo.delay = RoomDelay(2);
+    yamo.carryDelay = 0;
+    yamo.carryMark = 0;
 }
 
 bool TickFighters() {
     if (ninja.frames == nullptr) {
         return false;
+    }
+    // $2E39 before $1C23. The catch is state $17, and a blow after that can
+    // replace it before anyone moves.
+    if (yamo.on) {
+        CatchSurface(yamo);
+    }
+    if (ninja.on) {
+        CatchSurface(ninja);
     }
     // A life lost while resolving the previous pictures must not also step them.
     if (Resolve()) {

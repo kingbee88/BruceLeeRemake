@@ -1117,8 +1117,11 @@ void BeginRoomEffects() {
 }
 
 void TouchRoomTile(int tile, int col, int row, bool prize, bool ladder) {
+    // $310C. Timer $10 and the pose hold cleared. $AD, the gap before the
+    // next stick step, is not cleared.
     if (tile == 0x62 && ladder && g.action != kZap) {
         g.action = kCarry;
+        g.actionTimer = 0x10;
         g.hold = 0;
     }
     if ((tile == 0x2D || tile == 0x2E) && g.roomId == 16 && g.y + 21 >= 0xA0) {

@@ -147,8 +147,8 @@ void Land() {
 }
 
 // One xpos step, two screen pixels. The screen edge refuses it. A wall does
-// not: $1CC7 walks the step back on the next frame. The kick, the fall's
-// nudge, and the scrolling-floor carry still stop on a wall here.
+// not: $1CC7 walks the step back on the next frame. The kick and the fall's
+// nudge still stop on a wall here. State $17 uses MoveSideRaw instead.
 bool TryStep(int dir) {
     if (dir < 0) {
         if (g.x < kMinX || Probe(g.x - 2, g.y).wall) {
@@ -757,25 +757,28 @@ void HitReact() {
     }
 }
 
-// $2187. A pure direction steps. Diagonals do not. $60 == 1 then shoves
-// two pixels with the scrolling floor. The climb picture alternates on a step.
+// $2187. A pure direction steps two pixels. Diagonals do not. move_up,
+// move_down, move_left, and move_right ignore walls; $1CC7 undoes a step
+// that is still inside one on the next frame. $60 == 1 then shoves two
+// pixels with the scrolling floor. The climb picture alternates on his
+// own step, which is $AA shifted to 0 before choose_pose.
 void CarryMove(int stick) {
     bool stepped = false;
     if (carryDelay > 0) {
         carryDelay -= 1;
     } else if (stick == 0x0E) {
-        Rise(2);
+        MoveUpRaw(2);
         stepped = true;
     } else if (stick == 0x0D) {
-        Drop(2);
+        MoveDownRaw(2);
         stepped = true;
     } else if (stick == 0x0B) {
-        TryStep(-1);
-        TryStep(-1);
+        MoveSideRaw(-1);
+        MoveSideRaw(-1);
         stepped = true;
     } else if (stick == 0x07) {
-        TryStep(1);
-        TryStep(1);
+        MoveSideRaw(1);
+        MoveSideRaw(1);
         stepped = true;
     }
     if (stepped) {
@@ -784,9 +787,9 @@ void CarryMove(int stick) {
     }
     const int shove = SurfaceShove();
     if (shove < 0) {
-        Rise(2);
+        MoveUpRaw(2);
     } else if (shove > 0) {
-        Drop(2);
+        MoveDownRaw(2);
     }
 }
 
@@ -990,10 +993,13 @@ void Tick() {
         return;
     }
 
-    // $2E10 clears state $17 before the cells are read, so the tile has to
-    // catch him again. A shock skips the scan, which is the $19 test.
+    // $2E10 clears state $17, the timer, and the pose hold before the cells
+    // are read, so the tile has to catch him again. A shock skips the scan,
+    // which is the $19 test. $AD is left as it was.
     if (g.action == kCarry) {
         g.action = 0;
+        g.actionTimer = 0;
+        g.hold = 0;
     }
     if (g.action != kZap && ScanSpecials()) {
         ClearSteps();
@@ -1063,16 +1069,6 @@ void Tick() {
         return;
     }
 
-    // State $17 keeps the picture and does not fall through to a walk.
-    if (g.action == kCarry) {
-        wentLeft = false;
-        wentRight = false;
-        wentUp = false;
-        CarryMove(stick);
-        Compose();
-        return;
-    }
-
     wentLeft = false;
     wentRight = false;
     wentUp = false;
@@ -1080,6 +1076,8 @@ void Tick() {
     // $CB counts down only on a frame that actually runs, and only while the
     // state is the same one $C2 remembered. A fresh state reloads 6. Walking
     // and climbing take two pixels until that count reaches 0, then three.
+    // State $17 passes through here too: release_hold updates $CB before the
+    // wall test, and the wall test runs before the mover.
     const int state = g.action;
     if (state == 0 || state != g.prevState) {
         g.repeat = 6;
@@ -1112,6 +1110,14 @@ void Tick() {
         Compose();
         return;
     }
+
+    // State $17. The picture flips inside CarryMove, on his own step only.
+    if (g.action == kCarry) {
+        CarryMove(stick);
+        Compose();
+        return;
+    }
+
     const bool supported = here.ground || here.ladder;
     if (g.actionTimer > 0) {
         Script(here);

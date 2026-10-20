@@ -311,7 +311,14 @@
 ;
 ; Room 4's ladder is the vertical run at character columns 18-21. The
 ; picture row is $61, $62, $62, $63. The shadow row is those tiles with
-; bit 7 set. Rooms 5 and 6 draw the same glyphs in horizontal runs, and
+; bit 7 set. Only the $62 cells catch a fighter. $61 and $63 scroll with
+; them and do not. match_special masks bit 7, so the shadow's $E2 catches
+; too. catch_surface in game.asm is the whole test, tile $62 and hit bit
+; 2, for every actor except state $19. The Ninja and Yamo ride it by that
+; catch. They do not jump onto it, and chase does not climb after it.
+; ride_surface walks them the way they are facing, two xpos every fifth
+; frame, and moves them two pixels with the surface on the frame before
+; a copy. Rooms 5 and 6 draw the same glyphs in horizontal runs, and
 ; rooms 8, 9, and 11 draw them too. Room 18 contains the tile numbers,
 ; but its charset is $B000 and this routine never writes that bank. Room
 ; 19 contains them on charset $A800 and does not call the routine, so
