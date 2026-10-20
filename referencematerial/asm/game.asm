@@ -65,6 +65,9 @@
 ;   scan_row          the overlap test for one row of his sprite
 ;   flags_from_nibbles  nibbles to the hit bits
 ;   scan_specials     tiles under him, a 3 by 2 window
+;   start_crumble     tile $60 with bit 1. $FD goes to color RAM, not the screen.
+;   step_crumble      the three nozzle slots. Rooms 6, 7, 10-12, 14, 16, and 17.
+;   shock             hot tiles, including the nozzle flames $71-$7C
 ;   take_lamp         replace a lamp and add 125
 ;   flicker_lamps     rewrite the lamp glyph rows
 ;   raster_irq        the in-game color bands
@@ -5939,6 +5942,9 @@ L_2EA9:
         BCC L_2EE9                      ; $2ED7
         CMP #$5B                        ; $2ED9
         BCC L_2F01                      ; $2EDB
+; $71-$7C are hot, and shock is where they go. The flames that step_crumble
+; prints over a nozzle are this range. $60 is the nozzle itself. Bit 1 arms
+; start_crumble. The nozzle is not hot, and its screen code is not a wall.
 L_2EDD:
         CMP #$71                        ; $2EDD
         BCC L_2EE5                      ; $2EDF
@@ -5959,14 +5965,14 @@ L_2EF1:
 L_2EF4:
         JMP L_310C                      ; $2EF4
 L_2EF7:
-        JMP L_306B                      ; $2EF7
+        JMP start_crumble               ; $2EF7
 L_2EFA:
         LDA $29                         ; $2EFA
         CMP #$0A                        ; $2EFC
         BCS L_2F01                      ; $2EFE
         RTS                             ; $2F00
 L_2F01:
-        JMP L_304B                      ; $2F01
+        JMP shock                       ; $2F01
 ; Tiles $13, $14, and $31. Bruce only: any other actor returns. claim_lamp
 ; returns the bare mount, or sets carry when this cell is not in the room's
 ; list. The mount is written on this row. The same byte with bit 7 set is
@@ -6146,7 +6152,11 @@ L_3045:
         JSR clear_upper_sprites                      ; $3045
 L_3048:
         JMP L_0D42                      ; $3048
-L_304B:
+; Hot tiles from match_special: $0F, $40, $64, $66 from room 10 on, $54-$5A
+; except $57, and $71-$7C. Sound $8C. Room 18 returns without a shock.
+; Bruce, $51 = 0, goes to state $19 for $10 frames. Any other actor loses
+; active bit 0.
+shock:
         LDA $29                         ; $304B
         CMP #$12                        ; $304D
         BNE L_3052                      ; $304F
@@ -6168,8 +6178,26 @@ L_3052:
         BEQ L_3068                      ; $3063
         JMP L_3001                      ; $3065
 L_3068:
-        JMP L_407D                      ; $3068
-L_306B:
+        JMP shock_bruce                 ; $3068
+; Tile $60 with hit bit 1 set. Room 7's nozzles are this tile, on tile row 4
+; at columns 7 and 29 and on tile row 7 at columns 3, 17, and 21. Column 7
+; of row 4 is the one just to the right of the spawn.
+;
+; ($04) is the picture row from point_at_row. Adding $4C to its high byte
+; aims it at color RAM, the same offset that turns $8C00 into $D800. An ink
+; of 5, the low three bits, means this cell is already armed, and the store
+; is skipped. Otherwise the first free slot of $4FDE, $4FDF, and $4FE0 is
+; set to 1. Y minus 1 is stored at $4FE1,X and the row minus 1 at $4FE4,X.
+; The flame strings are three tiles wide and are printed from that corner.
+;
+; The $FD store uses the color pointer, before $4C is subtracted again. It
+; is not written to the screen. Color RAM keeps four bits, so the cell
+; becomes $0D: multicolor, with ink 5 so the next pass skips it. The screen
+; code stays $60, and the shadow under it stays $E0. Walking right from the
+; room 7 spawn crosses that cell with hit $01 or $03. Bit 3 stays clear, so
+; push_out does not run. A screen code of $FD is a different glyph, and that
+; one is solid where his legs are.
+start_crumble:
         LDA $05                         ; $306B
         CLC                             ; $306D
         ADC #$4C                        ; $306E
@@ -6177,7 +6205,7 @@ L_306B:
         LDA ($04),Y                     ; $3072
         AND #$07                        ; $3074
         CMP #$05                        ; $3076
-        BEQ L_30CC                      ; $3078
+        BEQ crumble_return              ; $3078
         LDA $4FDE                       ; $307A
         BNE L_3095                      ; $307D
         LDA #$01                        ; $307F
@@ -6187,7 +6215,7 @@ L_306B:
         STY $4FE1                       ; $3089
         DEC $4FE1                       ; $308C
         DEC $4FE4                       ; $308F
-        JMP L_30C8                      ; $3092
+        JMP mark_crumble_spent          ; $3092
 L_3095:
         LDA $4FDF                       ; $3095
         BNE L_30B0                      ; $3098
@@ -6198,10 +6226,10 @@ L_3095:
         STY $4FE2                       ; $30A4
         DEC $4FE2                       ; $30A7
         DEC $4FE5                       ; $30AA
-        JMP L_30C8                      ; $30AD
+        JMP mark_crumble_spent          ; $30AD
 L_30B0:
         LDA $4FE0                       ; $30B0
-        BNE L_30CC                      ; $30B3
+        BNE crumble_return              ; $30B3
         LDA #$01                        ; $30B5
         STA $4FE0                       ; $30B7
         LDA $E9,X                       ; $30BA
@@ -6209,10 +6237,10 @@ L_30B0:
         STY $4FE3                       ; $30BF
         DEC $4FE3                       ; $30C2
         DEC $4FE6                       ; $30C5
-L_30C8:
+mark_crumble_spent:
         LDA #$FD                        ; $30C8
         STA ($04),Y                     ; $30CA
-L_30CC:
+crumble_return:
         LDA $05                         ; $30CC
         SEC                             ; $30CE
         SBC #$4C                        ; $30CF
@@ -6426,7 +6454,28 @@ enter_room_at:
         LDA $4BAE,X                     ; $3222
         JMP L_2F8E                      ; $3225
 
-L_3228:
+; Slots armed by start_crumble. The per-frame hooks of rooms 6, 7, 10, 11,
+; 12, 14, 16, and 17 call this, and the hook runs before the overlap. The
+; compare below is the count before the increment.
+;
+; 8 and $10 print the first flame, from the stored column and row, which is
+; one tile left and one tile above the nozzle. $2F at $4612 is 11 12 13.
+; print_string subtracts $20, so those are tiles $71 $72 $73 on the upper
+; row. $30 at $4616 is 14 15 16, tiles $74 $75 $76, on the nozzle's row.
+; Sound $8D plays only when the count leaves 8.
+; $0C prints the second flame. $31 at $461A is tiles $77 $78 $79. $32 at
+; $461E is tiles $7A $7B $7C.
+; $14 clears the upper row with string 0, three $00 at $4488. Y then sits
+; two past the nozzle's column, and the two DEY leave the nozzle's own
+; column. Adding $50 drops two character rows, which is one tile row, and
+; adding $4C00 selects color RAM, so $F8 is stored on the nozzle. Its ink
+; is no longer 5 and start_crumble can arm it again. $33 at
+; $4622 is 1D 00 1D, tiles $7D $60 $7D, which puts the nozzle back.
+; $18 frees the slot. Until the count leaves 8 the screen code is still
+; $60, so the walk that armed the nozzle is not pushed out. Tiles $71-$7C
+; are the hot range in match_special, and an overlap with bit 1 set still
+; reaches shock.
+step_crumble:
         LDX #$02                        ; $3228
         STX $4F                         ; $322A
 L_322C:
@@ -6438,7 +6487,7 @@ L_3236:
         INC $4FDE,X                     ; $3236
         CMP #$08                        ; $3239
         BNE L_3260                      ; $323B
-        JSR L_32CC                      ; $323D
+        JSR crumble_sound               ; $323D
 L_3240:
         LDX $4F                         ; $3240
         LDY $4FE1,X                     ; $3242
@@ -6510,7 +6559,8 @@ L_32C4:
         JMP L_322C                      ; $32C8
 L_32CB:
         RTS                             ; $32CB
-L_32CC:
+; Sound $8D. Played when a nozzle's count leaves 8, the first flame frame.
+crumble_sound:
         PHA                             ; $32CC
         TXA                             ; $32CD
         PHA                             ; $32CE
@@ -7530,11 +7580,13 @@ hook_frame_6:
         LDY #$01                        ; $39B8
         JSR L_3AA0                      ; $39BA
 L_39BD:
-        JSR L_3228                      ; $39BD
+        JSR step_crumble                ; $39BD
         JMP scroll_surface             ; $39C0
-; Per-frame hook for room 7.
+; Per-frame hook for room 7. step_crumble runs first. The hook itself runs
+; before the overlap, so a nozzle armed on the previous frame is still
+; screen code $60 when that walk is tested again.
 hook_frame_7:
-        JSR L_3228                      ; $39C3
+        JSR step_crumble                ; $39C3
         LDA $4DC3                       ; $39C6
         ORA $4DC7                       ; $39C9
         ORA $4DCB                       ; $39CC
@@ -7948,7 +8000,7 @@ L_3CA7:
         NOP                             ; $3CBA
         NOP                             ; $3CBB
         NOP                             ; $3CBC
-        JMP L_3228                      ; $3CBD
+        JMP step_crumble                ; $3CBD
 ; Per-frame hook for room 11. It ends in scroll_surface. The pattern is
 ; the block at $4309, written into charset $A800.
 hook_frame_11:
@@ -7963,7 +8015,7 @@ hook_frame_11:
         LDA #$07                        ; $3CD1
         STA $4321                       ; $3CD3
 L_3CD6:
-        JSR L_3228                      ; $3CD6
+        JSR step_crumble                ; $3CD6
         JMP scroll_surface             ; $3CD9
 ; Per-frame hook for room 18.
 hook_frame_18:
@@ -8007,7 +8059,7 @@ L_3D1D:
         LDA $BF                         ; $3D2F
         CMP #$19                        ; $3D31
         BEQ L_3D38                      ; $3D33
-        JSR L_407D                      ; $3D35
+        JSR shock_bruce                 ; $3D35
 L_3D38:
         DEC $4E98                       ; $3D38
         BNE L_3D80                      ; $3D3B
@@ -8164,7 +8216,7 @@ L_3E60:
         LDY #$26                        ; $3E74
         JSR L_3AB4                      ; $3E76
 L_3E79:
-        JMP L_3228                      ; $3E79
+        JMP step_crumble                ; $3E79
 ; Per-frame hook for room 13.
 hook_frame_13:
         LDA $03                         ; $3E7C
@@ -8221,7 +8273,7 @@ hook_frame_14:
         LDY #$26                        ; $3EDE
         JSR L_3AB4                      ; $3EE0
 L_3EE3:
-        JMP L_3228                      ; $3EE3
+        JMP step_crumble                ; $3EE3
 ; Per-frame hook for room 15.
 hook_frame_15:
         LDA $4E97                       ; $3EE6
@@ -8287,7 +8339,7 @@ hook_frame_16:
         LDY #$01                        ; $3F69
         JSR L_3AB4                      ; $3F6B
 L_3F6E:
-        JMP L_3228                      ; $3F6E
+        JMP step_crumble                ; $3F6E
 ; Per-frame hook for room 17.
 hook_frame_17:
         DEC $4E99                       ; $3F71
@@ -8340,7 +8392,7 @@ L_3FBF:
         LDY #$18                        ; $3FD0
         JSR print_string                ; $3FD2
 L_3FD5:
-        JSR L_3228                      ; $3FD5
+        JSR step_crumble                ; $3FD5
         LDA #$02                        ; $3FD8
         STA $4C                         ; $3FDA
 L_3FDC:
@@ -8431,7 +8483,9 @@ L_4078:
         LDY #$89                        ; $4078
         JMP play_sound                  ; $407A
 
-L_407D:
+; State $19 for $10 frames. shock uses it for Bruce. The room 18 spark
+; uses it when the sprite hit lands and he is not already in that state.
+shock_bruce:
         LDA #$19                        ; $407D
         STA state,X                     ; $407F
         LDA #$10                        ; $4081

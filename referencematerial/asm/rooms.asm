@@ -88,8 +88,14 @@
 ; Room 5.  Same as room 4.
 ; Room 6.  Same as room 4.
 ; Room 7.  Bands 08 09 01, 06 0E 0B, 0C 0E 0B, 04 0E 0B. Splits FD.
-; Room 8.  Same as room 7.
-; Room 9.  Same as room 7.
+;          Tile $60 is a floor nozzle. start_crumble in game.asm arms it
+;          when hit bit 1 is set, and stores $FD in the cell's color rather
+;          than in the screen. The screen code stays $60, which is not a
+;          wall, so a walk crosses it. The cells are tile row 4 columns 7
+;          and 29, and tile row 7 columns 3, 17, and 21. Column 7 of row 4
+;          is just right of the spawn. hook_frame_7 calls step_crumble.
+; Room 8.  Same bands and splits as room 7.
+; Room 9.  Same bands and splits as room 7.
 ; Room 10. Bands 06 0E 0B, 0C 0E 0B, 04 0E 0B, 0E 06 01. Splits 56 FD B6 C7.
 ; Room 11. Bands 04 0E 0B, 0E 06 01, 0E 06 0B, 0C 0E 01. Splits FD.
 ; Room 12. Same bands and splits as room 10.

@@ -362,6 +362,10 @@ void StartCrumble(int col, int row) {
     if (offset < 0 || offset >= 1000) {
         return;
     }
+    // $306B points ($04) at color RAM, then stores $FD. The low three bits
+    // become 5, so the next pass of this cell takes the skip. The screen
+    // code is left as $60. That glyph is not a wall, and neither are the
+    // flame tiles printed later.
     if ((g.color[static_cast<size_t>(offset)] & 7) == 5) {
         return;
     }
@@ -372,7 +376,7 @@ void StartCrumble(int col, int row) {
         crumb[slot].n = 1;
         crumb[slot].col = static_cast<uint8_t>(col - 1);
         crumb[slot].row = static_cast<uint8_t>(row - 1);
-        WritePicture(col, row, 0xFD);
+        PaintColor(offset, 0xFD);
         return;
     }
 }

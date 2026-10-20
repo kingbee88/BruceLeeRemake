@@ -27,7 +27,7 @@ int TileAt(int col, int tileRow);
 // all paint through this.
 void WriteTile(int col, int tileRow, int tile);
 
-// Write one byte on the picture row only. The crumble spark is $FD there.
+// Write one byte on the picture row only. The shadow row is left alone.
 void WritePicture(int col, int tileRow, int tile);
 
 // $4CE2 flag. True while that lamp is still in the room. A taken flag is 0.
