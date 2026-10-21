@@ -10,6 +10,8 @@ struct Config {
     bool fixBugsInOriginal = false;
     int startRoom = 0;
     bool showTitleScreen = true;
+    // Borderless window the size of the monitor. A double-click toggles it.
+    // The maximize button turns it on.
     bool fullScreen = false;
     bool showCrtFilter = false;
 };

@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <dwmapi.h>
 #include <d2d1.h>
 #include <d2d1helper.h>
 
@@ -17,6 +18,7 @@
 #include <cwchar>
 
 #pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 namespace {
 
@@ -107,14 +109,127 @@ void Paint(HWND hwnd) {
     }
 }
 
+// Borderless, the size of one monitor. The display mode is left alone.
+// FullScreen in config.ini chooses the start. A double-click switches.
+// The maximize button turns it on.
+bool gFullScreen = false;
+WINDOWPLACEMENT gWindowedPlace{};
+LONG gWindowedStyle = 0;
+LONG gWindowedExStyle = 0;
+
+bool MonitorBounds(HWND hwnd, RECT& bounds) {
+    const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, &info)) {
+        return false;
+    }
+    bounds = info.rcMonitor;
+    return true;
+}
+
+void SetBorderlessFrame(HWND hwnd, bool borderless) {
+    // Square corners and no caption edge, or the desktop shows in the corners.
+    const DWM_WINDOW_CORNER_PREFERENCE corners = borderless ? DWMWCP_DONOTROUND : DWMWCP_DEFAULT;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+    const COLORREF border = borderless ? DWMWA_COLOR_NONE : DWMWA_COLOR_DEFAULT;
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+}
+
+void RefitFullScreen(HWND hwnd) {
+    if (!gFullScreen) {
+        return;
+    }
+    RECT bounds{};
+    if (!MonitorBounds(hwnd, bounds)) {
+        return;
+    }
+    SetWindowPos(hwnd, HWND_TOP,
+                 bounds.left, bounds.top,
+                 bounds.right - bounds.left,
+                 bounds.bottom - bounds.top,
+                 SWP_FRAMECHANGED | SWP_NOOWNERZORDER | SWP_NOCOPYBITS);
+}
+
+void SetFullScreen(HWND hwnd, bool full) {
+    if (full == gFullScreen) {
+        return;
+    }
+    if (full) {
+        WINDOWPLACEMENT place{};
+        place.length = static_cast<UINT>(sizeof(place));
+        RECT bounds{};
+        if (!GetWindowPlacement(hwnd, &place) || !MonitorBounds(hwnd, bounds)) {
+            return;
+        }
+        // A window created hidden reports SW_HIDE. Putting that back would hide it.
+        if (place.showCmd == SW_HIDE) {
+            place.showCmd = SW_SHOWNORMAL;
+        }
+        gWindowedPlace = place;
+        gWindowedStyle = GetWindowLongW(hwnd, GWL_STYLE);
+        gWindowedExStyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        const LONG visible = gWindowedStyle & WS_VISIBLE;
+        SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | visible);
+        SetWindowLongW(hwnd, GWL_EXSTYLE,
+                       gWindowedExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                            WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+        gFullScreen = true;
+        SetBorderlessFrame(hwnd, true);
+        RefitFullScreen(hwnd);
+    } else {
+        gFullScreen = false;
+        SetBorderlessFrame(hwnd, false);
+        const LONG visible = GetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE;
+        SetWindowLongW(hwnd, GWL_STYLE, gWindowedStyle | visible);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, gWindowedExStyle);
+        SetWindowPlacement(hwnd, &gWindowedPlace);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOCOPYBITS);
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_NCCALCSIZE:
+        // Popup fullscreen has no caption. The client area is the whole window.
+        if (gFullScreen && wp) {
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_SIZE:
         if (gTarget) {
             gTarget->Resize(D2D1::SizeU(LOWORD(lp), HIWORD(lp)));
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_DISPLAYCHANGE:
+        RefitFullScreen(hwnd);
+        return 0;
+    case WM_LBUTTONDBLCLK:
+        SetFullScreen(hwnd, !gFullScreen);
+        return 0;
+    case WM_NCLBUTTONDBLCLK:
+        // Close and minimize keep their own clicks. Maximize enters fullscreen.
+        if (wp == HTCLOSE || wp == HTMINBUTTON) {
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+        if (wp == HTMAXBUTTON) {
+            SetFullScreen(hwnd, true);
+            return 0;
+        }
+        SetFullScreen(hwnd, !gFullScreen);
+        return 0;
+    case WM_SYSCOMMAND:
+        // The caption button, the system menu, and Win+Up all send this.
+        // The low four bits are used by Windows and are not part of the command.
+        if ((wp & 0xFFF0) == SC_MAXIMIZE) {
+            SetFullScreen(hwnd, true);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         BeginPaint(hwnd, &ps);
@@ -271,6 +386,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
+    // Without this, a double-click arrives as two clicks and never toggles.
+    wc.style = CS_DBLCLKS;
     // IDC_ARROW follows UNICODE, so it is a narrow pointer unless that macro
     // is set. 32512 is the arrow cursor, passed wide to match LoadCursorW.
     wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
@@ -279,16 +396,23 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
 
     RECT rc{0, 0, kWidth * 3, kHeight * 3};
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    // Hidden until the fullscreen choice is applied, so the windowed frame
+    // does not flash up when FullScreen is on.
     HWND hwnd = CreateWindowExW(
         0, wc.lpszClassName, L"Bruce Lee",
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        WS_OVERLAPPEDWINDOW,
         80, 80,
         rc.right - rc.left, rc.bottom - rc.top,
         nullptr, nullptr, inst, nullptr);
     if (!hwnd) {
         return 1;
     }
-    ShowWindow(hwnd, show);
+    if (gConfig.fullScreen) {
+        SetFullScreen(hwnd, true);
+    }
+    ShowWindow(hwnd, gFullScreen ? SW_SHOW : show);
+    // ShowWindow can put a hidden window back on its created rect.
+    RefitFullScreen(hwnd);
 
     MSG msg{};
     bool running = true;

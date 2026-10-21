@@ -27,6 +27,8 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a com
 | Space | Punch while standing. Flying kick while moving |
 | Escape | Close the window |
 
+Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The display mode stays as it is. `FullScreen=True` in `config.ini`, or on the command line, starts in that mode.
+
 An Xbox pad, or any other XInput controller, does the same things. The keyboard keeps working while a pad is connected.
 
 | Xbox control | Action |
