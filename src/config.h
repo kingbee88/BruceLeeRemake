@@ -2,7 +2,9 @@
 
 // Settings from config.ini, with the command line applied on top.
 struct Config {
+    // True keeps FALLS on the full starting count for the whole game.
     bool infiniteLives = false;
+    // True: the Ninja and Yamo still attack, and those blows never land.
     bool enemiesCantHitYou = false;
     // Off keeps the original landing loop. On pays 50 once, and one knockout.
     bool fixBugsInOriginal = false;

@@ -227,6 +227,10 @@ int LampsLeft(int room) {
     return lampLeft[room];
 }
 
+void ResetRoomBonus() {
+    roomBonusLive = false;
+}
+
 void ResetCollectedLamps() {
     for (int room = 0; room < kRoomCount; ++room) {
         lampLeft[room] = kLampLeft0[room];

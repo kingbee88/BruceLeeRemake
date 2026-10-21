@@ -179,6 +179,8 @@
 ;   start_crumble     tile $60 with bit 1. $FD goes to color RAM, not the screen.
 ;   step_crumble      the three nozzle slots. Rooms 6, 7, 10-12, 14, 16, and 17.
 ;   shock             hot tiles, including the nozzle flames $71-$7C
+;   paint_sparks      room 18. Four masked bytes in each spark shape.
+;   blank_sparks      zero those bytes. A PLAYER page or game over calls it.
 ;   take_lamp         replace a lamp and add 125 to the low score byte
 ;   flicker_lamps     rewrite the lamp glyph rows
 ;   raster_irq        the in-game color bands
@@ -246,7 +248,13 @@
 ; That loader is gone once this image is running. It is written out in title.asm.
 ;   open_room         options page. F3 is $42C9, F5 is $42CA, F7 or the button starts.
 ;   between_rooms     the PLAYER page. $03 selects the digit. Then the room.
+;   lose_life         one fall. $0104 clear reopens the room with no spend.
+;   spend_fall        DEC $28. Zero stays in between_lives. Negative is game_over.
+;   game_over         blue GAME OVER screen, then open_room. Room 0 comes from
+;                     clear_work_ram, which zeros $29. $4388, the top score, stays.
+;   draw_digit        one big score digit on that screen. 2x2 glyphs, charset $8000.
 ;   $28               falls left. clear_work_ram stores 4, or 9 when $42CA is set.
+;                     FALLS 00 is still a life. The next DEC makes $FF and leaves.
 ;   $42C9             0 is one player, 1 is two players.
 ;   $42CA             0 is the computer, 1 is a human opponent.
 ;   $42CB, $42CC      copies of $42C9 and $42CA kept across clear_work_ram.
@@ -995,7 +1003,7 @@ L_09E1:
         STA $DB00,X                     ; $09EA
         INX                             ; $09ED
         BNE L_09E1                      ; $09EE
-        JSR L_423F                      ; $09F0
+        JSR blank_sparks                      ; $09F0
         JSR silence_sid                      ; $09F3
 ; Room 11's tile 2 returns to room 10. Tiles 3, 4, and 5 are the three
 ; side doors, to rooms 12, 14, and 16. Each of those has a slot back to
@@ -1821,7 +1829,12 @@ L_0F69:
         BNE L_0F47                      ; $0F6F
 L_0F71:
         RTS                             ; $0F71
-; Zero the working zero page, the nibble tables at $4EED, and the per-room slots at $0300.
+; Zero $03 through $F5, the nibble tables at $4EED, and the per-room slots
+; at $0300. $28, $29, $40, and the score at $41-$43 are in that range, so a
+; game that reaches here through open_room starts in room 0 with no score
+; and difficulty 0. The top score at $4388 is not in the range and remains.
+; Falls are then stored as 4, or 9 when $42CA is set, and the 40000 mark
+; is copied back. $4E95 and $4E96, the extra-fall counters, go back to 5.
 clear_work_ram:
         LDA #$00                        ; $0F72
         TAX                             ; $0F74
@@ -2823,22 +2836,27 @@ L_17FA:
         JMP L_17FA                      ; $1814
 L_1817:
         RTS                             ; $1817
-; Silence the SID. If $0104 is 0, reopen the room. Otherwise one life is spent and the
-; between-lives screen runs.
+; Silence the SID. If $0104 is 0, reopen the room and spend nothing.
+; Otherwise one fall is spent. A result with the sign bit clear, including 0,
+; shows the PLAYER page and comes back to $29. A negative result is game over.
 lose_life:
         JSR silence_sid                      ; $1818
         LDA $0104                       ; $181B
-        BNE L_1826                      ; $181E
+        BNE spend_fall                  ; $181E
         STA $09BB                       ; $1820
         JMP open_room                   ; $1823
-L_1826:
 ; One fall. The trainer's first question stores $A5 here, so this becomes LDA $28
-; and the count never moves. The same byte is stored over the INC at $2FE5 and $3155.
+; and the count never moves. The same byte is stored over the INC at $2FE5 and
+; $3155. The frozen value is the one clear_work_ram wrote, 4 or 9, so the line
+; stays on that full count. LDA of either is positive, so BMI never fires and
+; the PLAYER page still runs. Game over does not.
+spend_fall:
         DEC $28                         ; $1826
         BMI game_over                      ; $1828
-; Count $28 down. Two-player mode swaps the saved block at $439F before the
-; next room. That block is $28 through $43, so it holds the falls and the
-; score. The two extra-fall marks at $4392 and $4395 are swapped after it.
+; spend_fall already counted. Zero stays here. Two-player mode swaps the
+; saved block at $439F before the next room. That block is $28 through $43,
+; so it holds the falls and the score. The two extra-fall marks at $4392
+; and $4395 are swapped after it. The room that opens is still $29.
 between_lives:
         LDA #$24                        ; $182A
         STA $D1                         ; $182C  Bruce, the Ninja, and Yamo. The caps apply again at the next wake.
@@ -2847,7 +2865,7 @@ between_lives:
         LDA #$00                        ; $1832
         STA $8B                         ; $1834
         STA $8C                         ; $1836
-        JSR L_423F                      ; $1838
+        JSR blank_sparks                      ; $1838
         LDA $42C9                       ; $183B
         BEQ L_184B                      ; $183E
         LDA $439F                       ; $1840
@@ -2888,9 +2906,25 @@ L_1886:
         JSR init_hardware                      ; $1886
         LDX $29                         ; $1889
         JMP enter_room_at                      ; $188B
-; Lives are gone. Blank the screen, print the score digits, wait, then open the room again.
+; $28 went negative, which is the fall after FALLS 00. Blue border and
+; background ($D020/$D021 = $06). $D022 and $D023 stay $0F, so the multicolor
+; ink is flat light grey. game_over_raster keeps charset $8000 through row 9
+; and the score font from row 10, the same split as the options page.
+; Rows 1-2, column 11: the two GAME OVER rows at $42CD and $42DF, bit 7 set.
+; Each letter is a 2x2 glyph. The $5C pair is the gap. Rows 5-6, column 12:
+; the PLAYER lines, the same glyphs between_rooms puts on rows 7-8. Rows 8-9,
+; column 14: the low six score digits, one 2x2 block each. Glyph $DC is empty,
+; so the rest of the blue field shows $D021. The lower rows were cleared to
+; code 0, and glyph 0 of the score font is empty too.
+; $48 counts down once a frame. $FE is 254 frames, then $40 is 64 more, 318
+; in all. Nothing reads the keyboard during either wait. One player, or a
+; partner whose own $28 is already negative, then enters open_room. That is
+; the options page, the PLAYER page, and clear_work_ram, which zeros $29, so
+; the new game is room 0 with 4 or 9 falls and a zero score. The top score
+; at $4388 is outside that clear and remains. Two players with a partner
+; still in the game go to between_lives instead of the second wait.
 game_over:
-        JSR L_423F                      ; $188E
+        JSR blank_sparks                      ; $188E
         JSR clear_playfield                      ; $1891
         SEI                             ; $1894
         LDA $D011                       ; $1895
@@ -2920,7 +2954,10 @@ game_over:
         STX $D016                       ; $18D3
         JSR fill_color_ram                      ; $18D6
         LDX #$00                        ; $18D9
-L_18DB:
+; A is still $0F, so fill_color_ram left light grey. $F1 repaints from row 12
+; down in white. The words are above that, on the $0F cells. $DC covers
+; $8C00 and $8C90 for 256 bytes each, through row 9.
+blank_over_screen:
         LDA #$F1                        ; $18DB
         STA $D9E0,X                     ; $18DD
         STA $DAE0,X                     ; $18E0
@@ -2928,9 +2965,10 @@ L_18DB:
         STA $8C00,X                     ; $18E5
         STA $8C90,X                     ; $18E8
         INX                             ; $18EB
-        BNE L_18DB                      ; $18EC
+        BNE blank_over_screen           ; $18EC
         LDX #$11                        ; $18EE
-L_18F0:
+; Eighteen screen codes. $8C33 is row 1 column 11, $8C5B row 2 column 11.
+paint_over_word:
         LDA $42CD,X                     ; $18F0
         ORA #$80                        ; $18F3
         STA $8C33,X                     ; $18F5
@@ -2938,20 +2976,25 @@ L_18F0:
         ORA #$80                        ; $18FB
         STA $8C5B,X                     ; $18FD
         DEX                             ; $1900
-        BPL L_18F0                      ; $1901
+        BPL paint_over_word             ; $1901
         LDA $03                         ; $1903
         ASL A                           ; $1905
         TAX                             ; $1906
         LDY #$00                        ; $1907
-L_1909:
+; between_rooms copies both digit bytes and advances X. DEY here runs once:
+; Y is 0, then $FF, and BPL stops. Column 14 of each PLAYER line ($4A6B and
+; $4A7B) takes one byte from $4A7D,X and $4A81,X. Player 0's stored line
+; already says PLAYER 1, so that byte matches the glyph that is there.
+poke_over_digit:
         LDA $4A7D,X                     ; $1909
         STA $4A6B,Y                     ; $190C
         LDA $4A81,X                     ; $190F
         STA $4A7B,Y                     ; $1912
         DEY                             ; $1915
-        BPL L_1909                      ; $1916
+        BPL poke_over_digit             ; $1916
         LDX #$0F                        ; $1918
-L_191A:
+; $8CD4 is row 5 column 12. $8CFC is row 6. Sixteen glyphs, bit 7 set.
+paint_over_player:
         LDA $4A5D,X                     ; $191A
         ORA #$80                        ; $191D
         STA $8CD4,X                     ; $191F
@@ -2959,7 +3002,7 @@ L_191A:
         ORA #$80                        ; $1925
         STA $8CFC,X                     ; $1927
         DEX                             ; $192A
-        BPL L_191A                      ; $192B
+        BPL paint_over_player           ; $192B
         JSR stash_scores                      ; $192D
         LDA #$4E                        ; $1930
         STA $04                         ; $1932
@@ -2970,7 +3013,11 @@ L_191A:
         STA $07                         ; $193C
         LDY #$00                        ; $193E
         LDX #$01                        ; $1940
-L_1942:
+; X starts at 1, so the high BCD byte $439B is skipped. $439C-$439E are the
+; low six digits. $04/$06 point at $8D4E and $8D76, row 8 and row 9, column 14.
+; draw_digit advances Y once, and the caller advances it again, two columns
+; per digit.
+paint_over_score:
         LDA $439B,X                     ; $1942
         LSR A                           ; $1945
         LSR A                           ; $1946
@@ -2984,7 +3031,7 @@ L_1942:
         INY                             ; $1955
         INX                             ; $1956
         CPX #$04                        ; $1957
-        BCC L_1942                      ; $1959
+        BCC paint_over_score            ; $1959
         JSR show_screen                      ; $195B
         NOP                             ; $195E
         NOP                             ; $195F
@@ -2994,23 +3041,26 @@ L_1942:
         CLI                             ; $1963
         LDA #$FE                        ; $1964
         STA $48                         ; $1966
-L_1968:
+wait_over_long:
         LDA $48                         ; $1968
-        BNE L_1968                      ; $196A
+        BNE wait_over_long              ; $196A
         LDA $42C9                       ; $196C
-        BEQ L_1979                      ; $196F
+        BEQ over_fresh_game             ; $196F
         LDA $439F                       ; $1971
-        BMI L_1979                      ; $1974
+        BMI over_fresh_game             ; $1974
         JMP between_lives                      ; $1976
-L_1979:
+; The other player is absent, or his saved falls are already negative.
+over_fresh_game:
         LDA #$40                        ; $1979
         STA $48                         ; $197B
-L_197D:
+wait_over_short:
         LDA $48                         ; $197D
-        BNE L_197D                      ; $197F
+        BNE wait_over_short             ; $197F
         JMP open_room                   ; $1981
-; A is one hex digit. It becomes four screen bytes, two on the top row ($04) and two on the
-; row under it ($06).
+; A is one hex digit. Four screen bytes: two on the row at ($04) and two on
+; the row at ($06). Nibble N starts at glyph $34+N*4, with bit 7 set, so the
+; block lives in the upper half of charset $8000. The status line does not
+; use these. It uses the score font at $8800.
 draw_digit:
         AND #$0F                        ; $1984
         ASL A                           ; $1986
@@ -5580,8 +5630,12 @@ L_29D4:
 L_29DD:
         LDA $67                         ; $29DD
         AND #$0C                        ; $29DF
-; The trainer's second question writes $09 over this branch offset, so the
-; ORA into $B3 is skipped. $B3 is Bruce's sprite-hit bits. $29F7 is the other one.
+; The trainer's second question writes $09 over this branch offset. The
+; branch then lands on LDA $B4, so the ORA #$08 into $B3 is skipped and the
+; Ninja's own hit bit is still stored. $B3 is Bruce's sprite-hit bits.
+; $29F7 is the Yamo pair, and $09 there lands on LDA $B5. The swing itself
+; was chosen earlier. This only drops Bruce's recorded contact, so he never
+; flinches, and a blow he lands on either fighter is still recorded.
         BNE L_29E6                      ; $29E1
         JMP L_29F2                      ; $29E3
 L_29E6:
@@ -5594,7 +5648,7 @@ L_29E6:
 L_29F2:
         LDA $67                         ; $29F2
         AND #$30                        ; $29F4
-; Same trainer patch: offset $09 skips the ORA #$10 into $B3.
+; Same patch. Offset $09 lands on LDA $B5, so Yamo's hit bit is still stored.
         BNE L_29FB                      ; $29F6
         JMP L_2A07                      ; $29F8
 L_29FB:
@@ -8581,7 +8635,7 @@ L_3CE4:
         LDA $4E86                       ; $3CE4
         BNE L_3D1D                      ; $3CE7
         STA $4E97                       ; $3CE9
-        JSR L_423F                      ; $3CEC
+        JSR blank_sparks                      ; $3CEC
         LDA $D015                       ; $3CEF
         AND #$1F                        ; $3CF2
         STA $D015                       ; $3CF4
@@ -8604,7 +8658,7 @@ L_3CE4:
         STA $4E98                       ; $3D17
         JMP L_3D4E                      ; $3D1A
 L_3D1D:
-        JSR L_4133                      ; $3D1D
+        JSR paint_sparks                ; $3D1D
         LDA $D01E                       ; $3D20
         TAX                             ; $3D23
         AND #$03                        ; $3D24
@@ -9164,7 +9218,12 @@ L_410D:
 L_4132:
         RTS                             ; $4132
 
-L_4133:
+; Room 18's two sparks, sprites at $8340 and $8380. X runs 3 down to 0
+; and Y steps 0, 3, 6, 9, so each shape gets four bytes. The byte is
+; noise AND $4322,X. Those four mask bytes are 18 3C 3C 18, read from
+; the end, so the rows come out 18, 3C, 3C, 18. blank_sparks zeros
+; the same four offsets.
+paint_sparks:
         LDX #$03                        ; $4133
         LDY #$00                        ; $4135
 L_4137:
@@ -9304,7 +9363,10 @@ L_4220:
         STA $4335                       ; $4239
         JMP L_2E29                      ; $423C
 
-L_423F:
+; Zero the four bytes paint_sparks writes into the two room-18 spark shapes,
+; offsets 0, 3, 6, and 9 of $8340 and $8380. between_lives, game_over,
+; and the room-18 finish all call this so a spark pixel is not left up.
+blank_sparks:
         LDX #$09                        ; $423F
         LDA #$00                        ; $4241
 L_4243:
@@ -9408,6 +9470,14 @@ flicker_flames:
 ; table at $43BE. String $04 is "** CONGRATULATIONS **", printed on the
 ; blanked top row by hook_frame_19. String $4F is the F3 line, $50 the F5
 ; line, $51 the F7 line. $08, $09, $0A, and $0D are the four handedness lines.
+; $42CD and $42DF are the GAME OVER picture, eighteen screen codes each.
+; paint_over_word ORs $80 and stores them at column 11 of rows 1 and 2.
+; A letter is two codes wide. $5C $5C is the gap between the words.
+;   $42CD  10 12 00 02 18 1A 0C 0E 5C 5C 1C 1E 2C 2E 0C 0E 24 26
+;   $42DF  11 13 01 03 19 1B 0D 0F 5C 5C 1D 1F 2D 2F 0D 0F 25 27
+; Top row, in pairs: G A M E, the gap, O V E R. The bottom row is the
+; lower half of the same letters. Both E's share 0C 0E and 0D 0F.
+; $4322 is 18 3C 3C 18. paint_sparks reads it from the last byte.
 
 L_4786:
         INC $04                         ; $4786

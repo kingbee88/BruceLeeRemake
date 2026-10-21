@@ -170,7 +170,7 @@ void ComposeMenu(bool twoPlayers, bool humanOpponent) {
     }
 }
 
-void ComposePlayerUp(int player) {
+void DrawPlayerLines(int player, int topRow, int d022) {
     uint8_t line[kLineBytes];
     std::memcpy(line, PlayerLines(), kLineBytes);
     if (player != 0) {
@@ -180,11 +180,54 @@ void ComposePlayerUp(int player) {
         line[30] = digits[6];
         line[31] = digits[7];
     }
+    for (int i = 0; i < 16; ++i) {
+        DrawCell(LogoCharset(), line[i] | 0x80, 12 + i, topRow, true, d022);
+        DrawCell(LogoCharset(), line[16 + i] | 0x80, 12 + i, topRow + 1, true, d022);
+    }
+}
+
+void ComposePlayerUp(int player) {
     Clear(kBlue);
     // Between the lives the whole page stays on charset $8000, multicolor.
     // $D022 is not flat: between_raster stripes it down the letters.
-    for (int i = 0; i < 16; ++i) {
-        DrawCell(LogoCharset(), line[i] | 0x80, 12 + i, 7, true, -1);
-        DrawCell(LogoCharset(), line[16 + i] | 0x80, 12 + i, 8, true, -1);
+    DrawPlayerLines(player, 7, -1);
+}
+
+void ComposeGameOver(int score) {
+    // $42CD and $42DF, eighteen codes each. Bit 7 selects the upper half of
+    // charset $8000. Row 1 and row 2, column 11.
+    static const uint8_t kTop[18] = {
+        0x10, 0x12, 0x00, 0x02, 0x18, 0x1A, 0x0C, 0x0E, 0x5C,
+        0x5C, 0x1C, 0x1E, 0x2C, 0x2E, 0x0C, 0x0E, 0x24, 0x26,
+    };
+    static const uint8_t kBottom[18] = {
+        0x11, 0x13, 0x01, 0x03, 0x19, 0x1B, 0x0D, 0x0F, 0x5C,
+        0x5C, 0x1D, 0x1F, 0x2D, 0x2F, 0x0D, 0x0F, 0x25, 0x27,
+    };
+    Clear(kBlue);
+    // game_over_raster keeps $D022 and $D023 at light grey. The letters are
+    // multicolor pair 01, so the ink is flat, not the PLAYER-page stripe.
+    for (int i = 0; i < 18; ++i) {
+        DrawCell(LogoCharset(), kTop[i] | 0x80, 11 + i, 1, true, kLightGrey);
+        DrawCell(LogoCharset(), kBottom[i] | 0x80, 11 + i, 2, true, kLightGrey);
+    }
+    // $8CD4 and $8CFC. Same PLAYER lines as between_rooms, one row higher.
+    DrawPlayerLines(0, 5, kLightGrey);
+    // draw_digit. Six nibbles from $439C, each a 2x2 glyph block on rows 8 and 9.
+    int shown = score % 1000000;
+    if (shown < 0) {
+        shown = 0;
+    }
+    int place = 100000;
+    for (int i = 0; i < 6; ++i) {
+        const int nibble = shown / place;
+        shown %= place;
+        place /= 10;
+        const int base = (0x34 + nibble * 4) | 0x80;
+        const int col = 14 + i * 2;
+        DrawCell(LogoCharset(), base, col, 8, true, kLightGrey);
+        DrawCell(LogoCharset(), base + 2, col + 1, 8, true, kLightGrey);
+        DrawCell(LogoCharset(), base + 1, col, 9, true, kLightGrey);
+        DrawCell(LogoCharset(), base + 3, col + 1, 9, true, kLightGrey);
     }
 }

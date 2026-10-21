@@ -940,18 +940,37 @@ void PlaceBruce() {
 // as it was until that page's countdown reaches 0.
 bool awaitingLife = false;
 
+bool outOfLives = false;
+
 void BruceFell() {
-    if (!gConfig.infiniteLives) {
-        g.lives -= 1;
-        if (g.lives < 0) {
-            g.lives = 4;
-        }
+    // Unlimited lives is LDA $28 in place of this DEC, and the same byte
+    // in place of both INCs. The count stays on the stock the game started with.
+    if (gConfig.infiniteLives) {
+        g.lives = g.lifeStock;
+        awaitingLife = true;
+        return;
+    }
+    g.lives -= 1;
+    // BMI game_over. Zero is still a life, so FALLS 00 plays the room again.
+    // The next fall wraps the byte negative and leaves the game.
+    if (g.lives < 0) {
+        outOfLives = true;
+        return;
     }
     awaitingLife = true;
 }
 
 bool BetweenLives() {
     return awaitingLife;
+}
+
+bool OutOfLives() {
+    return outOfLives;
+}
+
+void ClearOutOfLives() {
+    outOfLives = false;
+    awaitingLife = false;
 }
 
 void ResumeAfterFall() {

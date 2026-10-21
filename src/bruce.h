@@ -64,11 +64,16 @@ int ViewAction();
 int ViewFacing();
 int ViewPose();
 
-// $1826. One fall. The PLAYER page runs before the room is entered again.
+// $1826. One fall. A count that is still positive shows the PLAYER page
+// and returns to the same room. A count that goes negative is game over.
 void BruceFell();
 
 // True from BruceFell until ResumeAfterFall. between_rooms is that page.
 bool BetweenLives();
+
+// $1828. The fall that wrapped $28 negative. Cleared once the screen is up.
+bool OutOfLives();
+void ClearOutOfLives();
 
 // The PLAYER page has finished. Same room, health reloaded in PlaceBruce.
 void ResumeAfterFall();

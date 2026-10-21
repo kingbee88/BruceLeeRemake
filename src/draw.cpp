@@ -120,6 +120,7 @@ void DrawStatus() {
     // low six. 1000000 is shown as 000000.
     const int shown = g.score % 1000000;
     const int top = TopScore() % 1000000;
+    SyncLives();
     FormatFalls(g.lives, falls);
     std::snprintf(text, sizeof text, "%06d  TOP %06d  FALLS %s", shown, top, falls);
     // The words sit on character row 1. Row 0 above them is the black bar,

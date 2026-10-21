@@ -173,6 +173,10 @@ copy_game_byte:
 
 ; "Unlimited lives??" N skips the three stores. Y writes $A5 over DEC $28 at
 ; $1826 and over INC $28 at $2FE5 and $3155, so each of those becomes LDA $28.
+; The count stays on the stock clear_work_ram stored, 4 or 9. It does not
+; rise for a score mark or a room 16 lantern, and a fall does not lower it.
+; spend_fall still reaches between_lives. BMI does not see a negative byte,
+; so game_over does not run.
         JSR ask_trainer                 ; $C589
         CMP #$4E                        ; $C58C
         BEQ ask_hits                    ; $C58E
@@ -182,8 +186,10 @@ copy_game_byte:
         STA $3155                       ; $C598
 
 ; "Opponents can't hit you??" N skips. Y writes $09 over the branch offsets
-; at $29E2 and $29F7, so both branches miss the ORA into $B3. $B3 is Bruce's
-; sprite-hit byte. The other fighters' bytes are still updated.
+; at $29E2 and $29F7. Each branch then lands past the ORA into $B3 and on
+; the ORA into $B4 or $B5, so Bruce's hit byte is missed and the Ninja's
+; and Yamo's bytes are still updated. Their attack poses are chosen before
+; this register is read, so they still swing. Bruce never records the contact.
 ask_hits:
         JSR ask_trainer                 ; $C59B
         CMP #$4E                        ; $C59E

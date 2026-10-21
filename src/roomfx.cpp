@@ -1039,6 +1039,40 @@ void Enter19() {
 
 }  // namespace
 
+void ResetRun() {
+    // $40, $4E95, and $014B. A win leaves difficulty raised and does not
+    // call this. Game over does, because open_room runs clear_work_ram.
+    difficulty = 0;
+    extraLives = 5;
+    for (int i = 0; i < 8; ++i) {
+        bandBonus[i] = 1;
+    }
+    victory = 0;
+    play87 = 0;
+    play88 = 0;
+    hookGate = 0;
+    t97 = t98 = t99 = t9A = t9B = 0;
+    col71 = col72 = col73 = 0;
+    row74 = row75 = row76 = 0;
+    tim77 = tim78 = tim79 = 0;
+    slideCol = 0;
+    slideRow = 0;
+    // $60, $64, $66 and the delay slot, as init_hardware and enter_room leave them.
+    surfaceWait = 1;
+    surfaceStep = 0;
+    surfaceDown = 0;
+    surfaceCount = 1;
+    surfaceSlot = 7;
+    bankStep[0] = bankStep[1] = bankStep[2] = -1;
+    for (int i = 0; i < 3; ++i) {
+        crumb[i].n = 0;
+    }
+    for (int i = 0; i < 9; ++i) {
+        mover[i] = {};
+    }
+    ResetBolts();
+}
+
 int Room19Stick() {
     // The three rasters of the wait at the end of the previous logic frame.
     // The first call of a visit therefore sees the entry frame's wait, and

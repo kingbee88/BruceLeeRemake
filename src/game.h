@@ -38,6 +38,7 @@ struct Game {
     int fallSlide = 0;     // $B0. One sideways nudge on the second falling frame
     int score = 0;         // $41..$43, a 24-bit count. The line shows the low 6 digits.
     int lives = 4;         // $28. The status line shows this as FALLS. One byte.
+    int lifeStock = 4;     // clear_work_ram's 4, or 9 for a human opponent.
     int health = 0x24;     // $D1. A hit subtracts from this. Below 0 is a fall.
     int roomId = 0;        // $29. 0 is the opening room. StartRoom uses this same number.
     int charsetId = 0;     // 0 is $A000, 1 is $A800, 2 is $B000.
@@ -67,7 +68,14 @@ void AddKnockout(int victimKind);
 int ApplyStomp(int health, int victimKind, bool scored);
 
 // $3155 and $2FE5. One more fall. The counter is a single byte.
+// InfiniteLives leaves the count on lifeStock.
 void GrantLife();
+
+// InfiniteLives pins FALLS to lifeStock. Otherwise this does nothing.
+void SyncLives();
+
+// clear_work_ram's score and the extra-fall mark. The top score stays.
+void ResetScore();
 
 // $4388. Compared as a 24-bit total. The line shows its low 6 digits.
 int TopScore();

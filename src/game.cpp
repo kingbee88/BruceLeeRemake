@@ -1,5 +1,7 @@
 #include "game.h"
 
+#include "config.h"
+
 #include <cstdint>
 
 // Colodore palette
@@ -35,7 +37,23 @@ bool MarkReached(int score, int mark) {
 }  // namespace
 
 void GrantLife() {
+    // The trainer's LDA patch covers this INC and the one in room 16.
+    if (gConfig.infiniteLives) {
+        g.lives = g.lifeStock;
+        return;
+    }
     g.lives = (g.lives + 1) & 0xFF;
+}
+
+void SyncLives() {
+    if (gConfig.infiniteLives) {
+        g.lives = g.lifeStock;
+    }
+}
+
+void ResetScore() {
+    g.score = 0;
+    lifeMark = 0x009C40;
 }
 
 int TopScore() {

@@ -907,6 +907,8 @@ bool Open(int action) {
 
 // Writes the hurt back. True when Bruce has just lost a fall.
 bool Hurt(Who& victim, const Who& attacker, int blow) {
+    // $29E2 and $29F7. The trainer skips the ORA into Bruce's hit byte.
+    // The swing is already chosen, so the Ninja and Yamo still attack.
     if (victim.kind == 0 && gConfig.enemiesCantHitYou && attacker.kind != 0) {
         return false;
     }

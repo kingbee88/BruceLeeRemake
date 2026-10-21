@@ -12,3 +12,7 @@ void ComposeMenu(bool twoPlayers, bool humanOpponent);
 
 // Blue page from between_rooms. player 0 is PLAYER 1, player 1 is PLAYER 2.
 void ComposePlayerUp(int player);
+
+// $188E. Blue screen, the GAME OVER glyphs, PLAYER 1, and the big score.
+// score is the 24-bit total. The low 6 decimal digits are drawn.
+void ComposeGameOver(int score);

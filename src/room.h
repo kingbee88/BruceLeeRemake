@@ -40,9 +40,16 @@ int LampsLeft(int room);
 // copy_room_defaults and L_33CA. A finished game puts the lamps back.
 void ResetCollectedLamps();
 
+// clear_work_ram's visit flags. The next room entry arms them again.
+void ResetRoomBonus();
+
 // $10E0. The treasure ending sets this player's room-entry flags, then
 // clears room 0 so the opening room does not pay again.
 void RearmRoomBonus();
+
+// clear_work_ram and the hardware init that follows game over. Difficulty,
+// the room 16 lanterns, the scroll, and the visit clock go back to a cold start.
+void ResetRun();
 
 // True when (col, row) is an untaken lamp in the current room. The mount
 // tile is returned and the lamp stays taken if the room is entered again.

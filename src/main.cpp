@@ -27,7 +27,8 @@ ID2D1HwndRenderTarget* gTarget = nullptr;
 ID2D1Bitmap* gBitmap = nullptr;
 
 // Title picture, then the options page, then between_rooms, then play.
-enum class Stage { Title, Menu, Player, Play };
+// GameOver is $188E, after the last fall.
+enum class Stage { Title, Menu, Player, Play, GameOver };
 Stage gStage = Stage::Play;
 bool gTitleStart = false;
 bool gMenuStart = false;
@@ -42,6 +43,10 @@ int gPlayerFrames = 0;
 // A fall, rather than the opening page. The countdown then returns to the
 // room instead of starting a new game.
 bool gAfterFall = false;
+// game_over waits $FE raster counts, then $40 more. 254 + 64 PAL frames.
+// This loop sleeps three of those, so 106 passes is the same 318.
+constexpr int kGameOverFrames = 106;
+int gGameOverFrames = 0;
 
 void ReleaseTarget() {
     if (gBitmap) {
@@ -139,9 +144,24 @@ bool KeyDown(int vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
 
-void BeginMenu() {
-    gTwoPlayers = false;
-    gHumanOpponent = false;
+void GiveStock() {
+    // clear_work_ram writes 4 falls for the computer and 9 for a human opponent.
+    g.lifeStock = gHumanOpponent ? 9 : 4;
+    g.lives = g.lifeStock;
+}
+
+void BeginPlay() {
+    GiveStock();
+    gStage = Stage::Play;
+    PlaceBruce();
+    Compose();
+}
+
+void BeginMenu(bool fresh) {
+    if (fresh) {
+        gTwoPlayers = false;
+        gHumanOpponent = false;
+    }
     gMenuStart = false;
     // A key already held when the page appears waits for a fresh press.
     gPrevF3 = KeyDown(VK_F3);
@@ -150,12 +170,32 @@ void BeginMenu() {
     ComposeMenu(gTwoPlayers, gHumanOpponent);
 }
 
-void BeginPlay() {
-    // clear_work_ram writes 4 falls for the computer and 9 for a human opponent.
-    g.lives = gHumanOpponent ? 9 : 4;
-    gStage = Stage::Play;
+void ShowGameOver(HWND hwnd) {
+    ClearOutOfLives();
+    gGameOverFrames = kGameOverFrames;
+    gStage = Stage::GameOver;
+    ComposeGameOver(g.score);
+    SetWindowTextW(hwnd, L"Bruce Lee");
+}
+
+// open_room after the game-over wait. Score, falls, lamps, and the run
+// counters start over. The top score stays. The room is 0, which is what
+// clear_work_ram leaves in $29. The options page keeps the choices already
+// made, the way $42CB and $42CC are copied back.
+void StartAfterGameOver() {
+    ResetScore();
+    ResetCollectedLamps();
+    ResetRoomBonus();
+    ResetRun();
+    EnterRoom(0);
+    if (gConfig.showTitleScreen) {
+        BeginMenu(false);
+        return;
+    }
+    GiveStock();
     PlaceBruce();
     Compose();
+    gStage = Stage::Play;
 }
 
 void ShowPlayerPage(bool afterFall) {
@@ -282,7 +322,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
             // button, the same as Space.
             if (gTitleStart && !fire) {
                 gTitleStart = false;
-                BeginMenu();
+                BeginMenu(true);
             }
         } else if (gStage == Stage::Menu) {
             PollMenu();
@@ -297,11 +337,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
                     BeginPlay();
                 }
             }
+        } else if (gStage == Stage::GameOver) {
+            gGameOverFrames--;
+            if (gGameOverFrames <= 0) {
+                shownRoom = -1;
+                StartAfterGameOver();
+            }
         } else {
             Tick();
-            // lose_life has spent the fall. between_rooms runs before the
-            // room is entered again.
-            if (BetweenLives()) {
+            // lose_life has spent the fall. A count still positive runs
+            // between_rooms in this room. A negative count is game over.
+            if (OutOfLives()) {
+                shownRoom = -1;
+                ShowGameOver(hwnd);
+            } else if (BetweenLives()) {
                 ShowPlayerPage(true);
             }
         }
