@@ -4,7 +4,7 @@ This project recreates the original *Bruce Lee* on the Commodore 64, written nat
 
 This is still a work in progress. 
 
-Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.1-alpha/release0.1.zip)
+Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.2-alpha/BruceLeeRemakev0.2.zip)
 
 ![The first screen, with Bruce standing by the lamp](cover.jpg)
 
