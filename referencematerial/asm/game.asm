@@ -42,6 +42,22 @@
 ;                    it is set. catch_surface clears it. The surface shove does not.
 ;   $AD,X            frames left before that step. A step stores 4. clear_carry
 ;                    does not touch it, so a dropped catch keeps the wait.
+;   $C2,X            the state release_hold saw on the previous frame.
+;   $CB,X            how many bursts are still shortened. State 0, or a
+;                    state other than $C2, stores 6. Otherwise it counts
+;                    down while it is not already 0. The sideways burst
+;                    reads the value after that store. 6 is two xpos.
+;                    0 is three. enemy_turn stores the chase before
+;                    release_hold, so the first chase frame is a new
+;                    state and reloads 6.
+;   $4F57,X          up steps taken this frame. $4F5A,X is down, $4F5D,X
+;                    is left, $4F60,X is right. The slots are three apart,
+;                    one actor each. The generation before those is
+;                    $4F63, $4F66, $4F69, and $4F6C. move_left and
+;                    move_right do not test bit 3. push_out walks this
+;                    count back on the next frame. Yamo's strike adds to
+;                    the facing-direction slot and does not move xpos, so
+;                    that count is walked back as a real step.
 ;
 ; States used by Bruce:
 ;   1 and 2      climb up, climb down
@@ -52,6 +68,11 @@
 ;   $11          punch
 ;   $17          carried on the scrolling surface. catch_surface, from tile $62
 ;                with the ladder bit. ride_surface moves him. Not a climb.
+;   $18          pushed back out of a wall. push_out stores it with timer
+;                $40 after one generation has been undone. while_stuck
+;                drops that timer on the frame bit 3 is clear, so the $40
+;                is not a pause once he is out. pose_stuck keeps the
+;                picture, and replaces library $44 with library 8.
 ;   $1A          duck
 ;
 ; Actor 1 is the Ninja. spawn_ninja calls wake_actor with A = $80, so active
@@ -67,6 +88,10 @@
 ;         with the ground bit clear walks as well. Climb is never started.
 ;         Room 4's moving ladder is the same catch Bruce gets, state $17.
 ;         chase does not aim at it, and the computer stick is never $0E.
+;         A property-0 wall is bit 3. The step that enters it is allowed,
+;         and the next frame is push_out. Room 4's purple column is
+;         property 4, so it is bit 2 and he walks through it. The black
+;         column beside that ladder is the wall. See rooms.asm.
 ;   $15   sidestep. Ground is bit 0 only. Bit 0 clear is a fall.
 ;   $16   Yamo's strike. Libraries $30-$37. xpos stays put.
 ;   $1B   stomp. The knockdown libraries, split at timer 4.
@@ -87,7 +112,17 @@
 ;   read_stick        joystick and keyboard
 ;   actor_tick        one actor for this frame
 ;   on_ground         the fall stops when hit bits 0 or 2 are set
-;   push_out          bit 3 pushes him back out of a wall
+;   hold_done         the pose hold has finished. Shift the step counts.
+;   push_out          bit 3 walks the previous generation back out
+;   undo_steps        one generation, each count walked back
+;   mark_stuck        state $18, timer $40. The mover does not run.
+;   while_stuck       state $18 and the timer is still running
+;   stuck_reenter     every older count is 0. Respawn, no lost life.
+;   start_sidestep    state $15. No walk on the frame it starts.
+;   keep_chase        state $14. INC $52, so the $14 timer stays.
+;   facing_bruce      punch, flying kick, or Yamo's strike
+;   try_strike        state $16. Timer 1 is stand_down, with no ground test.
+;   pose_stuck        state $18 keeps the picture. Library $44 becomes 8.
 ;   move_for_state    the jump, the kick, the sideways jump
 ;   move_up           one pixel up
 ;   move_down         one pixel down
@@ -3342,15 +3377,29 @@ L_1C51:
         STA $E9,X                       ; $1C58
         RTS                             ; $1C5A
 ; The pose holds for $0106,X frames. While that count is running, the rest of the actor is
-; skipped.
+; skipped. $86 starts at 8. push_out decrements it once per generation, and
+; the extra step is taken only when it is no longer 7, so the first
+; generation does not take it. $4A8C is the hold for the state keep_state
+; is about to store. States 1 and 2 are 3, state $1A is 1, and states
+; $14, $15, $16, and $18 are 0, so the chase, the sidestep, the strike,
+; and the bounce are not held.
 release_hold:
         LDA #$08                        ; $1C5B
         STA $86                         ; $1C5D
         LDA $0106,X                     ; $1C5F
-        BEQ L_1C68                      ; $1C62
+        BEQ hold_done                      ; $1C62
         DEC $0106,X                     ; $1C64
         RTS                             ; $1C67
-L_1C68:
+; Hold finished, or undo_steps found a generation with no up step and no
+; sideways step and came back here. Any of the four current counters
+; shifts forty samples, stride 3, one generation older. The current four
+; are then cleared. State 0, or a state other than $C2, stores 6 in $CB.
+; The same state decrements $CB when it is not already 0. $C2 then becomes
+; the state. State $19 jumps into actor_tick's timer test. State $18 with
+; the timer still set is while_stuck. Anything else is push_out, which
+; runs before actor_tick, so a wall bit never reaches the chase or the
+; ladder ride on that frame.
+hold_done:
         STA $4FDB,X                     ; $1C68
         LDA $4F57,X                     ; $1C6B
         ORA $4F5A,X                     ; $1C6E
@@ -3399,12 +3448,26 @@ L_1CBC:
         BNE push_out                    ; $1CBE
         LDA timer,X                     ; $1CC0
         BEQ push_out                    ; $1CC2
-        JMP L_24B7                      ; $1CC4
+        JMP while_stuck                      ; $1CC4
 
-; Bit 3 of hit,X is the solid flag. While it is set, step back out: down, then up, then
-; right, then left. Each sideways step is one xpos, two screen pixels. That is
-; the alignment where a solid wall nibble stays a wall. One screen pixel off
-; that grid is enough for the AND in scan_row to turn it into ground.
+; Bit 3 of hit,X. The step that entered the wall has already been taken.
+; move_left and move_right do not look at this bit. The previous generation
+; is walked back: an up count by move_down, a down count by move_up, a
+; left count by move_right, a right count by move_left. move_right stores
+; facing 1 and move_left stores facing 0, so a run into a wall on his left
+; leaves him facing right. That facing is what the next chase reads.
+; $85 starts at 1 and is shifted on the up undo and on both sideways
+; undos. A down undo does not shift it. Still 1, and $C2 not the duck,
+; goes back to hold_done for the next generation. The generation just
+; undone, and the empty current slot, are dropped by the slide first.
+; Hit bit 2 stops the loop after this one generation. The test is the
+; overlap from the start of the frame, not a new scan, so a sprite that
+; also covers the purple ladder still undoes the one generation and then
+; stops. It does not take the extra step. $86 is decremented after the
+; slide. It is 7 after the first generation, and the extra step is
+; skipped. A later generation takes one step opposite the facing the
+; undo just stored. mark_stuck then stores state $18 and timer $40 and
+; returns. The chase does not run on this frame.
 push_out:
         LDA hit,X                       ; $1CC7
         AND #$08                        ; Bit 3, the solid flag.
@@ -3413,7 +3476,7 @@ push_out:
 L_1CD0:
         LDA #$00                        ; $1CD0
         STA $C8,X                       ; $1CD2
-L_1CD4:
+undo_steps:
         LDA #$01                        ; $1CD4
         STA $85                         ; $1CD6
 L_1CD8:
@@ -3463,28 +3526,28 @@ L_1D10:
         STA $4FD5,X                     ; $1D34
         STA $4FD8,X                     ; $1D37
         DEC $86                         ; $1D3A
-        BMI L_1D66                      ; $1D3C
+        BMI mark_stuck                      ; $1D3C
         LDA hit,X                       ; $1D3E
         AND #$04                        ; $1D40
-        BNE L_1D66                      ; $1D42
+        BNE mark_stuck                      ; $1D42
         LDA $85                         ; $1D44
         BEQ L_1D53                      ; $1D46
         LDA $C2,X                       ; $1D48
         CMP #$1A                        ; $1D4A
-        BEQ L_1D66                      ; $1D4C
+        BEQ mark_stuck                      ; $1D4C
         LDA #$00                        ; $1D4E
-        JMP L_1C68                      ; $1D50
+        JMP hold_done                      ; $1D50
 L_1D53:
         LDA $86                         ; $1D53
         CMP #$07                        ; $1D55
-        BEQ L_1D66                      ; $1D57
+        BEQ mark_stuck                      ; $1D57
         LDA facing,X                    ; $1D59
         BNE L_1D63                      ; $1D5B
         JSR move_right                  ; $1D5D
-        JMP L_1D66                      ; $1D60
+        JMP mark_stuck                      ; $1D60
 L_1D63:
         JSR move_left                   ; $1D63
-L_1D66:
+mark_stuck:
         LDA #$18                        ; $1D66
         STA state,X                     ; $1D68
         LDA #$40                        ; $1D6A
@@ -3675,7 +3738,8 @@ stop_move:
         JMP clear_state                 ; $1E83
 
 ; One step left, if xpos is still above $0D. Facing becomes 0 and the state becomes 3 until
-; the caller replaces it.
+; the caller replaces it. Bit 3 is not tested. A wall is push_out's job on
+; the next frame, from the count stored at $4F5D,X.
 move_left:
         LDA xpos,X                      ; $1E86
         CMP #$0D                        ; $1E88
@@ -3712,7 +3776,9 @@ L_1EB1:
         JMP begin_kick_right            ; $1EC1
 
 ; One step right, if xpos is still below $A3. Facing becomes 1 and the state becomes 4
-; until the caller replaces it.
+; until the caller replaces it. Bit 3 is not tested. The count lands in
+; $4F60,X. push_out's undo of a leftward run comes through here, so the
+; facing stored for the next chase is 1.
 move_right:
         LDA xpos,X                      ; $1EC4
         CMP #$A3                        ; $1EC6
@@ -4268,7 +4334,7 @@ L_2265:
         JMP L_224C                      ; $2267
 L_226A:
         CMP #$11                        ; $226A
-        BNE L_22BD                      ; $226C
+        BNE try_strike                      ; $226C
         LDA hit,X                       ; $226E
         AND #$0C                        ; $2270
         BNE L_22C5                      ; $2272
@@ -4321,10 +4387,17 @@ L_22B8:
         LDA #$01                        ; $22B8
         STA timer,X                     ; $22BA
         RTS                             ; $22BC
-L_22BD:
-; State $16, Yamo's strike. Wall bit 3 goes to land. The INCs add to the
-; push counters, $4F60 when he faces right and $4F5D when he faces left.
-; xpos is left where it is. Timer 1 goes to stand_down.
+try_strike:
+; State $16, Yamo's strike. Wall bit 3 goes to land: state 0, timer 0.
+; Ladder bit 2 does not. The punch falls into the land test at L_22C5
+; with bits 2 and 3 both counted, so a ladder ends a punch and only a
+; wall ends this strike. The INCs add to the push counters, $4F60 when
+; he faces right and $4F5D when he faces left. xpos stays where it is,
+; and a later push_out walks that count as a real step. Timer 1 is
+; stand_down. There is no ground test on that path. stand_down stores 6,
+; and test_visit may shorten it. The strike picture often misses the
+; floor. Testing the ground here would store 0, and enemy_turn would
+; start another strike on the next frame.
         CMP #$16                        ; $22BD
         BNE L_22F3                      ; $22BF
         LDA hit,X                       ; $22C1
@@ -4374,16 +4447,23 @@ L_22FA:
         EOR #$01                        ; $2311
 L_2313:
         CMP #$01                        ; $2313
-        BEQ L_237B                      ; $2315
+        BEQ facing_bruce                      ; $2315
         TYA                             ; $2317
         AND #$7F                        ; $2318
         CMP #$21                        ; $231A
-        BCC L_2327                      ; $231C
+        BCC start_sidestep                      ; $231C
         LDA facing,X                    ; $231E
         EOR #$01                        ; $2320
         STA facing,X                    ; $2322
         JMP chase_walk                      ; $2324
-L_2327:
+; Not facing Bruce, and |dx| is below $21. State $15, and no walk on
+; this frame. The timer is the distance to Bruce's xpos plus or minus
+; $0F, and at least 5. push_out has usually just left him facing away
+; from the wall. This sidestep then walks that way, so a close Bruce
+; on the far side of the wall does not turn him back into it. |dx| of
+; $21 or more is the branch above: facing flips and chase_walk runs
+; on this same frame, back toward Bruce.
+start_sidestep:
         LDA xpos                        ; $2327
         LDY $63                         ; $2329
         BPL L_2332                      ; $232B
@@ -4414,12 +4494,17 @@ L_2344:
 ; Facing 1 walks right and facing 0 walks left. State $14 is kept.
 ; bruce_above and chase_ladder both arrive here when he should keep
 ; walking. The walk is the two-or-three xpos burst, not a climb.
+; keep_chase increments $52 before keep_state, so the $14 is not
+; consumed while he is walking. The sidestep's own keep_state does
+; consume its timer. The burst length is $CB, already updated by
+; hold_done: 6 on the first frame of the chase, two xpos, and 0
+; once that count has run out, three xpos.
 chase_walk:
         LDA facing,X                    ; $2352
         CMP #$01                        ; $2354
         BNE L_236C                      ; $2356
         JSR L_1EAE                      ; $2358
-L_235B:
+keep_chase:
         INC $52                         ; $235B
         LDA #$14                        ; $235D
         JMP keep_state                  ; $235F
@@ -4434,7 +4519,7 @@ bruce_above:
         JMP stand_down                      ; $2369
 L_236C:
         JSR L_1E6D                      ; $236C
-        JMP L_235B                      ; $236F
+        JMP keep_chase                      ; $236F
 ; Ground bit clear. The ladder bit walks, at chase_walk. Neither bit
 ; set falls. This is a ladder with no floor under him, and he does not
 ; climb it.
@@ -4444,7 +4529,11 @@ chase_ladder:
         BNE chase_walk                      ; $2376
 L_2378:
         JMP L_1DC4                      ; $2378
-L_237B:
+; Facing Bruce. Active $81 is the Ninja. |dx| below 5 sidesteps, below
+; $0C punches, below $13 starts the flying kick, and anything farther
+; walks. Yamo walks at $0B or more, sidesteps below 5, and the distances
+; in between are state $16 with timer $13.
+facing_bruce:
         LDA active,X                    ; $237B
         AND #$81                        ; $237D
         CMP #$81                        ; $237F
@@ -4453,7 +4542,7 @@ L_237B:
         AND #$7F                        ; $2385
         CMP #$05                        ; $2387
 L_2389:
-        BCC L_2327                      ; $2389
+        BCC start_sidestep                      ; $2389
         CMP #$0C                        ; $238B
         BCS L_239C                      ; $238D
         JSR L_1F7E                      ; $238F
@@ -4621,7 +4710,16 @@ L_24B0:
 L_24B3:
         CMP #$18                        ; $24B3
         BNE keep_state                  ; $24B5
-L_24B7:
+; State $18 with the timer still running. release_hold jumps here and
+; does not call actor_tick. Bit 3 clear stores 1 in $52 and keep_state
+; decrements it, so the timer becomes 0 and the state stays $18. The
+; next frame the timer is 0, push_out does not take this branch, and
+; actor_tick clears the state. enemy_turn starts the chase on the
+; frame after that. Bit 3 still set ORs the older counters from $4F63,
+; stride 3, forty times. Any of them set is another undo. None set
+; forces $51 to 0 and re-enters the current room on Bruce's spawn.
+; That is finish_exit, not lose_life.
+while_stuck:
         LDA hit,X                       ; $24B7
         AND #$08                        ; $24B9
         BNE L_24C6                      ; $24BB
@@ -4645,10 +4743,12 @@ L_24CC:
         PLA                             ; $24D6
         TAX                             ; $24D7
         TYA                             ; $24D8
-        BNE L_24ED                      ; $24D9
+        BNE undo_again                      ; $24D9
 ; Same registers as enter_room_at, for the room already in $29. finish_exit
 ; places him on that room's spawn. enter_room then runs, so room 11 can
-; still open room 13 when rooms 12, 14, and 16 are clear.
+; still open room 13 when rooms 12, 14, and 16 are clear. $51 is 0, so
+; the life counter is not touched.
+stuck_reenter:
         LDA #$00                        ; $24DB
         STA $51                         ; $24DD
         LDX $29                         ; $24DF
@@ -4657,10 +4757,10 @@ L_24CC:
         TAY                             ; $24E6
         LDA $4BAE,X                     ; $24E7
         JMP finish_exit                 ; $24EA
-L_24ED:
+undo_again:
         LDA facing,X                    ; $24ED
         STA $4C                         ; $24EF
-        JMP L_1CD4                      ; $24F1
+        JMP undo_steps                      ; $24F1
 
 ; A is the state to keep. $52 still holds the timer from the start of move_for_state. It is
 ; decremented here and stored back to timer,X.
@@ -5078,10 +5178,14 @@ L_27B3:
         JMP store_pose                  ; $27B5
 L_27B8:
         CMP #$19                        ; $27B8
-        BNE L_27C1                      ; $27BA
+        BNE pose_stuck                      ; $27BA
         LDY #$08                        ; $27BC
         JMP store_pose                  ; $27BE
-L_27C1:
+; State $18. The library already showing is kept, unless it is $44 or
+; either mode byte is set, in which case library 8 replaces it. The
+; walk pictures are chosen for states $14 and $15, so the run keeps
+; cycling only while those states last. This state freezes the picture.
+pose_stuck:
         CMP #$18                        ; $27C1
         BNE L_27DA                      ; $27C3
         LDY $4F54,X                     ; $27C5

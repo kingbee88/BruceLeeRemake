@@ -318,7 +318,20 @@
 ; catch. They do not jump onto it, and chase does not climb after it.
 ; ride_surface walks them the way they are facing, two xpos every fifth
 ; frame, and moves them two pixels with the surface on the frame before
-; a copy. Rooms 5 and 6 draw the same glyphs in horizontal runs, and
+; a copy.
+;
+; The column just left of that ladder is a wall, and the ladder is not.
+; Character column 15 is tile $32 on the rows above the lower platform
+; and tile $39 on the platform's picture and shadow, character rows 21
+; and 22. Those cells are color $08. The low three bits are 0, so a
+; solid nibble there is hit bit 3 and push_out walks him back out.
+; Columns 16 and 17 of the platform are floor $11. Columns 18-21 are
+; $61, $62, $62, $63, color $0C. The low three bits are 4, so the same
+; solid nibbles are hit bit 2. He walks through $61 and $63. Only $62
+; catches. A chase that has been pushed out facing away from column 15,
+; with Bruce less than $21 xpos away, sidesteps away from that wall.
+; $21 or more turns him around and walks back toward Bruce.
+; Rooms 5 and 6 draw glyphs $61-$63 in horizontal runs, and
 ; rooms 8, 9, and 11 draw them too. Room 18 contains the tile numbers,
 ; but its charset is $B000 and this routine never writes that bank. Room
 ; 19 contains them on charset $A800 and does not call the routine, so

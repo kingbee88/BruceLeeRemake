@@ -13,6 +13,11 @@ constexpr int kMinX = 2;
 constexpr int kMaxX = 302;
 constexpr int kMinY = 25;
 constexpr int kMaxY = 178;
+constexpr int kStepUp = 0;
+constexpr int kStepDown = 1;
+constexpr int kStepLeft = 2;
+constexpr int kStepRight = 3;
+constexpr int kStepGens = 11;
 
 // $135B and $131F. Counts down while that fighter is gone. 0 spawns him.
 constexpr uint8_t kNinjaDelay[20] = {
@@ -64,7 +69,9 @@ struct Fighter {
     int step = 0;
     int carryDelay = 0;  // $AD. Counts down between his own steps on the ladder.
     int carryMark = 0;   // $AA. Set while state $17 runs. A step shifts it to 0.
-    bool overlapWall = false;  // Hit bit 3 from this frame's overlap, before the move.
+    int repeat = 6;      // $CB. A walk burst is two xpos, or three once this hits 0.
+    int prevAction = 0;  // $C2. The state release_hold saw last frame.
+    int hist[kStepGens][4] = {};
     const uint8_t* frames = nullptr;
 };
 
@@ -111,24 +118,19 @@ Contact At(const Fighter& f) {
     return hit;
 }
 
-bool Blocked(const Fighter& f, int pose, int x, int y) {
-    Bind(f);
-    const bool wall = PoseWall(pose, x, y);
-    ClearActorView();
-    return wall;
-}
-
 void StepX(Fighter& f, int dir) {
     if (dir < 0) {
         if (f.x < kMinX) {
             return;
         }
         f.x -= 2;
+        f.hist[0][kStepLeft] += 1;
     } else {
         if (f.x >= kMaxX) {
             return;
         }
         f.x += 2;
+        f.hist[0][kStepRight] += 1;
     }
     f.facing = dir;
 }
@@ -140,25 +142,98 @@ void StepY(Fighter& f, int dir) {
             return;
         }
         f.y -= 1;
+        f.hist[0][kStepUp] += 1;
     } else if (f.y < kMaxY) {
         f.y += 1;
+        f.hist[0][kStepDown] += 1;
     }
 }
 
-void ShoveOut(Fighter& f) {
-    if (!Blocked(f, f.pose, f.x, f.y)) {
-        return;
-    }
-    const int face = f.facing;
-    const int dir = face < 0 ? 1 : -1;
-    for (int i = 0; i < 12 && Blocked(f, f.pose, f.x, f.y); ++i) {
-        const int x = f.x;
-        StepX(f, dir);
-        f.facing = face;
-        if (f.x == x) {
-            break;
+// $1C77. A frame that stepped shifts the counters into the older slots.
+// A frame that did not leaves those slots where they are.
+void RememberSteps(Fighter& f) {
+    bool any = false;
+    for (int d = 0; d < 4; ++d) {
+        if (f.hist[0][d] != 0) {
+            any = true;
         }
     }
+    if (any) {
+        for (int gen = kStepGens - 1; gen > 0; --gen) {
+            for (int d = 0; d < 4; ++d) {
+                f.hist[gen][d] = f.hist[gen - 1][d];
+            }
+        }
+    }
+    for (int d = 0; d < 4; ++d) {
+        f.hist[0][d] = 0;
+    }
+}
+
+bool OlderSteps(const Fighter& f) {
+    for (int gen = 1; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            if (f.hist[gen][d] != 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void SlideAfterPush(Fighter& f) {
+    int next[kStepGens][4] = {};
+    for (int gen = 0; gen <= 8; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            next[gen][d] = f.hist[gen + 2][d];
+        }
+    }
+    for (int gen = 0; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            f.hist[gen][d] = next[gen][d];
+        }
+    }
+}
+
+// $1CC7. The steps that put him in the wall are walked back: up by moving
+// down, down by moving up, left by moving right, right by moving left.
+// State $18 and timer $40. While that timer is running he does not chase.
+void PushOut(Fighter& f, const Contact& here) {
+    int tries = 8;
+    for (;;) {
+        const int up = f.hist[1][kStepUp];
+        const int down = f.hist[1][kStepDown];
+        const int left = f.hist[1][kStepLeft];
+        const int right = f.hist[1][kStepRight];
+        const bool sideways = down || left || right;
+        for (int i = 0; i < up; ++i) {
+            StepY(f, 1);
+        }
+        for (int i = 0; i < down; ++i) {
+            StepY(f, -1);
+        }
+        for (int i = 0; i < left; ++i) {
+            StepX(f, 1);
+        }
+        for (int i = 0; i < right; ++i) {
+            StepX(f, -1);
+        }
+        SlideAfterPush(f);
+        tries -= 1;
+        if (tries < 0 || here.ladder) {
+            break;
+        }
+        if (!sideways) {
+            RememberSteps(f);
+            continue;
+        }
+        if (tries != 7) {
+            StepX(f, f.facing < 0 ? 1 : -1);
+        }
+        break;
+    }
+    f.action = kStuck;
+    f.actionTimer = 0x40;
 }
 
 void BeginFall(Fighter& f) {
@@ -181,10 +256,14 @@ void ContinueFall(Fighter& f) {
     f.action = kFall;
 }
 
-void WalkTwo(Fighter& f) {
+// L_1E6D and L_1EAE. Two xpos, and a third when $CB has reached 0.
+// chase_walk then keeps the timer: the INC before keep_state cancels its DEC.
+void WalkBurst(Fighter& f) {
     const int dir = f.facing < 0 ? -1 : 1;
-    StepX(f, dir);
-    StepX(f, dir);
+    const int n = f.repeat == 0 ? 3 : 2;
+    for (int i = 0; i < n; ++i) {
+        StepX(f, dir);
+    }
 }
 
 void StartSidestep(Fighter& f, int dx) {
@@ -209,11 +288,8 @@ void Chase(Fighter& f) {
     const Contact here = At(f);
     if (!here.ground) {
         if (here.ladder) {
-            WalkTwo(f);
+            WalkBurst(f);
             f.action = 0x14;
-            if (f.actionTimer > 0) {
-                f.actionTimer -= 1;
-            }
             return;
         }
         BeginFall(f);
@@ -225,11 +301,8 @@ void Chase(Fighter& f) {
     const int adx = dx & 0x7F;
     if ((dy & 0x7F) >= 0x10) {
         if (dy & 0x80) {
-            WalkTwo(f);
+            WalkBurst(f);
             f.action = 0x14;
-            if (f.actionTimer > 0) {
-                f.actionTimer -= 1;
-            }
             return;
         }
         f.facing = (dx & 0x80) ? 1 : -1;
@@ -244,11 +317,8 @@ void Chase(Fighter& f) {
     if (faceTest != 1) {
         if (adx >= 0x21) {
             f.facing = f.facing < 0 ? 1 : -1;
-            WalkTwo(f);
+            WalkBurst(f);
             f.action = 0x14;
-            if (f.actionTimer > 0) {
-                f.actionTimer -= 1;
-            }
             return;
         }
         StartSidestep(f, dx);
@@ -270,11 +340,8 @@ void Chase(Fighter& f) {
             return;
         }
     } else if (adx >= 0x0B) {
-        WalkTwo(f);
+        WalkBurst(f);
         f.action = 0x14;
-        if (f.actionTimer > 0) {
-            f.actionTimer -= 1;
-        }
         return;
     } else if (adx < 5) {
         StartSidestep(f, dx);
@@ -284,11 +351,8 @@ void Chase(Fighter& f) {
         f.actionTimer = 0x13;
         return;
     }
-    WalkTwo(f);
+    WalkBurst(f);
     f.action = 0x14;
-    if (f.actionTimer > 0) {
-        f.actionTimer -= 1;
-    }
 }
 
 void Sidestep(Fighter& f) {
@@ -305,7 +369,7 @@ void Sidestep(Fighter& f) {
         f.actionTimer = 0x80;
         return;
     }
-    WalkTwo(f);
+    WalkBurst(f);
     f.action = 0x15;
     f.actionTimer -= 1;
 }
@@ -348,10 +412,16 @@ void Punch(Fighter& f) {
     const Contact here = At(f);
     // $2270. A wall or a ladder is land, timer 0. Timer 1 is $228C: state 0
     // and a 6-frame stand, and only while the floor or a ladder is there.
-    if (here.ladder || here.wall || f.actionTimer <= 1) {
-        const bool finished = f.actionTimer <= 1 && !here.ladder && !here.wall;
+    // A ladder or a wall is land, timer 0. Timer 1 is stand_down: state 0
+    // and timer 6. That stand does not ask whether he is on the floor.
+    if (here.ladder || here.wall) {
         f.action = 0;
-        f.actionTimer = finished && (here.ground || here.ladder) ? 6 : 0;
+        f.actionTimer = 0;
+        return;
+    }
+    if (f.actionTimer <= 1) {
+        f.action = 0;
+        f.actionTimer = 6;
         return;
     }
     f.actionTimer -= 1;
@@ -436,12 +506,20 @@ void Appear(Fighter& f) {
 void Strike(Fighter& f) {
     const Contact here = At(f);
     // $22C1. Bit 3 cancels it. Timer 1 is the same 6-frame stand as a punch.
-    if (here.wall || f.actionTimer <= 1) {
-        const bool finished = f.actionTimer <= 1 && !here.wall;
+    // Bit 3 is land, timer 0. Timer 1 is stand_down, timer 6, with no
+    // ground test. A shorter stand is why he used to strike again at once.
+    // The other frames only add a step to the push counter. xpos stays put.
+    if (here.wall) {
         f.action = 0;
-        f.actionTimer = finished && (here.ground || here.ladder) ? 6 : 0;
+        f.actionTimer = 0;
         return;
     }
+    if (f.actionTimer <= 1) {
+        f.action = 0;
+        f.actionTimer = 6;
+        return;
+    }
+    f.hist[0][f.facing < 0 ? kStepLeft : kStepRight] += 1;
     f.actionTimer -= 1;
 }
 
@@ -467,7 +545,6 @@ void Idle(Fighter& f) {
 // one of those cells is tile $62 and hit bit 2 is set. Timer $10, and $AA
 // cleared. The same test catches Bruce in TouchRoomTile.
 void CatchSurface(Fighter& f) {
-    f.overlapWall = false;
     if (f.action == kCarry) {
         f.action = 0;
         f.actionTimer = 0;
@@ -488,7 +565,6 @@ void CatchSurface(Fighter& f) {
         return;
     }
     const Contact pose = At(f);
-    f.overlapWall = pose.wall;
     if (!pose.ladder) {
         return;
     }
@@ -609,6 +685,11 @@ void Choose(Fighter& f) {
         } else {
             f.pose = early ? kPoseKnockRight0 : kPoseKnockRight1;
         }
+    } else if (f.action == kStuck) {
+        // $27C1. The picture stays. The arms-out jump is replaced by the legs.
+        if (f.pose == kPoseArms) {
+            f.pose = kPoseLegs;
+        }
     } else if (f.action == kCarry) {
         // $2962. $AA still set keeps the picture already showing. Cleared,
         // the picture becomes $0A, or $0C when it was already $0A.
@@ -664,6 +745,13 @@ void Wake(Fighter& f) {
     f.step = 0;
     f.carryDelay = 0;
     f.carryMark = 0;
+    f.repeat = 6;
+    f.prevAction = 0;
+    for (int gen = 0; gen < kStepGens; ++gen) {
+        for (int d = 0; d < 4; ++d) {
+            f.hist[gen][d] = 0;
+        }
+    }
     f.health = 0x24;
     f.on = true;
     if (f.kind == 1) {
@@ -934,29 +1022,71 @@ bool Resolve() {
     return false;
 }
 
-void StepFighter(Fighter& f) {
+// $1C9D. State 0, or a state that just changed, reloads the burst count.
+void NoteState(Fighter& f) {
+    if (f.action == 0 || f.action != f.prevAction) {
+        f.repeat = 6;
+    } else if (f.repeat > 0) {
+        f.repeat -= 1;
+    }
+    f.prevAction = f.action;
+}
+
+// True when he is wedged in a wall with no steps left to undo. $24DB then
+// re-enters the room on Bruce's spawn.
+bool StepFighter(Fighter& f) {
     if (!f.on) {
         Spawn(f);
-        return;
+        return false;
     }
     if (f.health < 0 && !(f.action == kKnock && f.actionTimer > 0)) {
         Bury(f);
-        return;
+        return false;
     }
-    // scan_specials has already run. A wall bit takes push_out instead of
-    // the mover, so state $17 does not step on that frame.
-    ShoveOut(f);
-    if (f.action == kCarry) {
-        if (f.overlapWall) {
-            f.carryMark = 1;
+    // enemy_turn runs before release_hold. State 0 with a finished stand
+    // becomes the chase, and NoteState has to see that new state.
+    if (f.action == 0 && f.actionTimer == 0) {
+        const Contact ground = At(f);
+        if (ground.ground || ground.ladder) {
+            f.action = 0x14;
+            f.actionTimer = 0x14;
+        }
+    }
+    RememberSteps(f);
+    NoteState(f);
+    // The overlap from the picture already showing. push_out reads that,
+    // and it runs instead of the chase, the strike, or the ladder ride.
+    const Contact shown = At(f);
+    if (f.action == kStuck && f.actionTimer > 0) {
+        if (!shown.wall) {
+            f.actionTimer = 0;
+        } else if (!OlderSteps(f)) {
+            return true;
         } else {
-            CarryFighter(f);
+            PushOut(f, shown);
         }
         Choose(f);
-        return;
+        return false;
+    }
+    if (shown.wall) {
+        PushOut(f, shown);
+        Choose(f);
+        return false;
+    }
+    if (f.action == kStuck) {
+        f.action = 0;
+        f.actionTimer = 0;
+        Choose(f);
+        return false;
+    }
+    if (f.action == kCarry) {
+        CarryFighter(f);
+        Choose(f);
+        return false;
     }
     Act(f);
     Choose(f);
+    return false;
 }
 
 bool DrawnPixel(const uint8_t* frames, int pose, int plane, int x, int y) {
@@ -1009,12 +1139,16 @@ void ResetFighters() {
     ninja.delay = RoomDelay(1);
     ninja.carryDelay = 0;
     ninja.carryMark = 0;
+    ninja.repeat = 6;
+    ninja.prevAction = 0;
     yamo.on = false;
     yamo.action = 0;
     yamo.actionTimer = 0;
     yamo.delay = RoomDelay(2);
     yamo.carryDelay = 0;
     yamo.carryMark = 0;
+    yamo.repeat = 6;
+    yamo.prevAction = 0;
 }
 
 bool TickFighters() {
@@ -1040,8 +1174,14 @@ bool TickFighters() {
     if (yamo.delay > 0) {
         yamo.delay -= 1;
     }
-    StepFighter(yamo);
-    StepFighter(ninja);
+    // $24DB. A fighter still inside a wall, with no steps left to walk back,
+    // re-enters this room on Bruce's spawn.
+    if (StepFighter(yamo) || StepFighter(ninja)) {
+        if (EnterRoom(g.roomId)) {
+            PlaceBruce();
+        }
+        return true;
+    }
     return false;
 }
 
