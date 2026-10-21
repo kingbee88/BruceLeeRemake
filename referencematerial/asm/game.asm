@@ -207,6 +207,14 @@
 ;   release_hold      the $0106,X pause between pose changes
 ;   show_screen       turn the VIC display back on
 ;   silence_sid       clear the SID and the three effect slots
+;   play_sound        Y = $80-$8E. Volume $15, then one of three slots
+;   voice_1           effect voice, $D400. voice_2 and voice_3 match it
+;   service_tune      options and game-over tune, once per raster
+;   score_blip        effect $80, the movement chirp. Not the score
+;   hit_sound         effect $86. A connect, a landing, a new spark
+;   slide_sound       effect $89, each frame a slide paints
+;   play_sound_8a     effect $8A. Doors and the countdown hooks
+;   crumble_sound     effect $8D, the nozzle count leaving 8
 ;   scroll_surface    glyphs $61-$63. Rooms 4, 5, 6, 8, 9, and 11.
 ;   spawn_ninja       actor 1, state $10, health capped at $14
 ;   spawn_yamo        actor 2, timer $10, health capped at 7, faces Bruce
@@ -260,6 +268,17 @@
 ;   $42CB, $42CC      copies of $42C9 and $42CA kept across clear_work_ram.
 ;   $03               0 or 1, the player named on the PLAYER page.
 ;   $1383, $1384      port 1 and port 2 handedness. 0 left, 1 right.
+
+; Sound. Two players, and only one is installed. During play, irq_service
+; calls voice_1, voice_2, and voice_3 once per raster. On the options page
+; and during game over, game_over_raster calls service_tune instead.
+; The title picture is title.asm and plays nothing. The PLAYER page calls
+; silence_sid and does not run the tune. play_sound only queues. frame
+; stores 3 in $48, and wait_for_tick spins until the raster has counted
+; it down, so the voice starts before the next logic frame.
+; The bytes this listing used to skip at $E5EB and $E617 are the tune
+; command jump table and its handlers. The branch offset is patched on
+; each command, so a straight disassembly only followed the first jump.
 
 ; Runs before start and falls into it. The title snapshot enters here from the
 ; stub at $0400, which has already copied the character ROM. Plain glyphs land
@@ -380,6 +399,8 @@ reset_actors:
         STA $D015                       ; $053C
         STA $D000                       ; $053F
         STA $D001                       ; $0542
+; $E30A = 1 would make service_tune silence itself. reset_music
+; clears that flag and the SID. The tune does not follow into play.
         LDA #$01                        ; $0545
         STA $E30A                       ; $0547
         JSR reset_music                      ; $054A
@@ -562,6 +583,10 @@ L_06B5:
         BEQ L_06BD                      ; $06B8
         JSR flip_menu_b                      ; $06BA
 L_06BD:
+; $1385 nonzero skips the tune. The title picture is not this page.
+; $09BB counts down. Below zero it is reloaded with 4, $E314 is set
+; to 3 (walk the sequence and loop), $E870 is tune 0, $E871 is $FF
+; (then restart), and start_tune runs.
         LDA $1385                       ; $06BD
         BNE L_06DD                      ; $06C0
         DEC $09BB                       ; $06C2
@@ -611,6 +636,7 @@ L_06FA:
         STA $D000                       ; $071C
         STA $D001                       ; $071F
         STA $03                         ; $0722
+; Same stop as reset_actors. Leaving the options page silences the tune.
         LDA #$01                        ; $0724
         STA $E30A                       ; $0726
         JSR reset_music                      ; $0729
@@ -2024,7 +2050,8 @@ L_10B1:
         BPL L_104D                      ; $10B2
         RTS                             ; $10B4
 
-; Play the effect for Y = $82, restoring A, X and Y.
+; Effect $82, restoring A, X, and Y. spawn_ninja and spawn_yamo
+; both return through here.
 blip_and_return:
         PHA                             ; $10B5
         TXA                             ; $10B6
@@ -2396,7 +2423,9 @@ L_1542:
         STA $D018                       ; $1544
         LDA #$18                        ; $1547
         STA $D016                       ; $1549
-        JSR L_E006                      ; $154C
+; The tune advances here, once per raster. Play does not install this
+; raster and the effect voices together.
+        JSR service_tune                ; $154C
         LDA #$74                        ; $154F
         STA $0408                       ; $1551
         LDA #$15                        ; $1554
@@ -2459,6 +2488,8 @@ L_1576:
 ; routine that rewrites the lamp glyph bytes.
 ; In play, the stick nibble is stored at $98 and the fire button at $9B.
 ; $9B is 0 while fire is held.
+; voice_1, voice_2, and voice_3 advance here, once per raster.
+; service_tune is not called from play.
 irq_service:
         CLD                             ; $15A8
         LDA #$00                        ; $15A9
@@ -2715,7 +2746,8 @@ L_173F:
         LDA #$00                        ; $1768
         STA $42CA                       ; $176A
 ; $20 is the mark test_visit treats as a long visit. The penalty below
-; also takes five falls from each player.
+; also takes five falls from each player. Effect $8A plays as $42CA
+; is cleared and the opponent becomes the computer.
         LDA #$20                        ; $176D
         STA $88                         ; $176F
         JSR play_sound_8a               ; $1771
@@ -3291,8 +3323,9 @@ draw_split_digits:
         ORA #$10                        ; $1B23
         STA $8C01,Y                     ; $1B25
         RTS                             ; $1B28
-; Keys during play. $04 jumps back to the cold start. $0D toggles $1385. $3C and $1F are
-; the other two.
+; Keys during play. $04 jumps back to the cold start. $0D toggles $1385.
+; Nonzero skips the options tune. $09BB is cleared, so the next options
+; page starts the tune at once. $3C and $1F are the other two.
 in_game_key:
         LDA #$01                        ; $1B29
         STA $010E                       ; $1B2B
@@ -3726,6 +3759,9 @@ on_ground:
 ; pixels, and $CB,X at 0 adds a fourth. A refused pixel clears the state.
 ; With bit 2 clear, bit 3 refuses the standing jump, and a ypos below $2E
 ; clears the state. Otherwise state 5 starts, with timer 15.
+; Effect $80 plays before the ladder test, whenever ypos is at least
+; $2E. The standing jump chirps. A wall that refuses the jump has
+; already chirped.
         CMP #$0E                        ; $0E: climb up.
         BNE L_1E13                      ; $1DD4
         LDA ypos,X                      ; $1DD6
@@ -3767,6 +3803,7 @@ L_1E0C:
 L_1E13:
 ; $0D: down. Bit 2 climbs through move_down, three pixels, or four when $CB,X
 ; is 0. With bit 2 clear and bit 0 set, Bruce ducks.
+; Effect $80 plays on that climb, and only when ypos is below $C7.
         CMP #$0D                        ; $0D: climb down.
         BNE L_1E59                      ; $1E15
         LDA hit,X                       ; $1E17
@@ -3814,6 +3851,8 @@ L_1E59:
 ; $0B: left. Two calls and the fall through into move_left are two xpos steps.
 ; $CB,X at 0 adds a third. When the previous state is already 3, $CB,X is
 ; below 4, and $9B,X is 0, the step is the flying kick instead.
+; Effect $80 plays after the edge test, including a step that then
+; becomes a kick.
         CMP #$0B                        ; $0B: step left. A low pose-repeat count starts the kick.
         BNE L_1E9A                      ; $1E5B
         LDA xpos,X                      ; $1E5D
@@ -3854,6 +3893,8 @@ move_left:
 L_1E9A:
 ; $07: right. The same two or three xpos steps. The kick replaces the step when
 ; the previous state is already 4, $CB,X is below 4, and fire is held.
+; Effect $80 plays after the edge test, including a step that then
+; becomes a kick.
         CMP #$07                        ; $07: step right. A low pose-repeat count starts the kick.
         BNE L_1ED8                      ; $1E9C
         LDA xpos,X                      ; $1E9E
@@ -3941,6 +3982,8 @@ L_1F1D:
         STA facing,X                    ; $1F25
         LDA #$1A                        ; $1F27
         JMP set_state                   ; $1F29
+; Wall bit 3 goes to try_punch and does not jump. Effect $80 plays
+; when the sideways jump is taken: $0A left, $06 right, not a ladder.
 L_1F2C:
         PHA                             ; $1F2C
         LDA hit,X                       ; $1F2D
@@ -4044,10 +4087,13 @@ begin_punch:
         LDA #$04                        ; $1FBF
         STA timer,X                     ; $1FC1
         RTS                             ; $1FC3
-; Play the effect for Y = $80. $0CD9 is a BCD counter for this effect, not
-; the player score at $41. It increments unless $1166 is set, and the
-; compare with $99 is what shows those digits are BCD. A second counter at
-; $1C14 moves only when the check byte $2007 is zero.
+; Effect $80, the movement chirp. Walk, climb, the sideways jump, and
+; a pure-direction carry step. add_score does not call it. A chase
+; step starts past the walk's call, so it is silent.
+; $0CD9 is a BCD counter for this effect, not the player score at $41.
+; It increments unless $1166 is set, and the compare with $99 is what
+; shows those digits are BCD. A second counter at $1C14 moves only
+; when the check byte $2007 is zero.
 score_blip:
         PHA                             ; $1FC4
         TXA                             ; $1FC5
@@ -4128,6 +4174,8 @@ L_2048:
         LDA hit,X                       ; $204C
         AND #$0C                        ; $204E
         BNE L_2080                      ; $2050
+; Timer still $0C, and the ladder and wall tests above have passed.
+; Effect $84. Bruce and the fighters share this kick.
         CPY #$0C                        ; $2052
         BNE L_2061                      ; $2054
         STX $51                         ; $2056
@@ -4163,6 +4211,8 @@ L_208D:
         LDA hit,X                       ; $2091
         AND #$0C                        ; $2093
         BNE L_20F3                      ; $2095
+; Timer still $0C, and the ladder and wall tests above have passed.
+; Effect $84.
         CPY #$0C                        ; $2097
         BNE L_20A6                      ; $2099
         STX $51                         ; $209B
@@ -4349,7 +4399,8 @@ L_21DB:
         JSR move_right                  ; $21DF
         JSR move_right                  ; $21E2
 ; His own step was taken. $AA shifts to 0, so pose_carry will flip, and
-; the next step waits four frames.
+; the next step waits four frames. Effect $80. Bruce and a carried
+; fighter both reach this, on a pure-direction step.
 own_step_taken:
         LSR $AA,X                       ; $21E5
         LDA #$04                        ; $21E7
@@ -4426,6 +4477,7 @@ L_224C:
         STA $0106,X                     ; $2258
         TXA                             ; $225B
         PHA                             ; $225C
+; Effect $81. State $10's timer was exactly 1, so the ninja is appearing.
         LDY #$81                        ; $225D
         JSR play_sound                  ; $225F
         PLA                             ; $2262
@@ -4440,6 +4492,8 @@ L_226A:
         LDA hit,X                       ; $226E
         AND #$0C                        ; $2270
         BNE L_22C5                      ; $2272
+; Compared with 8. begin_punch stores 4, so this never plays.
+; Effect $85 is the strike below, not the punch.
         CPY #$08                        ; $2274
         BNE L_2283                      ; $2276
         STX $51                         ; $2278
@@ -4508,6 +4562,7 @@ L_22C5:
         BEQ L_22CA                      ; $22C5
         JMP land                        ; $22C7
 L_22CA:
+; Timer still $0C, and wall bit 3 did not end the strike. Effect $85.
         CPY #$0C                        ; $22CA
         BNE L_22D9                      ; $22CC
         STX $51                         ; $22CE
@@ -4601,6 +4656,8 @@ L_2344:
 ; consume its timer. The burst length is $CB, already updated by
 ; hold_done: 6 on the first frame of the chase, two xpos, and 0
 ; once that count has run out, three xpos.
+; The burst starts at L_1E6D or L_1EAE, past score_blip, so a chase
+; step does not play effect $80.
 chase_walk:
         LDA facing,X                    ; $2352
         CMP #$01                        ; $2354
@@ -4881,12 +4938,21 @@ keep_state:
 land:
         LDA #$00                        ; $2504
         JMP set_state                   ; $2506
+; Y is $80-$8E. $D418 is set to $15 first: volume 5, with the lowpass
+; bit. Effects leave $D417 at 0, so that bit routes nothing.
+; The first free slot wins: $EB00, then $EF70, then $F070. The id's
+; low nibble indexes the priority at $2572, stored at $2581, $2582,
+; or $2583. When every slot is busy, the new priority replaces the
+; first slot whose stored priority is lower or equal. The compare is
+; BCS, so an equal priority replaces. A zero id means the slot is free.
+; Bit 7 of the id means start. The voice clears it on the next call
+; and runs the first command on that same call.
 play_sound:
         LDA #$15                        ; $2509
         STA $D418                       ; $250B
         LDA $EB00                       ; $250E
         BNE L_2521                      ; $2511
-L_2513:
+claim_voice_1:
         STY $EB00                       ; $2513
         TYA                             ; $2516
         AND #$0F                        ; $2517
@@ -4897,7 +4963,7 @@ L_2513:
 L_2521:
         LDA $EF70                       ; $2521
         BNE L_2534                      ; $2524
-L_2526:
+claim_voice_2:
         STY $EF70                       ; $2526
         TYA                             ; $2529
         AND #$0F                        ; $252A
@@ -4908,7 +4974,7 @@ L_2526:
 L_2534:
         LDA $F070                       ; $2534
         BNE L_2547                      ; $2537
-L_2539:
+claim_voice_3:
         STY $F070                       ; $2539
         TYA                             ; $253C
         AND #$0F                        ; $253D
@@ -4922,13 +4988,16 @@ L_2547:
         TAX                             ; $254A
         LDA $2572,X                     ; $254B
         CMP $2581                       ; $254E
-        BCS L_2513                      ; $2551
+        BCS claim_voice_1               ; $2551
         CMP $2582                       ; $2553
-        BCS L_2526                      ; $2556
+        BCS claim_voice_2               ; $2556
         CMP $2583                       ; $2558
-        BCS L_2539                      ; $255B
+        BCS claim_voice_3               ; $255B
         RTS                             ; $255D
-; Clear the three effect slots and write zero across the SID registers.
+; Zero the three effect slots, then $D400 through $D420. X starts at
+; $20 and the write happens before DEX, so the last store is past the
+; SID. Called from enter_room, between_rooms, clear_work_ram, and
+; lose_life. It does not run the tune player.
 silence_sid:
         LDA #$00                        ; $255E
         STA $EB00                       ; $2560
@@ -4941,7 +5010,10 @@ L_256B:
         BPL L_256B                      ; $256F
         RTS                             ; $2571
 
-; $2572  18 bytes of data between routines
+; $2572  15 priority bytes, low nibbles 0 through $0E:
+; 0B 0C 0A 00 08 07 09 06 00 00 01 02 03 04 05.
+; $2581, $2582, $2583 are the live priorities of the three slots.
+; Nibble $0F is not an effect id. That lookup would read $2581.
 
 ; For each active actor, copy his two sprite images into the hardware image slots.
 blit_sprites:
@@ -5735,6 +5807,8 @@ L_2A7B:
         PHA                             ; $2A8E
         TYA                             ; $2A8F
         PHA                             ; $2A90
+; Effect $87, the strike connect. Blow 2. A punch, a kick, and a
+; landing go to hit_sound instead.
         LDY #$87                        ; $2A91
         JSR play_sound                  ; $2A93
         PLA                             ; $2A96
@@ -5761,7 +5835,7 @@ L_2AA5:
 L_2ABC:
         CMP #$16                        ; $2ABC
         BCS L_2A76                      ; $2ABE
-        JSR L_2E29                      ; $2AC0
+        JSR hit_sound                   ; $2AC0
         JSR L_2B3E                      ; $2AC3
         LDA $BC,X                       ; $2AC6
         ORA #$04                        ; $2AC8
@@ -5780,7 +5854,7 @@ L_2AD4:
         JSR reach_test                      ; $2ADF
         BCC L_2B3B                      ; $2AE2
         BMI L_2B3B                      ; $2AE4
-        JSR L_2E29                      ; $2AE6
+        JSR hit_sound                   ; $2AE6
         JSR L_2B3E                      ; $2AE9
         LDA $BC,X                       ; $2AEC
         ORA #$08                        ; $2AEE
@@ -5815,7 +5889,7 @@ L_2AFA:
         BEQ L_2B3B                      ; $2B26
         CMP #$11                        ; $2B28
         BEQ L_2B3B                      ; $2B2A
-        JSR L_2E29                      ; $2B2C
+        JSR hit_sound                   ; $2B2C
         LDA $BC,X                       ; $2B2F
         ORA #$10                        ; $2B31
         CPY #$00                        ; $2B33
@@ -6367,7 +6441,9 @@ L_2E24:
 L_2E26:
         STA facing,X                    ; $2E26
         RTS                             ; $2E28
-L_2E29:
+; Effect $86. Punch connect, kick connect, and a landing. Room 18
+; also jumps here when a spark is armed. Blow 2 does not.
+hit_sound:
         PHA                             ; $2E29
         TXA                             ; $2E2A
         PHA                             ; $2E2B
@@ -6665,6 +6741,8 @@ L_2FBF:
 ; the counter has gone through zero. hook_enter_16 reads that counter only to
 ; decide whether to print the caption. The trainer overwrites the INC with
 ; LDA, the same byte as at $1826.
+; Effect $8E, the same phrase as take_lamp. The extra fall that
+; check_life_mark gives for a score mark is silent.
 extra_fall:
         TXA                             ; $2FD6
         BEQ L_2FDA                      ; $2FD7
@@ -7698,6 +7776,7 @@ hook_frame_0:
         BPL L_3678                      ; $364D
         LDA $4E98                       ; $364F
         BNE L_3667                      ; $3652
+; Effect $81 with string $1D. The other phase of this blink is silent.
         LDY #$81                        ; $3654
         JSR play_sound                  ; $3656
         LDA #$1D                        ; $3659
@@ -7790,6 +7869,7 @@ L_36CF:
         BPL L_3701                      ; $36D6
         LDA $4E97                       ; $36D8
         BNE L_36F0                      ; $36DB
+; Effect $81 with string $1D. The other phase of this blink is silent.
         LDY #$81                        ; $36DD
         JSR play_sound                  ; $36DF
         LDA #$1D                        ; $36E2
@@ -8776,6 +8856,8 @@ L_3DEF:
         LDA #$3C                        ; $3E07
         STA $F2                         ; $3E09
 L_3E0B:
+; Effect $8B. $4E98 is still nonzero, so this is a flash frame.
+; The zero count prints at L_3D9B and does not play it.
         LDY #$8B                        ; $3E0B
         JSR play_sound                  ; $3E0D
         LDA $4E9A                       ; $3E10
@@ -9077,7 +9159,7 @@ L_4049:
         BPL L_3FDC                      ; $404B
         RTS                             ; $404D
 L_404E:
-        JSR L_4078                      ; $404E
+        JSR slide_sound                 ; $404E
         LDA #$1C                        ; $4051
         LDX $6F                         ; $4053
         LDY $70                         ; $4055
@@ -9087,7 +9169,7 @@ L_404E:
         LDY $6E                         ; $405E
         JMP print_string                ; $4060
 L_4063:
-        JSR L_4078                      ; $4063
+        JSR slide_sound                 ; $4063
         LDA #$55                        ; $4066
         LDX $6F                         ; $4068
         LDY $70                         ; $406A
@@ -9096,7 +9178,9 @@ L_4063:
         LDX $6F                         ; $4071
         LDY $6E                         ; $4073
         JMP print_string                ; $4075
-L_4078:
+; Effect $89. Both slide painters call this. One pulse click,
+; retriggered every logic frame the slide paints. The beams do not.
+slide_sound:
         LDY #$89                        ; $4078
         JMP play_sound                  ; $407A
 
@@ -9348,7 +9432,7 @@ L_4201:
         STA $4332                       ; $4215
         LDA #$37                        ; $4218
         STA $4334                       ; $421A
-        JMP L_2E29                      ; $421D
+        JMP hit_sound                   ; $421D
 L_4220:
         LDA #$0E                        ; $4220
         STA $8FFF                       ; $4222
@@ -9361,7 +9445,7 @@ L_4220:
         STA $4333                       ; $4234
         LDA #$37                        ; $4237
         STA $4335                       ; $4239
-        JMP L_2E29                      ; $423C
+        JMP hit_sound                   ; $423C
 
 ; Zero the four bytes paint_sparks writes into the two room-18 spark shapes,
 ; offsets 0, 3, 6, and 9 of $8340 and $8380. between_lives, game_over,
@@ -9378,7 +9462,8 @@ L_4243:
         BPL L_4243                      ; $424C
         RTS                             ; $424E
 
-; Call play_sound with Y = $8A. A, X, and Y come back unchanged.
+; Effect $8A. A, X, and Y come back unchanged. OpenDoor,
+; OpenLateDoor, and the room countdown hooks all come here.
 play_sound_8a:
         PHA                             ; $424F
         TXA                             ; $4250
@@ -10505,35 +10590,76 @@ L_5727:
 
 ; $572D  35027 bytes of data between routines
 
-; Startup entry for the player that lives under the KERNAL, at $E000.
+; Tune player under the KERNAL, at $E000. Play does not call it.
+; irq_service runs the effect voices. game_over_raster runs
+; service_tune, on the options page and during game over. The title
+; picture plays nothing. The two players are not installed together.
 reset_music:
         JMP L_E300                      ; $E000
-; The other entry, used when the title option in $1385 is on.
+; Options tune. open_room calls this when $1385 is zero.
 start_tune:
         JMP L_E306                      ; $E003
 
-; Called from game_over_raster.
-L_E006:
-        JMP L_E49E                      ; $E006
-; $E009  759 bytes of data
+; Once per raster, from game_over_raster.
+service_tune:
+        JMP service_tune_body           ; $E006
+; $E009  759 bytes. Note frequencies and the tune player's image.
+; $E100 transpose, added to a nonzero note.
+; $E101,X nonzero holds the gate when a note count reaches 0.
+; $E104, $E105, $E106 count the three notes. $E107, $E108, $E109
+; are the values that end them. $E10A,X reloads the count and
+; $E10D,X reloads the end value.
+; $E110,X and $E113,X are the ADSR pair written with a new note.
+; $E116,X is the waveform. Gate-off stores it with bit 0 cleared.
+; $E119,X is the duration mode.
+; $E11C, $E122, and $E128 are the three voices' ADSR images.
+; $E12E is the voice being read: 0, 1, or 2. $E12F counts the tempo.
+; $E130 is the byte after the one just returned. Bit 7 set is a command.
+; $E200 is the low frequency byte and $E254 the high. A note index
+; is not clipped at the last written entry.
+; prime_tune copies $E2A8-$E2D5 onto $E100-$E12D.
+; $E2D6 eight branch offsets: 00 03 06 09 0C 0F 12 15. The command's
+; high nibble, masked to 0-7, indexes them.
+; $E2E7 is 01 here. tune_duration adds $10 to its nibble while that
+; is set. $E2E8 is the $D417 byte. It is 00 here, so nothing is
+; routed to the filter.
 
+; reset_music lands here.
 L_E300:
-        JMP L_E434                      ; $E300
+        JMP reset_tune                  ; $E300
+; Second entry. load_tune.
 L_E303:
-        JMP L_E352                      ; $E303
+        JMP load_tune                   ; $E303
+; start_tune lands here.
 L_E306:
-        JMP L_E479                      ; $E306
+        JMP start_tune_body             ; $E306
 
-; $E309  73 bytes of data between routines
+; $E309  73 bytes of tune state, not code.
+; $E309 tune number. $E30A nonzero makes service_tune silence the
+; player, and reset_music then clears the flag. $E30B is set when
+; a voice reads $FF. $E30C is 0 until load_tune finishes, and
+; service_tune returns at once while it is clear.
+; $E30D is the tempo reload for $E12F. $E30E is $FF when a voice
+; has ended. $E30F and $E311 are ORed into $D418. $E310 is the
+; voice, plus one, whose next note writes volume and $D417.
+; $E312 is scratch. $E314 is the mode open_room stored: 3 walks
+; the sequence at $E870 and loops it.
 
-L_E352:
+; $E30C stays 0 while prime_tune runs, so a raster mid-load returns.
+; It is set once each voice has read its first command.
+load_tune:
         LDA #$00                        ; $E352
         STA $E30C                       ; $E354
-        JSR L_E38C                      ; $E357
+        JSR prime_tune                  ; $E357
         LDA #$01                        ; $E35A
         STA $E30C                       ; $E35C
         RTS                             ; $E35F
-L_E360:
+; Tune number times 8 indexes $E8C0. Six bytes, three pointers, are
+; written over the operands of fetch_0, fetch_1, and fetch_2. Two
+; bytes of each entry are unused. Tune 0 here is $E8D0, $E97D, $EA31.
+; A number that is not below $E86B is replaced by $E86B first.
+; $E86B is 01, so tune 0 is the one in range.
+patch_tune_ptrs:
         LDA $E309                       ; $E360
         CMP $E86B                       ; $E363
         BCC L_E36B                      ; $E366
@@ -10558,17 +10684,21 @@ L_E371:
         CPX #$0A                        ; $E383
         BCC L_E371                      ; $E385
         RTS                             ; $E387
+; Not reached. LDA $E8C0,Y / RTS, left between the copy and prime_tune.
+; The live fetches are absolute LDAs, and their operands are patched.
         .byte $B9, $C0, $E8, $60
 
-L_E38C:
-        JSR L_E360                      ; $E38C
+; Pointers, then the image at $E2A8 copied onto $E100, then one
+; command byte on each of the three voices.
+prime_tune:
+        JSR patch_tune_ptrs             ; $E38C
         JSR L_E3A8                      ; $E38F
         LDX #$00                        ; $E392
 L_E394:
         STX $E12E                       ; $E394
         LDA #$FF                        ; $E397
         STA $E130                       ; $E399
-        JSR L_E5BB                      ; $E39C
+        JSR tune_byte                   ; $E39C
         LDX $E12E                       ; $E39F
         INX                             ; $E3A2
         CPX #$03                        ; $E3A3
@@ -10599,66 +10729,83 @@ L_E3D3:
         DEX                             ; $E3D6
         BPL L_E3D3                      ; $E3D7
         RTS                             ; $E3D9
-L_E3DA:
+; A = 0. Clears $E30A, $E30E, $E30C, and the transpose, then zeroes
+; $D400 through $D417. $E30B is left as it was.
+silence_tune:
         LDA #$00                        ; $E3DA
         BEQ L_E3C5                      ; $E3DC
-L_E3DE:
+; Absolute LDA. patch_tune_ptrs overwrites the operand, and read_tune
+; increments it, low byte then high. $E8F6 is what this snapshot still
+; held. fetch_1 shows $E98A and fetch_2 shows $EA44. Those are not the
+; streams of a tune that had been loaded.
+fetch_0:
         LDA $E8F6                       ; $E3DE
         RTS                             ; $E3E1
-L_E3E2:
+fetch_1:
         LDA $E98A                       ; $E3E2
         RTS                             ; $E3E5
-L_E3E6:
+fetch_2:
         LDA $EA44                       ; $E3E6
         RTS                             ; $E3E9
-L_E3EA:
+; One stream byte comes back in A, with that byte's flags preserved.
+; The next byte is stored in $E130. $E12E selects the stream: 0 uses
+; fetch_0, bit 0 set uses fetch_1, and anything else uses fetch_2.
+read_tune:
         LDA $E12E                       ; $E3EA
         BEQ L_E408                      ; $E3ED
         LSR A                           ; $E3EF
         BCS L_E41E                      ; $E3F0
-        JSR L_E3E6                      ; $E3F2
+        JSR fetch_2                     ; $E3F2
         PHP                             ; $E3F5
         INC $E3E7                       ; $E3F6
         BNE L_E3FE                      ; $E3F9
         INC $E3E8                       ; $E3FB
 L_E3FE:
         PHA                             ; $E3FE
-        JSR L_E3E6                      ; $E3FF
+        JSR fetch_2                     ; $E3FF
         STA $E130                       ; $E402
         PLA                             ; $E405
         PLP                             ; $E406
         RTS                             ; $E407
 L_E408:
-        JSR L_E3DE                      ; $E408
+        JSR fetch_0                     ; $E408
         PHP                             ; $E40B
         INC $E3DF                       ; $E40C
         BNE L_E414                      ; $E40F
         INC $E3E0                       ; $E411
 L_E414:
         PHA                             ; $E414
-        JSR L_E3DE                      ; $E415
+        JSR fetch_0                     ; $E415
         STA $E130                       ; $E418
         PLA                             ; $E41B
         PLP                             ; $E41C
         RTS                             ; $E41D
 L_E41E:
-        JSR L_E3E2                      ; $E41E
+        JSR fetch_1                     ; $E41E
         PHP                             ; $E421
         INC $E3E3                       ; $E422
         BNE L_E42A                      ; $E425
         INC $E3E4                       ; $E427
 L_E42A:
         PHA                             ; $E42A
-        JSR L_E3E2                      ; $E42B
+        JSR fetch_1                     ; $E42B
         STA $E130                       ; $E42E
         PLA                             ; $E431
         PLP                             ; $E432
         RTS                             ; $E433
-L_E434:
-        JSR L_E3DA                      ; $E434
+reset_tune:
+        JSR silence_tune                ; $E434
         RTS                             ; $E437
 
-L_E438:
+; Y is $E314 when a voice has ended. Bit 7: the low 7 bits are a tune
+; number. Bit 1: walk $E870 from the cursor in $E86C. Otherwise step
+; $E309. Past the last tune, bit 0 clear silences and bit 0 set wraps.
+; A sequence byte with bit 7 set restarts from $E86D, or silences when
+; bit 0 of Y is clear. Bit 6 set stores the low 6 bits in $E100, the
+; transpose, and the walk continues. Any other byte is a tune number.
+; open_room writes 00 FF at $E870 and $E86D is 0, so the options tune
+; is tune 0, then restart.
+advance_tune:
         TYA                             ; $E438
         BPL L_E441                      ; $E439
         AND #$7F                        ; $E43B
@@ -10700,7 +10847,9 @@ L_E470:
         STX $E86C                       ; $E472
         TAX                             ; $E475
         JMP L_E455                      ; $E476
-L_E479:
+; Y = 1. Bit 0 set means a restarting sequence keeps playing. The
+; cursor is reloaded from $E86D and the walk begins.
+start_tune_body:
         LDY #$01                        ; $E479
 L_E47B:
         LDX $E86D                       ; $E47B
@@ -10708,9 +10857,12 @@ L_E47B:
         TYA                             ; $E481
         AND #$01                        ; $E482
         BNE L_E45E                      ; $E484
-        JMP L_E3DA                      ; $E486
+        JMP silence_tune                ; $E486
 
-L_E489:
+; $D418 is $E30F OR $E311. $D417 is $E2E8, which this tune leaves at
+; 0, so the filter bits do not route a voice. Called when the voice
+; named in $E310 starts a note, and $E310 is then cleared.
+write_tune_volume:
         LDA $E30F                       ; $E489
         ORA $E311                       ; $E48C
         STA $D418                       ; $E48F
@@ -10719,7 +10871,13 @@ L_E489:
         LDA #$00                        ; $E498
         STA $E310                       ; $E49A
         RTS                             ; $E49D
-L_E49E:
+; $E30A nonzero silences the player. $E30C zero returns. $E30E = $FF
+; means a voice ended: $E314 zero silences, otherwise advance_tune
+; runs and this routine starts over. $E12F counts the tempo and
+; reloads from $E30D. Only then do the note counts move. At 0 the
+; gate bit is cleared unless $E101,X is set. The count continues
+; until it matches the end value, which starts the next note.
+service_tune_body:
         LDA $E30A                       ; $E49E
         BNE L_E4BB                      ; $E4A1
         LDA $E30C                       ; $E4A3
@@ -10732,10 +10890,10 @@ L_E4A9:
         BNE L_E4BE                      ; $E4AE
         LDY $E314                       ; $E4B0
         BEQ L_E4BB                      ; $E4B3
-        JSR L_E438                      ; $E4B5
-        JMP L_E49E                      ; $E4B8
+        JSR advance_tune                ; $E4B5
+        JMP service_tune_body           ; $E4B8
 L_E4BB:
-        JMP L_E3DA                      ; $E4BB
+        JMP silence_tune                ; $E4BB
 L_E4BE:
         DEC $E12F                       ; $E4BE
         BNE L_E4A8                      ; $E4C1
@@ -10753,10 +10911,10 @@ L_E4BE:
         LDA $E310                       ; $E4E2
         CMP #$01                        ; $E4E5
         BNE L_E4EC                      ; $E4E7
-        JSR L_E489                      ; $E4E9
+        JSR write_tune_volume           ; $E4E9
 L_E4EC:
         LDX #$00                        ; $E4EC
-        JSR L_E578                      ; $E4EE
+        JSR play_tune_note              ; $E4EE
         JMP L_E503                      ; $E4F1
 L_E4F4:
         BNE L_E503                      ; $E4F4
@@ -10778,10 +10936,10 @@ L_E503:
         LDA $E310                       ; $E51C
         CMP #$02                        ; $E51F
         BNE L_E526                      ; $E521
-        JSR L_E489                      ; $E523
+        JSR write_tune_volume           ; $E523
 L_E526:
         LDX #$01                        ; $E526
-        JSR L_E578                      ; $E528
+        JSR play_tune_note              ; $E528
         JMP L_E53D                      ; $E52B
 L_E52E:
         BNE L_E53D                      ; $E52E
@@ -10803,10 +10961,10 @@ L_E53D:
         LDA $E310                       ; $E556
         CMP #$03                        ; $E559
         BNE L_E560                      ; $E55B
-        JSR L_E489                      ; $E55D
+        JSR write_tune_volume           ; $E55D
 L_E560:
         LDX #$02                        ; $E560
-        JSR L_E578                      ; $E562
+        JSR play_tune_note              ; $E562
         JMP L_E577                      ; $E565
 L_E568:
         BNE L_E577                      ; $E568
@@ -10817,16 +10975,20 @@ L_E568:
         STA $D412                       ; $E574
 L_E577:
         RTS                             ; $E577
-L_E578:
+; X is the voice, 0-2. $E719,X is the SID base: 00, 07, 0E. A zero
+; note clears the frequency and does not write the waveform. Any
+; other note adds the transpose and reads $E200/$E254. ADSR and the
+; waveform are written only when $E101,X is 0.
+play_tune_note:
         STX $E12E                       ; $E578
-        JSR L_E3EA                      ; $E57B
+        JSR read_tune                   ; $E57B
         LDX $E12E                       ; $E57E
         LDY $E719,X                     ; $E581
         TAX                             ; $E584
         BNE L_E590                      ; $E585
         STA $D400,Y                     ; $E587
         STA $D401,Y                     ; $E58A
-        JMP L_E5BB                      ; $E58D
+        JMP tune_byte                   ; $E58D
 L_E590:
         CLC                             ; $E590
         ADC $E100                       ; $E591
@@ -10837,7 +10999,7 @@ L_E590:
         STA $D400,Y                     ; $E59E
         LDX $E12E                       ; $E5A1
         LDA $E101,X                     ; $E5A4
-        BNE L_E5BB                      ; $E5A7
+        BNE tune_byte                   ; $E5A7
         LDA $E110,X                     ; $E5A9
         STA $D405,Y                     ; $E5AC
         LDA $E113,X                     ; $E5AF
@@ -10845,12 +11007,15 @@ L_E590:
         LDA $E116,X                     ; $E5B5
         STA $D404,Y                     ; $E5B8
 
-L_E5BB:
+; $E130 bit 7 clear: that byte was a note, already played. $FF marks
+; the voice ended, in $E30E and $E30B. Any other value is a command.
+; Its high nibble, masked to 0-7, indexes the offsets at $E2D6.
+tune_byte:
         LDA $E130                       ; $E5BB
         BMI L_E5C3                      ; $E5BE
         JMP L_E6B5                      ; $E5C0
 L_E5C3:
-        JSR L_E3EA                      ; $E5C3
+        JSR read_tune                   ; $E5C3
         CMP #$FF                        ; $E5C6
         BNE L_E5D7                      ; $E5C8
         LDA #$01                        ; $E5CA
@@ -10867,32 +11032,140 @@ L_E5D7:
         AND #$07                        ; $E5DC
         TAX                             ; $E5DE
         LDA $E2D6,X                     ; $E5DF
-        STA $E5E7                       ; $E5E2
+        STA $E5E7                       ; $E5E2  offset from $E2D6. Do not cache it
         CLC                             ; $E5E5
         BCC L_E5E8                      ; $E5E6
 L_E5E8:
-        JMP L_E5FD                      ; $E5E8
+        JMP tune_cmd_time               ; $E5E8
+        JMP tune_cmd_level              ; $E5EB
+        JMP tune_cmd_voice              ; $E5EE
+        JMP tune_cmd_patch              ; $E5F1
+        JMP tune_cmd_pw                 ; $E5F4
+        JMP tune_cmd_filter             ; $E5F7
+        JMP tune_cmd_tempo              ; $E5FA
+; Command 0, and command 7. Offset $15 lands here with no JMP.
+; The low nibble is the duration. $E119,X is the mode. The two
+; results reload the note count and the end compare.
 
-; $E5EB  18 bytes of data between routines
-
-L_E5FD:
+tune_cmd_time:
         TYA                             ; $E5FD
         AND #$0F                        ; $E5FE
         LDX $E12E                       ; $E600
         LDY $E119,X                     ; $E603
-        JSR L_E6B6                      ; $E606
+        JSR tune_duration               ; $E606
         TXA                             ; $E609
         LDX $E12E                       ; $E60A
         STA $E10A,X                     ; $E60D
         TYA                             ; $E610
         STA $E10D,X                     ; $E611
-        JMP L_E5BB                      ; $E614
+        JMP tune_byte                   ; $E614
 
-; $E617  158 bytes of data between routines
+; Command 1. The low nibble is a volume half, stored at $E311.
+; $E310 = voice + 1, so this voice's next note writes $D418.
+tune_cmd_level:
+        TYA                             ; $E617
+        AND #$0F                        ; $E618
+        STA $E311                       ; $E61A
+        LDX $E12E                       ; $E61D
+        INX                             ; $E620
+        STX $E310                       ; $E621
+        JMP tune_byte                   ; $E624
+; Command bytes $AC-$AF. Bit 0 is stored in $E2E7. While that
+; byte is set, tune_duration adds $10 before indexing $E6F9.
+tune_set_pace:
+        TYA                             ; $E627
+        AND #$01                        ; $E628
+        STA $E2E7                       ; $E62A
+        JMP tune_byte                   ; $E62D
+; Command 2, and command $A, since the high nibble is masked to
+; 0-7. $AB stores waveform $51. A low nibble below 4 picks a
+; waveform from $E71C: $11 triangle, $21 saw, $41 pulse, $81
+; noise, each with the gate set. Nibbles 4-6 store the duration
+; mode and copy one ADSR pair. The base is $E11C plus 0, 6, or
+; 12, from tune_pair_index. Modes 0, 1, and 2 read that base,
+; base+2, and base+4. Nibbles 7 and 8 store bit 0 in $E101,X.
+; Nonzero holds the gate. Any other nibble writes bit 0 into
+; waveform bit 2, the sync bit.
+tune_cmd_voice:
+        CPY #$AC                        ; $E630
+        BCS tune_set_pace               ; $E632
+        LDA #$51                        ; $E634
+        CPY #$AB                        ; $E636
+        BEQ L_E645                      ; $E638
+        TYA                             ; $E63A
+        AND #$0F                        ; $E63B
+        CMP #$04                        ; $E63D
+        BCS L_E64E                      ; $E63F
+        TAX                             ; $E641
+        LDA $E71C,X                     ; $E642
+L_E645:
+        LDX $E12E                       ; $E645
+        STA $E116,X                     ; $E648
+        JMP tune_byte                   ; $E64B
+L_E64E:
+        CMP #$07                        ; $E64E
+        BCS tune_cmd_flag               ; $E650
+        AND #$03                        ; $E652
+        LDX $E12E                       ; $E654
+        STA $E119,X                     ; $E657
+        TAY                             ; $E65A
+        DEY                             ; $E65B
+        PHP                             ; $E65C
+        LDA $E68B,X                     ; $E65D
+        TAY                             ; $E660
+        PLP                             ; $E661
+; DEY's flags select the pair. PLP restores them after Y is the index.
+        BMI L_E681                      ; $E662
+        BEQ L_E677                      ; $E664
+        LDA $E120,Y                     ; $E666
+        PHA                             ; $E669
+        LDA $E121,Y                     ; $E66A
+L_E66D:
+        STA $E113,X                     ; $E66D
+        PLA                             ; $E670
+        STA $E110,X                     ; $E671
+        JMP tune_byte                   ; $E674
+L_E677:
+        LDA $E11E,Y                     ; $E677
+        PHA                             ; $E67A
+        LDA $E11F,Y                     ; $E67B
+        JMP L_E66D                      ; $E67E
+L_E681:
+        LDA $E11C,Y                     ; $E681
+        PHA                             ; $E684
+        LDA $E11D,Y                     ; $E685
+        JMP L_E66D                      ; $E688
+; Voice 0, 1, and 2. Base index of that voice's ADSR pairs.
+tune_pair_index:
+        .byte $00, $06, $0C             ; $E68B
+tune_cmd_flag:
+        CMP #$09                        ; $E68E
+        BCS L_E69D                      ; $E690
+        AND #$01                        ; $E692
+        LDX $E12E                       ; $E694
+        STA $E101,X                     ; $E697
+tune_cmd_done:
+        JMP tune_byte                   ; $E69A
+L_E69D:
+        AND #$01                        ; $E69D
+        ASL A                           ; $E69F
+        ASL A                           ; $E6A0
+        STA $E312                       ; $E6A1
+        LDX $E12E                       ; $E6A4
+        LDA $E116,X                     ; $E6A7
+        AND #$FB                        ; $E6AA
+        ORA $E312                       ; $E6AC
+        STA $E116,X                     ; $E6AF
+        JMP tune_cmd_done               ; $E6B2
 
+; Back to the caller. The byte was a note, or the voice has ended.
 L_E6B5:
         RTS                             ; $E6B5
-L_E6B6:
+; A is the duration nibble. Y is the mode from $E119,X. $E2E7 set
+; adds $10 before the index into $E6F9. Mode 0 releases for the last
+; eighth, mode 1 for the second half, and mode 2 on the last count.
+; X returns the reload and Y the end compare.
+tune_duration:
         LDX $E2E7                       ; $E6B6
         BEQ L_E6BE                      ; $E6B9
         CLC                             ; $E6BB
@@ -10936,10 +11209,116 @@ L_E6E9:
         TAY                             ; $E6F7
         RTS                             ; $E6F8
 
-; Past the last address the earlier listing reached.
-; Voice called from irq_service. Writes the SID registers at $D400.
-; The STA before the BCC stores the branch offset, so the branch lands
-; on one of the jumps that follow.
+; $E6F9  32 duration bytes. $E719 is 00 07 0E, the SID base of
+; voices 0, 1, and 2. $E71C is 11 21 41 81, the four waveforms.
+
+; Command 3. The low 3 bits times 8 select six bytes at $E80A.
+; Voice 0 copies them to $E11C, voice 1 to $E122, voice 2 to
+; $E128. Those are the three ADSR pairs the modes read.
+tune_cmd_patch:
+        TYA                             ; $E720
+        AND #$07                        ; $E721
+        ASL A                           ; $E723
+        ASL A                           ; $E724
+        ASL A                           ; $E725
+        TAY                             ; $E726
+        LDX #$00                        ; $E727
+        LDA $E12E                       ; $E729
+        BEQ L_E740                      ; $E72C
+        LSR A                           ; $E72E
+        BCS L_E74F                      ; $E72F
+L_E731:
+        LDA $E80A,Y                     ; $E731
+        STA $E128,X                     ; $E734
+        INY                             ; $E737
+        INX                             ; $E738
+        CPX #$06                        ; $E739
+        BNE L_E731                      ; $E73B
+        JMP tune_cmd_done               ; $E73D
+L_E740:
+        LDA $E80A,Y                     ; $E740
+        STA $E11C,X                     ; $E743
+        INY                             ; $E746
+        INX                             ; $E747
+        CPX #$06                        ; $E748
+        BNE L_E740                      ; $E74A
+        JMP tune_cmd_done               ; $E74C
+L_E74F:
+        LDA $E80A,Y                     ; $E74F
+        STA $E122,X                     ; $E752
+        INY                             ; $E755
+        INX                             ; $E756
+        CPX #$06                        ; $E757
+        BNE L_E74F                      ; $E759
+        JMP tune_cmd_done               ; $E75B
+; Command 4. The next two stream bytes are this voice's pulse
+; low and high, $D402 and $D403 plus the SID base.
+tune_cmd_pw:
+        JSR read_tune                   ; $E75E
+        LDX $E12E                       ; $E761
+        LDY $E719,X                     ; $E764
+        STA $D402,Y                     ; $E767
+        JSR read_tune                   ; $E76A
+        LDX $E12E                       ; $E76D
+        LDY $E719,X                     ; $E770
+        STA $D403,Y                     ; $E773
+        JMP tune_cmd_done               ; $E776
+; Command 5. The low 3 bits times 4, plus $40, index $E80A.
+; Two bytes go to $D415 and $D416. The next is ORed with one
+; stream byte into $E2E8. The fourth is the volume half in $E30F.
+tune_cmd_filter:
+        TYA                             ; $E779
+        AND #$07                        ; $E77A
+        ASL A                           ; $E77C
+        ASL A                           ; $E77D
+        CLC                             ; $E77E
+        ADC #$40                        ; $E77F
+        TAY                             ; $E781
+        LDA $E80A,Y                     ; $E782
+        STA $D415                       ; $E785
+        INY                             ; $E788
+        LDA $E80A,Y                     ; $E789
+        STA $D416                       ; $E78C
+        INY                             ; $E78F
+        LDA $E80A,Y                     ; $E790
+        PHA                             ; $E793
+        INY                             ; $E794
+        LDA $E80A,Y                     ; $E795
+        STA $E30F                       ; $E798
+        LDX $E12E                       ; $E79B
+        INX                             ; $E79E
+        STX $E310                       ; $E79F
+        JSR read_tune                   ; $E7A2
+        STA $E312                       ; $E7A5
+        PLA                             ; $E7A8
+        ORA $E312                       ; $E7A9
+        STA $E2E8                       ; $E7AC
+        JMP tune_cmd_done               ; $E7AF
+; Command 6. The next stream byte is the tempo, stored in $E30D
+; and in the running count $E12F.
+tune_cmd_tempo:
+        JSR read_tune                   ; $E7B2
+        STA $E30D                       ; $E7B5
+        STA $E12F                       ; $E7B8
+        JMP tune_cmd_done               ; $E7BB
+        NOP                             ; $E7BE
+
+; $E7BF  836 bytes of tune data, up to voice_1. $E80A is the
+; instrument image command 3 and command 5 read. $E86B is the
+; tune count, 01. $E86C is the sequence cursor and $E86D the
+; restart index, 00. $E870 is the sequence open_room writes:
+; tune 0, then $FF. $E8C0 is eight bytes per tune. The effect
+; scripts follow voice_1, at $EBE5.
+
+; Called from irq_service, once per raster. SID voice 1, $D400.
+; $EB00 bit 7 starts a script. The pointer is the word at $EBE5,
+; index = id << 1. Delay $EB02 becomes 1, index $EB01 becomes 0,
+; $D404 is cleared, and the slot is stored back as 1. The first
+; command then runs on this same call. A delay of N counts this call.
+; The STA before the BCC rewrites the offset from $EC03,X. X is the
+; command byte. This snapshot's offset is 0, so the branch runs the
+; end command's jump. voice_2 and voice_3 still branch to themselves
+; until a command patches them.
 voice_1:
         LDA $EB00                       ; $EB03
         BNE L_EB09                      ; $EB06
@@ -10969,15 +11348,19 @@ L_EB26:
         STA $EB39                       ; $EB34  rewrites a byte of the instruction at $EB38
         CLC                             ; $EB37
         BCC $EB3A                       ; $EB38
-        JMP L_EB82                      ; $EB3A
-        JMP L_EBA2                      ; $EB3D
-        JMP L_EBA9                      ; $EB40
-        JMP L_EBB3                      ; $EB43
-        JMP L_EBC0                      ; $EB46
-        JMP L_EBD0                      ; $EB49
-        JMP L_EBD0                      ; $EB4C
-        JMP L_EBDD                      ; $EB4F
-L_EB52:
+; Commands 0 through 7. Offsets 00 03 06 09 0C 0F 12 15.
+; 0 end. 1 note. 2 note and wave. 3 note, ADSR, wave.
+; 4 note, ADSR, pulse, wave. 5 and 6 note, pulse, wave. 7 wave.
+        JMP fx_end                      ; $EB3A
+        JMP fx_cmd_note                 ; $EB3D
+        JMP fx_cmd_note_wave            ; $EB40
+        JMP fx_cmd_adsr                 ; $EB43
+        JMP fx_cmd_full                 ; $EB46
+        JMP fx_cmd_pulse                ; $EB49
+        JMP fx_cmd_pulse                ; $EB4C
+        JMP fx_cmd_wave                 ; $EB4F
+; Delay byte, then the note. $E200,X and $E254,X. Not clipped.
+fx_note:
         INY                             ; $EB52
         LDA ($F6),Y                     ; $EB53
         STA $EB02                       ; $EB55
@@ -10990,7 +11373,8 @@ L_EB52:
         STA $D401                       ; $EB65
         INY                             ; $EB68
         RTS                             ; $EB69
-L_EB6A:
+; The script byte is an offset into the pairs at $EC11.
+fx_adsr:
         LDA ($F6),Y                     ; $EB6A
         TAX                             ; $EB6C
         LDA $EC11,X                     ; $EB6D
@@ -10999,19 +11383,22 @@ L_EB6A:
         STA $D406                       ; $EB76
         INY                             ; $EB79
         RTS                             ; $EB7A
-L_EB7B:
+; Written as read. A gate bit that stays set does not restart the envelope.
+fx_wave:
         LDA ($F6),Y                     ; $EB7B
         STA $D404                       ; $EB7D
         INY                             ; $EB80
         RTS                             ; $EB81
-L_EB82:
+; Zero the frequency and the slot. The waveform, gate included, stays.
+fx_end:
         LDA #$00                        ; $EB82
         STA $D400                       ; $EB84
         STA $D401                       ; $EB87
         STA $EB00                       ; $EB8A
         STA $EB01                       ; $EB8D
         RTS                             ; $EB90
-L_EB91:
+; Offset into the pairs at $EC1B. Low byte, then high.
+fx_pulse:
         LDA ($F6),Y                     ; $EB91
         INY                             ; $EB93
         TAX                             ; $EB94
@@ -11020,42 +11407,69 @@ L_EB91:
         LDA $EC1C,X                     ; $EB9B
         STA $D403                       ; $EB9E
         RTS                             ; $EBA1
-L_EBA2:
-        JSR L_EB52                      ; $EBA2
+; Command 1.
+fx_cmd_note:
+        JSR fx_note                     ; $EBA2
         STY $EB01                       ; $EBA5
         RTS                             ; $EBA8
-L_EBA9:
-        JSR L_EB52                      ; $EBA9
-        JSR L_EB7B                      ; $EBAC
+; Command 2.
+fx_cmd_note_wave:
+        JSR fx_note                     ; $EBA9
+        JSR fx_wave                     ; $EBAC
         STY $EB01                       ; $EBAF
         RTS                             ; $EBB2
-L_EBB3:
-        JSR L_EB52                      ; $EBB3
-        JSR L_EB6A                      ; $EBB6
-        JSR L_EB7B                      ; $EBB9
+; Command 3.
+fx_cmd_adsr:
+        JSR fx_note                     ; $EBB3
+        JSR fx_adsr                     ; $EBB6
+        JSR fx_wave                     ; $EBB9
         STY $EB01                       ; $EBBC
         RTS                             ; $EBBF
-L_EBC0:
-        JSR L_EB52                      ; $EBC0
-        JSR L_EB6A                      ; $EBC3
-        JSR L_EB91                      ; $EBC6
-        JSR L_EB7B                      ; $EBC9
+; Command 4.
+fx_cmd_full:
+        JSR fx_note                     ; $EBC0
+        JSR fx_adsr                     ; $EBC3
+        JSR fx_pulse                    ; $EBC6
+        JSR fx_wave                     ; $EBC9
         STY $EB01                       ; $EBCC
         RTS                             ; $EBCF
-L_EBD0:
-        JSR L_EB52                      ; $EBD0
-        JSR L_EB91                      ; $EBD3
-        JSR L_EB7B                      ; $EBD6
+; Commands 5 and 6.
+fx_cmd_pulse:
+        JSR fx_note                     ; $EBD0
+        JSR fx_pulse                    ; $EBD3
+        JSR fx_wave                     ; $EBD6
         STY $EB01                       ; $EBD9
         RTS                             ; $EBDC
-L_EBDD:
+; Command 7. The waveform alone.
+fx_cmd_wave:
         INY                             ; $EBDD
-        JSR L_EB7B                      ; $EBDE
+        JSR fx_wave                     ; $EBDE
         STY $EB01                       ; $EBE1
         RTS                             ; $EBE4
 
-; Voice called from irq_service. Writes the SID registers at $D407.
-; The STA before the BCC stores the branch offset.
+; $EBE5  15 pointers, sounds $80 through $8E. The id is shifted left.
+;   $80 $EC31  noise. The movement chirp, score_blip.
+;   $81 $EC37  pulse. Ninja leaving state $10, and the $1D blink.
+;   $82 $EC47  pulse. Both spawns, through blip_and_return.
+;   $83 $EC7A  noise. Nothing in this image loads it.
+;   $84 $EC90  rising noise. The flying kick, timer still $0C.
+;   $85 $ECBE  noise. Yamo's strike, timer still $0C.
+;   $86 $ECD8  noise. hit_sound.
+;   $87 $ECEC  triangle. The strike connect.
+;   $88 $ED0E  pulse, gate on and off. Nothing in this image loads it.
+;   $89 $ED59  one pulse click. slide_sound.
+;   $8A $ED60  the long door. play_sound_8a.
+;   $8B $ED8E  noise and pulse. Room 18's death flash.
+;   $8C $EDC8  shock. Hot tiles. Room 18 returns before it.
+;   $8D $EE07  noise, including a delay of $60. The crumble.
+;   $8E $EE19  saw. The lamp, and the room 16 ying-yang.
+; $EC03 the eight command offsets, same encoding as $E2D6.
+; $EC11 ADSR pairs, used as a byte offset: 11 97, 00 F0, 89 00,
+; 09 40, 08 00, 0C 07, 02 08, CE 04. $EC1B is the pulse pairs.
+
+; Same program as voice_1, on SID voice 2 at $D407. Slot $EF70,
+; pointer $F8/$F9, delay $EF72, index $EF71. The BCC branches to
+; itself until a command stores the offset.
 voice_2:
         LDA $EF70                       ; $EF73
         BNE L_EF79                      ; $EF76
@@ -11086,6 +11500,7 @@ L_EF96:
         CLC                             ; $EFA7
 L_EFA8:
         BCC L_EFA8                      ; $EFA8
+; Same eight commands as voice_1, in the same order.
         JMP L_EFF2                      ; $EFAA
         JMP L_F012                      ; $EFAD
         JMP L_F019                      ; $EFB0
@@ -11171,8 +11586,9 @@ L_F04D:
         STY $EF71                       ; $F051
         RTS                             ; $F054
 
-; Voice called from irq_service. Writes the SID registers at $D40E.
-; The STA before the BCC stores the branch offset.
+; Same program as voice_1, on SID voice 3 at $D40E. Slot $F070,
+; pointer $FA/$FB, delay $F072, index $F071. The BCC branches to
+; itself until a command stores the offset.
 voice_3:
         LDA $F070                       ; $F073
         BNE L_F079                      ; $F076
@@ -11203,6 +11619,7 @@ L_F096:
         CLC                             ; $F0A7
 L_F0A8:
         BCC L_F0A8                      ; $F0A8
+; Same eight commands as voice_1, in the same order.
         JMP L_F0F2                      ; $F0AA
         JMP L_F112                      ; $F0AD
         JMP L_F119                      ; $F0B0

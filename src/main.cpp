@@ -14,6 +14,7 @@
 #include "load.h"
 #include "pad.h"
 #include "room.h"
+#include "sound.h"
 
 #include <cwchar>
 
@@ -273,6 +274,8 @@ void BeginPlay() {
 }
 
 void BeginMenu(bool fresh) {
+    // $06DA. The options page starts the tune. The title picture stays silent.
+    StartMenuMusic();
     if (fresh) {
         gTwoPlayers = false;
         gHumanOpponent = false;
@@ -314,6 +317,8 @@ void StartAfterGameOver() {
 }
 
 void ShowPlayerPage(bool afterFall) {
+    // $0729 and $0ED0. The PLAYER page resets the tune and clears the SID.
+    StopMenuMusic();
     gAfterFall = afterFall;
     gPlayerFrames = gTwoPlayers ? 43 : 21;
     gStage = Stage::Player;
@@ -379,7 +384,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         gStage = Stage::Play;
     }
 
+    if (!StartAudio()) {
+        MessageBoxW(nullptr, L"Could not read data\\sound.bin.", L"Bruce Lee", MB_ICONERROR);
+        return 1;
+    }
+
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &gFactory))) {
+        StopAudio();
         return 1;
     }
 
@@ -405,6 +416,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         rc.right - rc.left, rc.bottom - rc.top,
         nullptr, nullptr, inst, nullptr);
     if (!hwnd) {
+        StopAudio();
         return 1;
     }
     if (gConfig.fullScreen) {
@@ -486,6 +498,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         Sleep(60);
     }
 
+    StopAudio();
     ReleaseTarget();
     gFactory->Release();
     return static_cast<int>(msg.wParam);

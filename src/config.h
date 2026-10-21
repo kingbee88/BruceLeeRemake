@@ -14,6 +14,8 @@ struct Config {
     // The maximize button turns it on.
     bool fullScreen = false;
     bool showCrtFilter = false;
+    // False leaves the rooms and the options page silent.
+    bool sound = true;
 };
 
 extern Config gConfig;

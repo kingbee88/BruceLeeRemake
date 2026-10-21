@@ -11,6 +11,7 @@
 #include "game.h"
 #include "pad.h"
 #include "room.h"
+#include "sound.h"
 
 int StandPose() {
     return g.facing < 0 ? 1 : 0;
@@ -417,6 +418,11 @@ void Script(const Contact& here) {
             Land();
             return;
         }
+        // $2058 and $209D. The frame whose timer is still $0C, after a ladder
+        // or a wall has cancelled the kick.
+        if (t == 0x0C) {
+            PlayEffect(0x84);
+        }
         const int dir = g.action == kFlyLeft ? -1 : 1;
         if (t >= 0x0A) {
             Rise(1);
@@ -469,6 +475,9 @@ void Walk(int dir, bool fire) {
         Land();
         return;
     }
+    // $1E63 and $1EA4. One blip once the edge test has passed, before the
+    // steps. A kick that replaces a step has already sounded.
+    PlayEffect(0x80);
     if (g.prevState != walk) {
         g.tick = 0;
     }
@@ -596,18 +605,26 @@ void OnGround(int stick, bool fire, const Contact& here) {
     if (stick == 0x0E) {
         // Up. Too close to ypos $2E clears the state. Bit 2 climbs. Bit 3
         // blocks the standing jump. The climb is three pixels, or four once
-        // the repeat count has run out.
+        // the repeat count has run out. $1DDC plays before that ladder test,
+        // so the standing jump sounds as well. Below ypos $2E it does not.
         if (g.y < kMinY) {
             Land();
-        } else if (here.ladder) {
-            Climb(-1);
-        } else if (here.wall) {
-            Land();
         } else {
-            SetState(kJump, 0x0F);
+            PlayEffect(0x80);
+            if (here.ladder) {
+                Climb(-1);
+            } else if (here.wall) {
+                Land();
+            } else {
+                SetState(kJump, 0x0F);
+            }
         }
     } else if (stick == 0x0D) {
         if (here.ladder) {
+            // $1E29. ypos $C7 refuses the step and does not blip.
+            if (g.y < kMaxY) {
+                PlayEffect(0x80);
+            }
             Climb(1);
         } else if (here.ground) {
             Duck(g.facing);
@@ -618,9 +635,11 @@ void OnGround(int stick, bool fire, const Contact& here) {
         Walk(1, fire);
     } else if (stick == 0x0A || stick == 0x06) {
         // Up with left ($0A) or right ($06). A ladder cancels it.
+        // $1F46 and $1F5C blip when the jump is taken.
         if (here.ladder) {
             Land();
         } else {
+            PlayEffect(0x80);
             const int dir = stick == 0x0A ? -1 : 1;
             g.facing = dir;
             SetState(dir < 0 ? kSideLeft : kSideRight, 0x0F);
@@ -784,6 +803,8 @@ void CarryMove(int stick) {
     if (stepped) {
         carryDelay = 4;
         g.pose = g.pose == kPoseClimb0 ? kPoseClimb1 : kPoseClimb0;
+        // $21EB. His own step, not the shove from the moving floor.
+        PlayEffect(0x80);
     }
     const int shove = SurfaceShove();
     if (shove < 0) {
@@ -805,6 +826,7 @@ void TakeLamp(int col, int tileRow) {
     WriteTile(col, tileRow, mount);
     // $2F2D. $7D added to the low score byte. The digits show 125.
     AddScoreByte(2, 0x7D);
+    PlayEffect(0x8E);
 }
 
 // $40BC. Three counters, one per lamp shape. At zero the counter reloads
@@ -943,6 +965,8 @@ bool awaitingLife = false;
 bool outOfLives = false;
 
 void BruceFell() {
+    // $1818. silence_sid, before the life is spent.
+    SilenceSound();
     // Unlimited lives is LDA $28 in place of this DEC, and the same byte
     // in place of both INCs. The count stays on the stock the game started with.
     if (gConfig.infiniteLives) {

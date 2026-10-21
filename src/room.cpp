@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "load.h"
+#include "sound.h"
 
 #include <cstdint>
 #include <cwchar>
@@ -146,6 +147,8 @@ bool EnterRoom(int roomId) {
     if (charset.empty() || screen.empty() || color.empty()) {
         return false;
     }
+    // $09F3. Entering a room clears the effect slots and the SID.
+    SilenceSound();
     g.charset = std::move(charset);
     g.room = std::move(screen);
     g.color = std::move(color);

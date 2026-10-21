@@ -76,6 +76,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.fullScreen);
     } else if (key == L"showcrtfilter") {
         ParseBool(value, gConfig.showCrtFilter);
+    } else if (key == L"sound") {
+        ParseBool(value, gConfig.sound);
     }
 }
 

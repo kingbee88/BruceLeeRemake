@@ -65,7 +65,7 @@ In the Game Manual the scoring of knocking out Yamo and Ninja is swapped. This p
 
 Room 16 has a ying-yang symbol. Picking it up with add an extra life. It will reappear if you leave the room and re-enter. You can get up to 5 extra lives this way. This counter does not reset when completing the game, so it is 5 lives max for the entire session.
 
-After completing the game, you will restart in room 0 again. Playthroughs after the first have following differences:
+After completing the game, you will restart in room 0 again. After you complete the game the following will change:
 * The Room 13 electric floors moves differently.
 * The time to spawn for Ninja and Yamo is reduced.
 
@@ -78,13 +78,13 @@ After completing the game, you will restart in room 0 again. Playthroughs after 
 * Prove the game is completable
 * Add Ninja and Yamo and health
 * Scoring
-
-## TODO
-
 * Game over screen
 * Fullscreen support
 * Trainers
-* Audio
+* Original sound: the effects during play, and the tune on the options page
+
+## TODO
+
 * 2 player support
 * CRT filtering
 

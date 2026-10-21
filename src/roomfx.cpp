@@ -2,6 +2,7 @@
 
 #include "bruce.h"
 #include "game.h"
+#include "sound.h"
 
 #include <cstdint>
 
@@ -173,6 +174,8 @@ bool Arm(uint8_t& timer) {
 
 // $3A8A. Three rows: blank, blank, and the lintel.
 void OpenDoor(int row, int col) {
+    // $3A8A. play_sound_8a, then the three rows.
+    PlayEffect(0x8A);
     PrintString(0x13, row, col);
     PrintString(0x13, row + 1, col);
     PrintString(0x14, row + 2, col);
@@ -186,6 +189,8 @@ void OpenDoorSolid(int row, int col, int third) {
 
 // $3AB4. The later charset draws its door from tiles $07 and $0E.
 void OpenLateDoor(int row, int col) {
+    // $3AB4. The same effect as the early door.
+    PlayEffect(0x8A);
     PrintString(0x63, row, col);
     PrintString(0x63, row + 1, col);
     PrintString(0x64, row + 2, col);
@@ -218,6 +223,8 @@ void AdvanceBeam(int8_t& timer, int8_t& col, int limit, int8_t resetTimer, int8_
 
 // $404E writes tile $65 behind and $64 ahead. $4063 writes $67 and $66.
 void PaintSlide(int row, int oldCol, int newCol, bool heavy) {
+    // $4078. Both slide painters call it. One click per paint.
+    PlayEffect(0x89);
     PrintString(heavy ? 0x55 : 0x1C, row, oldCol);
     PrintString(heavy ? 0x54 : 0x1B, row, newCol);
 }
@@ -339,6 +346,10 @@ void StepCrumble() {
         }
         const uint8_t shown = cell.n;
         cell.n = static_cast<uint8_t>(cell.n + 1);
+        // $3239. The count leaving 8 is the first flame, and the only blip.
+        if (shown == 0x08) {
+            PlayEffect(0x8D);
+        }
         if (shown == 0x08 || shown == 0x10) {
             PrintString(0x2F, cell.row, cell.col);
             PrintString(0x30, cell.row + 1, cell.col);
@@ -416,6 +427,8 @@ void StepBolts() {
                 boltY[i] = 0x37;
                 boltPhase[i] = 1;
                 boltOn[i] = true;
+                // $421D and $423C. Once, as the spark is armed.
+                PlayEffect(0x86);
             }
         }
         if (boltPhase[i] != 0) {
@@ -520,6 +533,8 @@ void BlinkTile(uint8_t& timer, uint8_t& phase, int row, int col) {
         PrintString(0x1E, row, col);
         timer = 5;
     } else {
+        // $3654 and $36DD. The $1D string, not the $1E string.
+        PlayEffect(0x81);
         phase = static_cast<uint8_t>(phase + 1);
         PrintString(0x1D, row, col);
     }
@@ -540,12 +555,18 @@ void Frame1() {
         return;
     }
     t97 = static_cast<uint8_t>(t97 - 1);
+    // $3694. The step that leaves the count at 2.
+    if (t97 == 2) {
+        PlayEffect(0x8A);
+    }
     PrintString(static_cast<uint8_t>(t97 + 0x10), 0x0C, 0x11);
 }
 
 void Frame2() {
     if (LampsLeft(6) == 0 && (t98 & 0x80) == 0) {
         t98 = static_cast<uint8_t>(t98 - 1);
+        // $36BA. Every step of this countdown.
+        PlayEffect(0x8A);
         PrintString(0x1A, 0x0B, 0x25);
         PrintString(0x07, 0x0C, 0x25);
     }
@@ -558,6 +579,10 @@ void Frame2() {
 void Frame3() {
     if (hookGate == 0 && (t97 & 0x80) == 0 && LampsLeft(3) == 0) {
         t97 = static_cast<uint8_t>(t97 - 1);
+        // $3715. The step that leaves the count at 2.
+        if (t97 == 2) {
+            PlayEffect(0x8A);
+        }
         PrintString(static_cast<uint8_t>(t97 + 0x10), 0x0C, 0x1D);
     }
     t99 = static_cast<uint8_t>(t99 - 1);
@@ -586,6 +611,8 @@ void Frame4() {
             PrintString(0x36, 4, 0x0B);
         }
     } else if (Arm(t97)) {
+        // $379A. Every successful count of this door.
+        PlayEffect(0x8A);
         PrintString(0x16, 8, 0x0B);
         PrintString(0x16, 9, 0x0B);
         PrintString(0x25, row75, col72);
@@ -599,6 +626,8 @@ void Frame4() {
             PrintString(0x37, 4, 0x1C);
         }
     } else if (Arm(t98)) {
+        // $37F7. Every successful count of this door.
+        PlayEffect(0x8A);
         surfaceDown = 0;
         surfaceSlot = 7;
         PrintString(0x16, 8, 0x19);
@@ -709,6 +738,8 @@ void Frame9() {
         surfaceSlot = 7;
     }
     if (LampsLeft(9) == 0 && Arm(t98)) {
+        // $3BFA. The lamps-clear path. The door path sounds inside OpenDoor.
+        PlayEffect(0x8A);
         surfaceDown = 0;
         surfaceSlot = 7;
         PrintString(0x18, 2, 0x23);
@@ -772,14 +803,18 @@ void Frame14() {
 
 void Frame15() {
     if (!LampPresent(0x4E5B) && Arm(t97)) {
+        PlayEffect(0x8A);
         PrintString(0x57, 3, 0x11);
         PrintString(0x58, 4, 0x11);
     }
     if (!LampPresent(0x4E5F) && !LampPresent(0x4E63) && !LampPresent(0x4E6B) && Arm(t98)) {
+        PlayEffect(0x8A);
         PrintString(0x57, 3, 0x17);
         PrintString(0x58, 4, 0x17);
     }
     if (LampsLeft(15) == 0 && Arm(t99)) {
+        // $3F05, $3F2D, and $3F54. Each arm of this room.
+        PlayEffect(0x8A);
         PrintString(0x59, 9, 0x25);
         PrintString(0x5A, 8, 0x25);
         PrintString(0x5B, 7, 0x25);
@@ -894,6 +929,8 @@ void Frame18() {
         PrintString(0x5F, 0x0C, 0x26);
         return;
     }
+    // $3E0B. Every frame of the flash, while the count is still running.
+    PlayEffect(0x8B);
     const uint8_t shown = t98;
     const int ink = (shown == 1 ? 0 : (Noise() & 7)) | 0xF8;
     BossFlash(ink);
@@ -1160,6 +1197,8 @@ void TouchRoomTile(int tile, int col, int row, bool prize, bool ladder) {
         extraLives -= 1;
         // $2FE5. The count is not checked. INC $28 wraps as one byte.
         GrantLife();
+        // $2FEA. The ying-yang, not a score extra life.
+        PlayEffect(0x8E);
         PrintString(0x56, 0x0A, 0x24);
         PrintString(0x56, 0x0B, 0x24);
     }
@@ -1171,6 +1210,8 @@ void TouchRoomTile(int tile, int col, int row, bool prize, bool ladder) {
     const bool hot = tile == 0x0F || tile == 0x40 || tile == 0x64 || late || span ||
         (tile >= 0x71 && tile <= 0x7C);
     if (hot && g.roomId != 18) {
+        // $3057. Room 18's spark calls Shock and does not play this.
+        PlayEffect(0x8C);
         Shock();
     }
     if (tile == 0x60) {

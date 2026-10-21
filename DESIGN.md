@@ -211,3 +211,7 @@ A pixel past the edge of the 320 by 200 screen counts as a wall.
 The roof tile `$2A` is `00 00 00 00 55 55 FF FF` on its shadow half. `$55` is nibble 5, so a fall steps onto that first dotted row and stays. The brown row under the sole stays visible. `$FF` is nibble 15. On a property-6 cell that is a climb, which is the black line capping the hole, so up and down there climb. On property 0 the same line is a wall and blocks a sideways step. The floor tile `$11` is `00 00 55 55 AA AA FF FF`. `$AA` is nibble 10, so he falls through it and stops on the `$55`. The statue's other patterns are not in the table, so he runs through that art.
 
 The ladder rails are climb nibbles on property 6, so overlapping one sticks and does not push him out. He climbs through the rails and walks off the top. The same test is what makes the property-6 roof line climbable. A climb burst does not stop on the floor underneath; the next logic frame sees the ladder bit clear and the move ends.
+
+## Audio
+
+`data/sound.bin` is the 64K RAM from the room snapshot. The effect scripts and the options tune are the bytes at `$2509`, `$EB03`, and `$E000`. The port runs those bytes on a 6581 clocked at the PAL rate. A voice, or the tune, advances once per PAL frame. Effects play in the rooms. The options page plays the tune. The title picture, the PLAYER page, and the game-over screen are silent. `Sound=False` in config.ini turns it off.

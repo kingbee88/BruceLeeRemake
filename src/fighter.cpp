@@ -6,6 +6,7 @@
 #include "game.h"
 #include "load.h"
 #include "room.h"
+#include "sound.h"
 
 namespace {
 
@@ -389,6 +390,10 @@ void Fly(Fighter& f) {
         RecoverKick(f);
         return;
     }
+    // $2058 and $209D. Shared with Bruce. Timer $0C is the first kick frame.
+    if (t == 0x0C) {
+        PlayEffect(0x84);
+    }
     const int dir = f.action == kFlyLeft ? -1 : 1;
     if (t >= 0x0A) {
         StepY(f, -1);
@@ -487,6 +492,8 @@ void StompPose(Fighter& f) {
 void Appear(Fighter& f) {
     if (f.action == 0x10) {
         if (f.actionTimer <= 1) {
+            // $225D. The frame that leaves state $10.
+            PlayEffect(0x81);
             f.facing = f.x >= g.x ? -1 : 1;
             f.action = 0x12;
             f.actionTimer = 0x10;
@@ -513,6 +520,10 @@ void Strike(Fighter& f) {
         f.action = 0;
         f.actionTimer = 0;
         return;
+    }
+    // $22D0. Yamo's strike, the frame whose timer is still $0C.
+    if (f.actionTimer == 0x0C) {
+        PlayEffect(0x85);
     }
     if (f.actionTimer <= 1) {
         f.action = 0;
@@ -598,6 +609,8 @@ void CarryFighter(Fighter& f) {
     } else {
         StepX(f, dir);
         StepX(f, dir);
+        // $21EB. The same blip as Bruce's own step on the ladder.
+        PlayEffect(0x80);
         f.carryMark >>= 1;
         f.carryDelay = 4;
     }
@@ -734,6 +747,8 @@ bool AltSpawn(int kind) {
 }
 
 void Wake(Fighter& f) {
+    // $10BA. Both spawns.
+    PlayEffect(0x82);
     const int room = g.roomId;
     const bool alt = AltSpawn(f.kind);
     const int xpos = alt ? kAltX[room] : kMainX[room];
@@ -912,6 +927,8 @@ bool Hurt(Who& victim, const Who& attacker, int blow) {
     if (victim.kind == 0 && gConfig.enemiesCantHitYou && attacker.kind != 0) {
         return false;
     }
+    // $2A91 is the strike. $2E29 is a punch, a kick, or a landing.
+    PlayEffect(blow == 2 ? 0x87 : 0x86);
     victim.facing = attacker.facing > 0 ? -1 : 1;
     int state = kFlinch;
     int timer = 3;
