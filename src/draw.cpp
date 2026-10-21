@@ -36,6 +36,9 @@ uint8_t StatusGlyph(char ch, int row) {
     static const uint8_t kP[8] = {0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x00};
     static const uint8_t kF[8] = {0x7E, 0x60, 0x60, 0x7C, 0x60, 0x60, 0x60, 0x00};
     static const uint8_t kA[8] = {0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00};
+    static const uint8_t kB[8] = {0x7C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x7C, 0x00};
+    static const uint8_t kD[8] = {0x78, 0x6C, 0x66, 0x66, 0x66, 0x6C, 0x78, 0x00};
+    static const uint8_t kE[8] = {0x7E, 0x60, 0x60, 0x7C, 0x60, 0x60, 0x7E, 0x00};
     static const uint8_t kL[8] = {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00};
     static const uint8_t kS[8] = {0x3C, 0x66, 0x60, 0x3C, 0x06, 0x66, 0x3C, 0x00};
     static const uint8_t kC[8] = {0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00};
@@ -58,6 +61,12 @@ uint8_t StatusGlyph(char ch, int row) {
         bits = kF;
     } else if (ch == 'A') {
         bits = kA;
+    } else if (ch == 'B') {
+        bits = kB;
+    } else if (ch == 'D') {
+        bits = kD;
+    } else if (ch == 'E') {
+        bits = kE;
     } else if (ch == 'L') {
         bits = kL;
     } else if (ch == 'S') {
@@ -106,14 +115,13 @@ void DrawStatus() {
         DrawLine("** CONGRATULATIONS **", 0x0A, 0);
     }
     char text[40];
-    const int shown = g.score > 999999 ? 999999 : g.score;
-    int lives = g.lives;
-    if (lives < 0) {
-        lives = 0;
-    } else if (lives > 99) {
-        lives = 99;
-    }
-    std::snprintf(text, sizeof text, "%06d  TOP 000000  FALLS %02d", shown, lives);
+    char falls[3];
+    // stash_scores keeps eight BCD digits and draw_split_digits paints the
+    // low six. 1000000 is shown as 000000.
+    const int shown = g.score % 1000000;
+    const int top = TopScore() % 1000000;
+    FormatFalls(g.lives, falls);
+    std::snprintf(text, sizeof text, "%06d  TOP %06d  FALLS %s", shown, top, falls);
     // The words sit on character row 1. Row 0 above them is the black bar,
     // except in room 19, where that row is the congratulations line.
     DrawLine(text, 8, 8);

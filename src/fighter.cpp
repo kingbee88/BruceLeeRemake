@@ -910,47 +910,66 @@ bool Hurt(Who& victim, const Who& attacker, int blow) {
     if (victim.kind == 0 && gConfig.enemiesCantHitYou && attacker.kind != 0) {
         return false;
     }
-    int damage = 0;
+    victim.facing = attacker.facing > 0 ? -1 : 1;
     int state = kFlinch;
     int timer = 3;
-    int score = 0;
-    if (blow == 2) {
-        damage = 2;
-        state = kFlinch;
-        timer = 3;
-    } else if (blow == 4) {
-        damage = 3;
-        state = kFlinch;
-        timer = 4;
-        score = 100;
-    } else if (blow == 8) {
-        damage = 7;
-        state = kKnock;
-        timer = 0x0C;
-        score = 75;
+    if (blow == 16 && gConfig.fixBugsInOriginal) {
+        // One pass of $2BF9. Fifty points, then subtract 5. Below zero pays
+        // the knockout once and stays on the knockdown.
+        if (attacker.kind == 0) {
+            AddScoreByte(2, 0x32);
+        }
+        const int before = victim.health;
+        victim.health -= 5;
+        if (victim.health < 0) {
+            state = kKnock;
+            timer = 0x0C;
+            if (attacker.kind == 0 && before >= 0 && victim.kind != 0) {
+                AddKnockout(victim.kind);
+            }
+        } else {
+            state = kStomp;
+            timer = 8;
+        }
     } else if (blow == 16) {
-        damage = 5;
+        // $2BF9. A landing blow keeps subtracting 5 from the health byte until
+        // that byte is positive again, and each negative result pays again.
+        victim.health = ApplyStomp(victim.health, victim.kind, attacker.kind == 0);
         state = kStomp;
         timer = 8;
-        score = 50;
+    } else {
+        int damage = 2;
+        int scoreByte = 0;
+        if (blow == 4) {
+            damage = 3;
+            timer = 4;
+            scoreByte = 0x64;
+        } else if (blow == 8) {
+            damage = 7;
+            state = kKnock;
+            timer = 0x0C;
+            scoreByte = 0x4B;
+        }
+        const int before = victim.health;
+        // Bit 7 of $BC. The blow is paid before the health test, and the
+        // knockout is a separate add once that test goes negative.
+        if (attacker.kind == 0 && scoreByte != 0) {
+            AddScoreByte(2, scoreByte);
+        }
+        victim.health -= damage;
+        // $2C24. Health below 0 is a knockdown, whatever the blow was. The life
+        // or the removal waits until that timer reaches 0. The landing blow
+        // does not stay here: its byte wraps back into 0..127.
+        if (victim.health < 0) {
+            state = kKnock;
+            timer = 0x0C;
+        }
+        if (attacker.kind == 0 && before >= 0 && victim.health < 0 && victim.kind != 0) {
+            AddKnockout(victim.kind);
+        }
     }
-    const int before = victim.health;
-    victim.health -= damage;
-    // $2C24. Health below 0 is a knockdown, whatever the blow was. The life
-    // or the removal waits until that timer reaches 0.
-    if (victim.health < 0) {
-        state = kKnock;
-        timer = 0x0C;
-    }
-    victim.facing = attacker.facing > 0 ? -1 : 1;
     victim.action = state;
     victim.timer = timer;
-    if (attacker.kind == 0 && score > 0) {
-        g.score += score;
-    }
-    if (attacker.kind == 0 && before >= 0 && victim.health < 0 && victim.kind != 0) {
-        g.score += victim.kind == 1 ? 450 : 200;
-    }
     if (victim.kind == 0) {
         g.health = victim.health;
         g.facing = victim.facing;

@@ -36,8 +36,8 @@ struct Game {
     int repeat = 6;        // $CB. Counts down while the same state continues
     int prevState = 0;     // $C2. State at the start of the previous logic frame
     int fallSlide = 0;     // $B0. One sideways nudge on the second falling frame
-    int score = 0;         // $41..$43, a 24-bit count. A lamp adds 125.
-    int lives = 4;         // $28. The status line shows this as FALLS.
+    int score = 0;         // $41..$43, a 24-bit count. The line shows the low 6 digits.
+    int lives = 4;         // $28. The status line shows this as FALLS. One byte.
     int health = 0x24;     // $D1. A hit subtracts from this. Below 0 is a fall.
     int roomId = 0;        // $29. 0 is the opening room. StartRoom uses this same number.
     int charsetId = 0;     // 0 is $A000, 1 is $A800, 2 is $B000.
@@ -48,3 +48,30 @@ struct Game {
 };
 
 extern Game g;
+
+// $3175. Add amount to one score byte, then $312C. Slot 0 is $41, the high
+// byte, and slot 2 is $43. The sum wraps at 24 bits. When every score byte
+// is at least the mark in $4392, $28 gains one fall and the mark grows by
+// the step in $438E. The mark starts at 40000 and the step is 30000.
+// The best score, $4388, moves up when this total passes it.
+void AddScoreByte(int slot, int amount);
+
+// $2C2C. X is the victim. Actor 1, the Ninja, is $01 in the middle byte and
+// $C2 in the low byte, 450. Any other fighter is $C8 in the low byte, 200.
+void AddKnockout(int victimKind);
+
+// $2BF9 for a landing blow. Health is one byte. Each pass adds 50 when the
+// attacker is Bruce, then subtracts 5. A negative byte pays the knockout
+// and the pass runs again, so the byte comes back in 0..127. scored is
+// bit 7 of $BC: the attacker was Bruce.
+int ApplyStomp(int health, int victimKind, bool scored);
+
+// $3155 and $2FE5. One more fall. The counter is a single byte.
+void GrantLife();
+
+// $4388. Compared as a 24-bit total. The line shows its low 6 digits.
+int TopScore();
+
+// $1AED. Two screen characters. 0..99 are digits. From 100 the high
+// nibble is A-F, and 160 paints as 00.
+void FormatFalls(int lives, char out[3]);

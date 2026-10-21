@@ -1,11 +1,11 @@
 #pragma once
 
 // Settings from config.ini, with the command line applied on top.
-// showTitleScreen and startRoom are the ones the game acts on. The others
-// are stored so a later change can use the same names.
 struct Config {
     bool infiniteLives = false;
     bool enemiesCantHitYou = false;
+    // Off keeps the original landing loop. On pays 50 once, and one knockout.
+    bool fixBugsInOriginal = false;
     int startRoom = 0;
     bool showTitleScreen = true;
     bool fullScreen = false;

@@ -40,6 +40,10 @@ int LampsLeft(int room);
 // copy_room_defaults and L_33CA. A finished game puts the lamps back.
 void ResetCollectedLamps();
 
+// $10E0. The treasure ending sets this player's room-entry flags, then
+// clears room 0 so the opening room does not pay again.
+void RearmRoomBonus();
+
 // True when (col, row) is an untaken lamp in the current room. The mount
 // tile is returned and the lamp stays taken if the room is entered again.
 bool ClaimLamp(int col, int row, int& mount);

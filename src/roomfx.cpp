@@ -143,13 +143,6 @@ uint8_t Noise() {
     return static_cast<uint8_t>(state >> 24);
 }
 
-void AddScore(int points) {
-    g.score += points;
-    if (g.score > 999999) {
-        g.score = 999999;
-    }
-}
-
 void PrintString(int id, int row, int col) {
     if (id < 0 || id >= 0x65) {
         return;
@@ -499,13 +492,16 @@ void HeightBonus() {
     }
     if (band >= 0 && bandBonus[band] != 0) {
         bandBonus[band] = static_cast<uint8_t>(bandBonus[band] - 1);
-        AddScore(500);
+        // $3EAF. $01 in the middle byte and $F4 in the low byte, 500.
+        AddScoreByte(1, 0x01);
+        AddScoreByte(2, 0xF4);
     }
 }
 
 void WinGame() {
     difficulty += 1;
     ResetCollectedLamps();
+    RearmRoomBonus();
     for (int i = 0; i < 8; ++i) {
         bandBonus[i] = 1;
     }
@@ -876,7 +872,9 @@ void Frame18() {
             t97 = 0;
             boltOn[0] = boltOn[1] = false;
             PrintString(0x61, 0x0B, 0);
-            AddScore(3000);
+            // $3D00. $B8 in the low byte, then $0B in the middle byte, 3000.
+            AddScoreByte(2, 0xB8);
+            AddScoreByte(1, 0x0B);
             t9A = 0;
             t98 = 0x50;
             BossBody(1);
@@ -1126,9 +1124,8 @@ void TouchRoomTile(int tile, int col, int row, bool prize, bool ladder) {
     }
     if ((tile == 0x2D || tile == 0x2E) && g.roomId == 16 && g.y + 21 >= 0xA0) {
         extraLives -= 1;
-        if (g.lives < 99) {
-            g.lives += 1;
-        }
+        // $2FE5. The count is not checked. INC $28 wraps as one byte.
+        GrantLife();
         PrintString(0x56, 0x0A, 0x24);
         PrintString(0x56, 0x0B, 0x24);
     }

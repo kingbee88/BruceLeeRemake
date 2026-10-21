@@ -78,6 +78,47 @@ bool EdgeOpen(int xpos, int ypos, bool left, bool right, bool up, bool falling) 
 
 }  // namespace
 
+// $0300. clear_work_ram stores 1 in forty bytes, then clears both players'
+// flags for room 0. Player 0 is the even byte of each pair.
+static uint8_t roomBonus[40] = {};
+static bool roomBonusLive = false;
+
+static void ArmRoomBonus() {
+    if (roomBonusLive) {
+        return;
+    }
+    roomBonusLive = true;
+    for (int i = 0; i < 40; ++i) {
+        roomBonus[i] = 1;
+    }
+    roomBonus[0] = 0;
+    roomBonus[1] = 0;
+}
+
+// $0A14. A set flag pays $07 into score byte 1 and $D0 into byte 2, which
+// is 2000, and the shift spends the flag. Room 0's flag stays clear.
+static void PayRoomBonus(int roomId) {
+    ArmRoomBonus();
+    if (roomId < 0 || roomId >= kRoomCount) {
+        return;
+    }
+    const int index = roomId * 2;
+    if (roomBonus[index] == 0) {
+        return;
+    }
+    roomBonus[index] = static_cast<uint8_t>(roomBonus[index] >> 1);
+    AddScoreByte(1, 0x07);
+    AddScoreByte(2, 0xD0);
+}
+
+void RearmRoomBonus() {
+    roomBonusLive = true;
+    for (int i = 38; i >= 0; i -= 2) {
+        roomBonus[i] = 1;
+    }
+    roomBonus[0] = 0;
+}
+
 bool EnterRoom(int roomId) {
     if (roomId < 0 || roomId >= kRoomCount) {
         return false;
@@ -126,6 +167,9 @@ bool EnterRoom(int roomId) {
     // Taken lamps are painted, then the enter hook at $4E9C. The packed
     // picture is still the closed door, the unlit beam, and the full floor.
     BeginRoomEffects();
+    // enter_room_body pays for the room that was loaded. Room 11's redirect
+    // has already replaced that with room 13, so room 11 is not paid then.
+    PayRoomBonus(g.roomId);
     return true;
 }
 

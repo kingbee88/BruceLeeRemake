@@ -64,6 +64,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
     value = Trim(value);
     if (key == L"infinitelives") {
         ParseBool(value, gConfig.infiniteLives);
+    } else if (key == L"fixbugsinoriginal") {
+        ParseBool(value, gConfig.fixBugsInOriginal);
     } else if (key == L"enemiescanthityou") {
         ParseBool(value, gConfig.enemiesCantHitYou);
     } else if (key == L"startroom") {

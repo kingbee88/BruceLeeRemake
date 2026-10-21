@@ -803,9 +803,8 @@ void TakeLamp(int col, int tileRow) {
         return;
     }
     WriteTile(col, tileRow, mount);
-    if (g.score <= 999999 - 125) {
-        g.score += 125;
-    }
+    // $2F2D. $7D added to the low score byte. The digits show 125.
+    AddScoreByte(2, 0x7D);
 }
 
 // $40BC. Three counters, one per lamp shape. At zero the counter reloads

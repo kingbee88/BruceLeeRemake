@@ -99,6 +99,37 @@
 ; $14. spawn_yamo caps it at 7. 0 is still standing. Negative is down.
 ; check_bruce_down leaves state $13 and state $19 while the timer remains.
 ;
+; Score. $41 $42 $43 are one 24-bit binary total, $41 the high byte. add_score
+; puts A into byte X and apply_score adds with carry. There is no SED on that
+; add, and the sum wraps at 24 bits. stash_scores turns the total into BCD.
+; draw_score prints $439C-$439E only, the low six digits, so 1000000 appears
+; as 000000. The top score at $4388 is a real unsigned compare of all three
+; bytes and is kept across games. draw_top prints the same six digits.
+;
+; An extra fall is the INC $28 in check_life_mark. The mark at $4392 is
+; compared one byte at a time from the high byte, so a low byte that is still
+; short waits even when the total has passed the mark. clear_work_ram copies
+; the mark from $438B. room00.vsf holds 00 9C 40 there, which is 40000, and
+; the step at $438E is 00 75 30, which is 30000. Each add_score tests once,
+; so an award split into two adds is tested between them and the order
+; matters. $4395 is the other player's mark.
+;
+; $BC,X collects the blows. Bit 1 is the strike: 2 health and no points.
+; Bit 2 is the punch: $64, which is 100, and 3 health. Bit 3 is the kick:
+; $4B, which is 75, and 7 health. Bit 4 is the landing: $32, which is 50,
+; and 5 health. Bit 7 is set when the attacker is actor 0. The points and
+; the knockout are skipped when it is clear. Health below 0 pays the
+; knockout on top of the blow. Actor 1, the Ninja, is $01 in byte 1 and
+; $C2 in byte 2, 450. Any other victim is $C8 in byte 2, 200. The printed
+; score card lists those two the other way around, Ninja 200 and Yamo 450.
+;
+; A killing landing is an intentional bug in the original. force_knockdown
+; jumps back to landing_blow while bit 4 is still set, so 50 and the knockout
+; repeat until the health byte wraps into 0-127. The last pass stores state
+; $1B with timer 8 over the knockdown, and the fighter stays up. A punch or
+; a kick that kills takes the same jump, and the landing test continues only
+; when bit 4 is set.
+;
 ; $5E counts down to the Ninja's wake, $5D to Yamo's. tick_wake_counts
 ; subtracts one from each on every logic frame, including while that
 ; fighter is on screen. A 0 in the room table wakes him on the first
@@ -148,7 +179,7 @@
 ;   start_crumble     tile $60 with bit 1. $FD goes to color RAM, not the screen.
 ;   step_crumble      the three nozzle slots. Rooms 6, 7, 10-12, 14, 16, and 17.
 ;   shock             hot tiles, including the nozzle flames $71-$7C
-;   take_lamp         replace a lamp and add 125
+;   take_lamp         replace a lamp and add 125 to the low score byte
 ;   flicker_lamps     rewrite the lamp glyph rows
 ;   raster_irq        the in-game color bands
 ;   irq_service       count $48 down and read the stick
@@ -186,7 +217,13 @@
 ;   expand_library    one source library into a 24-pixel sprite
 ;   range_to_bruce    $62 dy, $63 dx. Sign in bit 7, magnitude capped at $30.
 ;   reach_test        in front of the attacker, inside the reach in $61
-;   force_knockdown   $D1 went negative. State $13, timer $0C, kill score.
+;   resolve_blows     $BC for each actor: strike, punch, kick, landing
+;   landing_blow      bit 4. 50 points, then subtract 5. The bug jumps here.
+;   force_knockdown   $D1 went negative. Kill score, then back to landing_blow.
+;   draw_score        low six digits of the binary total at $41
+;   draw_top          low six digits of the top score at $4388
+;   check_life_mark   $4392, one byte at a time, high byte first
+;   extra_fall        room 16, tiles $2D and $2E. INC $28, the DEC is not a gate.
 ;   retire_actor      clear active bit 0, then load that fighter's count
 ;
 ; $40 counts finished games. hook_frame_19 adds one when the treasure
@@ -679,8 +716,8 @@ L_07D0:
         LDA #$FF                        ; $07F8
         STA $D01D                       ; $07FA
         LDA #$80                        ; $07FD
-        JSR L_315A                      ; $07FF
-        JSR L_31C2                      ; $0802
+        JSR draw_score                      ; $07FF
+        JSR draw_top                      ; $0802
         LDA #$11                        ; $0805
         STA $43BD                       ; $0807
         JSR timed_caption                      ; $080A
@@ -987,8 +1024,11 @@ enter_room_body:
         ADC $03                         ; $0A11
         TAX                             ; $0A13
 ; $0300 + room*2 + player. A nonzero flag pays 2000, $07 into score byte 1
-; and $D0 into byte 2, and the LSR spends it. rearm_room_bonus puts the
-; flags back when the treasure room ends. Room 0's flag stays clear.
+; and $D0 into byte 2, and the LSR spends it. The two adds are separate, so
+; check_life_mark runs between them. rearm_room_bonus puts the flags back
+; when the treasure room ends. Room 0's flag stays clear. room_11_to_13 has
+; already switched a cleared room 11 over to room 13, so this pays room 13
+; and leaves room 11's flag unspent.
         LDA $0300,X                     ; $0A14
         BEQ L_0A2A                      ; $0A17
         LSR $0300,X                     ; $0A19
@@ -1830,6 +1870,9 @@ L_0FA8:
         LDA #$09                        ; $0FC5
         STA $28                         ; $0FC7
 L_0FC9:
+; Extra-fall mark for both players. $438B in room00.vsf is 00 9C 40,
+; 40000. $4392 is the live mark and $4395 is the other player's copy.
+; The step added on a crossing sits at $438E: 00 75 30, 30000.
         LDX #$02                        ; $0FC9
 L_0FCB:
         LDA $438B,X                     ; $0FCB
@@ -2793,7 +2836,9 @@ L_1826:
 ; and the count never moves. The same byte is stored over the INC at $2FE5 and $3155.
         DEC $28                         ; $1826
         BMI game_over                      ; $1828
-; Count $28 down. Two-player mode swaps the saved block at $439F before the next room.
+; Count $28 down. Two-player mode swaps the saved block at $439F before the
+; next room. That block is $28 through $43, so it holds the falls and the
+; score. The two extra-fall marks at $4392 and $4395 are swapped after it.
 between_lives:
         LDA #$24                        ; $182A
         STA $D1                         ; $182C  Bruce, the Ninja, and Yamo. The caps apply again at the next wake.
@@ -3065,7 +3110,7 @@ L_1A38:
         LDA #$00                        ; $1A38
         STA $82                         ; $1A3A
         JSR L_1ABB                      ; $1A3C
-        JMP L_31C2                      ; $1A3F
+        JMP draw_top                      ; $1A3F
 L_1A42:
         LDA #$11                        ; $1A42
         STA $43BD                       ; $1A44
@@ -3154,8 +3199,12 @@ L_1AC7:
 
 ; $1AD0  29 bytes of data between routines
 
-; Divide the life counter $28 by ten. The tens go in the high nibble and the remainder in
-; the low nibble, then the digits are drawn.
+; Divide the life counter $28 by ten. Four ASLs put the tens in the high
+; nibble and the remainder stays in the low nibble, then draw_bcd_digits
+; draws both. A tens nibble of 10 or more is a letter, so 100 draws as A0
+; and 159 draws as F9. Sixteen tens shift out of the nibble, so 160 draws
+; as 00 while $28 is still 160. The byte itself wraps on the next INC
+; after 255.
 lives_to_bcd:
         LDA #$00                        ; $1AED
         STA $439B                       ; $1AEF
@@ -3245,7 +3294,9 @@ L_1B7D:
         DEX                             ; $1B80
         BPL L_1B7D                      ; $1B81
         RTS                             ; $1B83
-; Draw both digits of A at column Y. A value past 9 is moved to the later glyphs.
+; Draw both digits of A at column Y. A nibble past 9 is moved seven glyphs
+; on, which is A through F. lives_to_bcd is the caller that reaches those
+; glyphs. The score path uses draw_split_digits, whose nibbles are real BCD.
 draw_bcd_digits:
         PHA                             ; $1B84
         JSR high_nibble                      ; $1B85
@@ -3943,9 +3994,10 @@ begin_punch:
         LDA #$04                        ; $1FBF
         STA timer,X                     ; $1FC1
         RTS                             ; $1FC3
-; Play the effect for Y = $80, then add one to the score digits at $0CD9
-; unless $1166 is set. $0CD9 is compared with $99, so the digits are stored in BCD.
-; A second counter at $1C14 moves only when the check byte $2007 is zero.
+; Play the effect for Y = $80. $0CD9 is a BCD counter for this effect, not
+; the player score at $41. It increments unless $1166 is set, and the
+; compare with $99 is what shows those digits are BCD. A second counter at
+; $1C14 moves only when the check byte $2007 is zero.
 score_blip:
         PHA                             ; $1FC4
         TXA                             ; $1FC5
@@ -5580,7 +5632,7 @@ L_2A2B:
         BCC L_2A27                      ; $2A2E
         DEX                             ; $2A30
         BPL L_2A21                      ; $2A31
-        JMP L_2B4E                      ; $2A33
+        JMP resolve_blows                      ; $2A33
 L_2A36:
         STY $52                         ; $2A36
         LDA state,X                     ; $2A38
@@ -5727,17 +5779,19 @@ L_2B3E:
         EOR #$01                        ; $2B49
         STA facing,X                    ; $2B4B
         RTS                             ; $2B4D
-; Bit 0 of $BC was set on the attacker by $2B3E. He leaves the attack for
-; state 0. Bruce keeps timer $18. Another fighter keeps $18 on a short
-; visit with $40 clear, stores $0A on a middle visit, and stores 2 on a
-; long visit or when $40 is set.
-L_2B4E:
+; One pass over the three actors, high X first. Bit 0 of $BC was set on
+; the attacker by $2B3E. He leaves the attack for state 0. Bruce keeps
+; timer $18. Another fighter keeps $18 on a short visit with $40 clear,
+; stores $0A on a middle visit, and stores 2 on a long visit or when $40
+; is set. The four blow tests then run in order, and a set bit is not
+; cleared, so a later test still sees it.
+resolve_blows:
         LDX #$02                        ; $2B4E
-L_2B50:
+resolve_actor:
         STX $51                         ; $2B50
         LDA $BC,X                       ; $2B52
         AND #$01                        ; $2B54
-        BEQ L_2B9A                      ; $2B56
+        BEQ strike_blow                      ; $2B56
         LDA #$00                        ; $2B58
         STA state,X                     ; $2B5A
         LDA #$04                        ; $2B5C
@@ -5752,11 +5806,11 @@ L_2B50:
         BCS L_2B79                      ; $2B70
         LDA $40                         ; $2B72
         BNE L_2B7F                      ; $2B74
-        JMP L_2B9A                      ; $2B76
+        JMP strike_blow                      ; $2B76
 L_2B79:
         LDA #$0A                        ; $2B79
         STA timer,X                     ; $2B7B
-        BNE L_2B9A                      ; $2B7D
+        BNE strike_blow                      ; $2B7D
 L_2B7F:
         LDA #$02                        ; $2B7F
         STA timer,X                     ; $2B81
@@ -5766,31 +5820,36 @@ L_2B83:
         BCS L_2B90                      ; $2B88
         LDA #$03                        ; $2B8A
         STA timer,X                     ; $2B8C
-        BNE L_2B9A                      ; $2B8E
+        BNE strike_blow                      ; $2B8E
 L_2B90:
         LDA #$08                        ; $2B90
         STA timer,X                     ; $2B92
-        BNE L_2B9A                      ; $2B94
+        BNE strike_blow                      ; $2B94
 L_2B96:
         LDA #$0A                        ; $2B96
         STA timer,X                     ; $2B98
-L_2B9A:
+; Bit 1. Two health, state $0F, timer 3. No points. A negative byte
+; shares kick_result, whose first test is the knockdown.
+strike_blow:
         LDA $BC,X                       ; $2B9A
         AND #$02                        ; $2B9C
-        BEQ L_2BB1                      ; $2B9E
+        BEQ punch_blow                      ; $2B9E
         LDA $D1,X                       ; $2BA0
         SEC                             ; $2BA2
         SBC #$02                        ; $2BA3
         STA $D1,X                       ; $2BA5
-        BMI L_2BEF                      ; $2BA7
+        BMI kick_result                      ; $2BA7
         LDA #$0F                        ; $2BA9
         STA state,X                     ; $2BAB
         LDA #$03                        ; $2BAD
         STA timer,X                     ; $2BAF
-L_2BB1:
+; Bit 2. $64 into the low score byte, 100, then 3 health. Bit 7 clear
+; skips the points and still subtracts. Below zero is force_knockdown.
+; A blow that stays positive is state $0F, timer 4.
+punch_blow:
         LDA $BC,X                       ; $2BB1
         AND #$04                        ; $2BB3
-        BEQ L_2BD5                      ; $2BB5
+        BEQ kick_blow                      ; $2BB5
         LDA $BC,X                       ; $2BB7
         BPL L_2BC4                      ; $2BB9
         LDA #$64                        ; $2BBB
@@ -5807,10 +5866,13 @@ L_2BC4:
         STA state,X                     ; $2BCF
         LDA #$04                        ; $2BD1
         STA timer,X                     ; $2BD3
-L_2BD5:
+; Bit 3. $4B into the low score byte, 75, then 7 health. The same bit 7
+; gate as the punch. Below zero is force_knockdown. A kick that stays
+; positive still stores the knockdown pose, state $13, timer $0C.
+kick_blow:
         LDA $BC,X                       ; $2BD5
         AND #$08                        ; $2BD7
-        BEQ L_2BF9                      ; $2BD9
+        BEQ landing_blow                      ; $2BD9
         LDA $BC,X                       ; $2BDB
         BPL L_2BE8                      ; $2BDD
         LDA #$4B                        ; $2BDF
@@ -5822,23 +5884,27 @@ L_2BE8:
         SEC                             ; $2BEA
         SBC #$07                        ; $2BEB
         STA $D1,X                       ; $2BED
-L_2BEF:
+kick_result:
         BMI force_knockdown                      ; $2BEF
         LDA #$13                        ; $2BF1
         STA state,X                     ; $2BF3
         LDA #$0C                        ; $2BF5
         STA timer,X                     ; $2BF7
-L_2BF9:
+; Bit 4. $32 into the low score byte, 50, then 5 health. Bit 7 clear
+; skips the points. Below zero is force_knockdown, and that routine
+; jumps back here with the bit still set. A landing that stays positive
+; is state $1B, timer 8, and that store is also how the bug loop ends.
+landing_blow:
         LDA $BC,X                       ; $2BF9
         AND #$10                        ; $2BFB
         BEQ L_2C1D                      ; $2BFD
         LDA $BC,X                       ; $2BFF
-        BPL L_2C0C                      ; $2C01
+        BPL landing_damage                      ; $2C01
         LDA #$32                        ; $2C03
         LDX #$02                        ; $2C05
         JSR add_score                      ; $2C07
         LDX $51                         ; $2C0A
-L_2C0C:
+landing_damage:
         LDA $D1,X                       ; $2C0C
         SEC                             ; $2C0E
         SBC #$05                        ; $2C0F
@@ -5851,41 +5917,56 @@ L_2C0C:
 L_2C1D:
         DEX                             ; $2C1D
         BMI L_2C23                      ; $2C1E
-        JMP L_2B50                      ; $2C20
+        JMP resolve_actor                      ; $2C20
 L_2C23:
         RTS                             ; $2C23
-; $D1 just went negative. Punch, kick, and stomp all arrive here, and each
-; one becomes state $13 with timer $0C, so the knockdown plays before
-; check_bruce_down removes him. Bit 7 of $BC is set when the attacker was
-; actor 0. That pays the kill on top of the blow: actor 1 adds $01 through
-; the score slot pay_height uses and $C2 through the slot the punch's $64
-; uses, which is 450. Actor 2 adds $C8 through that same low slot, 200.
-; It then rejoins the stomp test at $2BF9.
+; $D1 just went negative. Punch, kick, and landing all arrive here.
+; State $13, timer $0C, so the knockdown plays before check_bruce_down
+; removes him. Bit 7 of $BC is set when the attacker was actor 0, and
+; the kill score is skipped without it. Actor 1, the Ninja, adds $01
+; through the middle score byte and $C2 through the low byte, 450. Those
+; are two adds, so the extra-fall test runs between them. Any other
+; victim, Yamo included, adds $C8 through the low byte, 200. The printed
+; score card lists the Ninja at 200 and Yamo at 450.
+;
+; Intentional bug in the original. The jump below returns to landing_blow
+; while bit 4 is still set. A landing that drove the health negative pays
+; 50, subtracts 5, and comes back here for another knockout, then does
+; that again. The health is one byte, so it wraps, and the loop stops on
+; the first result in 0-127. That last pass stores state $1B with timer 8
+; over this knockdown, and the fighter stays up. Yamo on 4 health ends at
+; 125 after 27 landings and 26 knockouts, 6550 points. The Ninja on 4
+; ends at 125 after the same count, 13050 points. Health 5 pays 50 once
+; and stops at 0, because 0 is not negative. A killing punch or kick also
+; jumps back, and the landing test continues only when bit 4 is set.
 force_knockdown:
         LDA $BC,X                       ; $2C24
         AND #$80                        ; $2C26
-        BEQ L_2C47                      ; $2C28
+        BEQ store_knockdown                      ; $2C28
         STX $51                         ; $2C2A
         CPX #$01                        ; $2C2C
-        BNE L_2C40                      ; $2C2E
+        BNE knockout_yamo                      ; $2C2E
+knockout_ninja:
         LDA #$01                        ; $2C30
         TAX                             ; $2C32
         JSR add_score                      ; $2C33
         LDA #$C2                        ; $2C36
         LDX #$02                        ; $2C38
         JSR add_score                      ; $2C3A
-        JMP L_2C47                      ; $2C3D
-L_2C40:
+        JMP store_knockdown                      ; $2C3D
+; Not actor 1. Yamo takes this path. $C8 in the low byte is 200.
+knockout_yamo:
         LDA #$C8                        ; $2C40
         LDX #$02                        ; $2C42
         JSR add_score                      ; $2C44
-L_2C47:
+store_knockdown:
         LDX $51                         ; $2C47
         LDA #$13                        ; $2C49
         STA state,X                     ; $2C4B
         LDA #$0C                        ; $2C4D
         STA timer,X                     ; $2C4F
-        JMP L_2BF9                      ; $2C51
+; Bit 4 is still set, so a killing landing runs landing_blow again.
+        JMP landing_blow                      ; $2C51
 ; Y is the attacker, X the victim. A is the attacker's xpos minus the
 ; victim's, negated when the attacker faces right, so a positive A is in
 ; front of him. Carry set means A >= the reach in $61. Bit 7 means he is
@@ -6382,7 +6463,7 @@ L_2EEA:
         BEQ L_2EF1                      ; $2EEE
         RTS                             ; $2EF0
 L_2EF1:
-        JMP L_2FD6                      ; $2EF1
+        JMP extra_fall                      ; $2EF1
 L_2EF4:
         JMP catch_surface                      ; $2EF4
 L_2EF7:
@@ -6398,7 +6479,8 @@ L_2F01:
 ; returns the bare mount, or sets carry when this cell is not in the room's
 ; list. The mount is written on this row. The same byte with bit 7 set is
 ; written $28 bytes later, the shadow row. $7D is added to the low score
-; byte, which the BCD digits show as 125. Sound $8E plays.
+; byte. That add is binary, and 125 is what the six digits then show.
+; Sound $8E plays.
 take_lamp:
         TXA                             ; $2F04
         BNE L_2EE9                      ; $2F05
@@ -6523,7 +6605,13 @@ L_2FBF:
         JSR blit_sprites                      ; $2FCF
         CLI                             ; $2FD2
         JMP frame                      ; $2FD3
-L_2FD6:
+; Tiles $2D and $2E, and the caller has already required room 16. Bruce
+; only, and only when ypos is at least $A0. The DEC of $4E95,X is not
+; tested, so the fall is given every time the scan matches, including after
+; the counter has gone through zero. hook_enter_16 reads that counter only to
+; decide whether to print the caption. The trainer overwrites the INC with
+; LDA, the same byte as at $1826.
+extra_fall:
         TXA                             ; $2FD6
         BEQ L_2FDA                      ; $2FD7
 L_2FD9:
@@ -6534,11 +6622,11 @@ L_2FDA:
         BCC L_2FD9                      ; $2FDE
         LDX $03                         ; $2FE0
         DEC $4E95,X                     ; $2FE2
-; An extra fall. The trainer overwrites this INC with LDA, the same byte as at $1826.
         INC $28                         ; $2FE5
         JSR lives_to_bcd                      ; $2FE7
         LDY #$8E                        ; $2FEA
         JSR play_sound                  ; $2FEC
+extra_fall_caption:
         LDA #$56                        ; $2FEF
         LDX #$0A                        ; $2FF1
         LDY #$24                        ; $2FF3
@@ -6745,9 +6833,12 @@ L_3127:
         LDA ($04),Y                     ; $3127
         JMP L_2EA9                      ; $3129
 ; Add the three bytes at $25 into the score at $41. $41 is the high byte and
-; $43 is the low byte. Each score byte is then compared with the byte at
-; $4392. When none is below its pair, $28, the lives, is incremented and the
-; bytes at $438E are added into $4392. The score digits are redrawn either way.
+; $43 is the low byte. The add is binary, with the carry kept between bytes,
+; and a carry out of $41 is dropped, so the total wraps at 24 bits.
+; check_life_mark then compares from the high byte. The first byte that is
+; below its pair in $4392 skips the fall. When none is below, $28 is
+; incremented and the step at $438E is added into the mark. draw_score runs
+; either way and prints only the low six BCD digits.
 apply_score:
         LDX #$02                        ; $312C
         CLC                             ; $312E
@@ -6757,14 +6848,16 @@ L_312F:
         STA $41,X                       ; $3133
         DEX                             ; $3135
         BPL L_312F                      ; $3136
+; High byte first. BCC on a short byte waits, even when a lower byte has
+; already carried the total past the mark.
         LDX #$00                        ; $3138
-L_313A:
+check_life_mark:
         LDA $41,X                       ; $313A
         CMP $4392,X                     ; $313C
-        BCC L_315A                      ; $313F
+        BCC draw_score                      ; $313F
         INX                             ; $3141
         CPX #$03                        ; $3142
-        BCC L_313A                      ; $3144
+        BCC check_life_mark                      ; $3144
         LDX #$02                        ; $3146
         CLC                             ; $3148
 L_3149:
@@ -6776,7 +6869,8 @@ L_3149:
 ; Extra fall when the score crosses the next mark. The trainer's LDA patch covers this too.
         INC $28                         ; $3155
         JSR lives_to_bcd                      ; $3157
-L_315A:
+; Low six digits of the current total. Columns $30, $32, and $34.
+draw_score:
         JSR stash_scores                      ; $315A
         LDY #$30                        ; $315D
         LDA $439C                       ; $315F
@@ -6787,8 +6881,9 @@ L_315A:
         LDY #$34                        ; $316D
         LDA $439E                       ; $316F
         JMP draw_split_digits                      ; $3172
-; Add A to score byte X. X = 2 reaches $43, the low byte. A lamp passes
-; $7D with X = 2.
+; Add A to score byte X. The other two bytes of the addend are cleared, so
+; one call moves one byte of the total. X = 0 is $41, X = 1 is $42, and
+; X = 2 is $43. A lamp passes $7D with X = 2, which is 125.
 add_score:
         PHA                             ; $3175
         LDA #$00                        ; $3176
@@ -6798,12 +6893,13 @@ add_score:
         PLA                             ; $317E
         STA $25,X                       ; $317F
         JMP apply_score                      ; $3181
-; Every frame. With $0104 clear, redraw the score. In play, copy $41 over
-; the top score at $4388 when the top is smaller, compared from the high
-; byte, and redraw both.
+; Every frame. With $0104 clear, draw_score redraws the current total. In
+; play, compare $4388 with $41 from the high byte as an unsigned 24-bit
+; value. A smaller top is replaced from the score and draw_top reprints it.
+; The top score is not cleared with the working RAM, so it survives a game.
 refresh_top:
         LDA $0104                       ; $3184
-        BEQ L_315A                      ; $3187
+        BEQ draw_score                      ; $3187
         LDA $CF7B                       ; $3189
         EOR $CF9B                       ; $318C
         BNE L_31A4                      ; $318F
@@ -6823,12 +6919,12 @@ L_31A6:
         CMP $41,X                       ; $31A9
         BCC L_31B8                      ; $31AB
         BEQ L_31B1                      ; $31AD
-        BCS L_315A                      ; $31AF
+        BCS draw_score                      ; $31AF
 L_31B1:
         INX                             ; $31B1
         CPX #$03                        ; $31B2
         BCC L_31A6                      ; $31B4
-        BCS L_315A                      ; $31B6
+        BCS draw_score                      ; $31B6
 L_31B8:
         LDX #$03                        ; $31B8
 L_31BA:
@@ -6836,7 +6932,8 @@ L_31BA:
         STA $4388,X                     ; $31BC
         DEX                             ; $31BF
         BPL L_31BA                      ; $31C0
-L_31C2:
+; Low six digits of the top score. Columns $3C, $3E, and $40.
+draw_top:
         LDX #$03                        ; $31C2
 L_31C4:
         LDA $4388,X                     ; $31C4
@@ -7020,7 +7117,9 @@ crumble_sound:
         PLA                             ; $32DA
         RTS                             ; $32DB
 
-; Copy the three score bytes at $41 into the display copy at $4398.
+; Copy the three score bytes at $41 into $4398 and convert that binary
+; value to BCD with SED. The eight digits land in $439B-$439E. draw_score
+; prints the low six, $439C-$439E. draw_top converts $4388 the same way.
 stash_scores:
         LDX #$02                        ; $32DC
 L_32DE:
@@ -7465,10 +7564,12 @@ hook_enter_16:
         STA $DB6D                       ; $35B0
         STA $DB94                       ; $35B3
         STA $DB95                       ; $35B6
+; $4E95,X counts down in extra_fall and is not a gate there. Once it has
+; reached 0, entering the room prints the caption without giving another fall.
         LDX $03                         ; $35B9
         LDA $4E95,X                     ; $35BB
         BNE L_35C3                      ; $35BE
-        JSR $2FEF                       ; $35C0
+        JSR extra_fall_caption          ; $35C0
 L_35C3:
         RTS                             ; $35C3
 ; Enter hook for room 17.
@@ -8488,6 +8589,8 @@ L_3CE4:
         LDX #$0B                        ; $3CF9
         LDY #$00                        ; $3CFB
         JSR print_string                ; $3CFD
+; 3000 for the wizard. The low byte $B8 is added first, then $0B in the
+; middle byte, and check_life_mark runs on each add.
         LDA #$B8                        ; $3D00
         LDX #$02                        ; $3D02
         JSR add_score                   ; $3D04
@@ -8674,7 +8777,8 @@ L_3E79:
 ; Per-frame hook for room 13. $014B + player*4 holds three one-shot
 ; flags. ypos below $64 pays nothing. From $64 to $89 the first flag
 ; pays, from $8A to $B5 the second, and from $B6 down the third. Each
-; pays 500: $01 into score byte 1 and $F4 into byte 2. The fourth byte
+; pays 500: $01 into score byte 1 and $F4 into byte 2, as two adds, so the
+; extra-fall test runs between them. The fourth byte
 ; of the group is not read. hook_frame_19 writes 1 back into all four
 ; when the treasure room ends.
 hook_frame_13:

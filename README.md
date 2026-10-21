@@ -39,26 +39,56 @@ An Xbox pad, or any other XInput controller, does the same things. The keyboard 
 
 `DESIGN.md` describes how a frame runs, how the character cells and sprite poses are stored, and how collision decides wall and floor.
 
+## Scoring rules
+
+| Event | Points |
+| --- | --- |
+| Chopping Ninja or Yamo | 100 |
+| Kicking ninja or Yamo | 75 |
+| Landing on a fighter | 50 |
+| Knocking out the Ninja | 450 |
+| Knocking out Yamo | 200 |
+| Lantern | 125 |
+| First time into a room, except room 0 | 2000 |
+| Each height band in room 13 | 500 |
+| Destroying the wizard | 3000 |
+
+Room 0 never pays. After the treasure room, the other rooms pay 2000 again on the next visit. An extra life is given at 40,000, then every 30,000. The same life counter is what room 16's symbol increments. Past 99 lives the line shows A0, B0, and so on through F9. At 1,000,000 the six digits show 000000 and the total keeps going.
+
+The original game has a bug in a landing that drives the health byte negative does not stop at one 50 and one knockout. The game keeps applying that landing until the byte is positive again, so a Yamo on 4 health pays 6,550 and is left at 125, and a Ninja pays 13,050. A landing that does not cross zero pays 50 once. Set FixBugsInOriginal option to True to fix this. Set it to False to get original scoring.
+
+In the Game Manual the scoring of knocking out Yamo and Ninja is swapped. This port using the scoring from the original game, not the manual.
+
+## Trivia 
+
+Room 16 has a ying-yang symbol. Picking it up with add an extra life. It will reappear if you leave the room and re-enter. You can get up to 5 extra lives this way. This counter does not reset when completing the game, so it is 5 lives max for the entire session.
+
+After completing the game, you will restart in room 0 again. Playthroughs after the first have following differences:
+* The Room 13 electric floors moves differently.
+* The time to spawn for Ninja and Yamo is reduced.
+
+
 ## Current state
 
 * All 20 room added - most rooms are playable and has lamps, beams, doors, etc. working
 * All Bruce movement and fighting animations added and he can move as in original. 
 * Gamepad support
 * Prove the game is completable
+* Add Ninja and Yamo and health
+* Scoring
 
 ## TODO
 
-* Add Ninja and Yamo and health
 * Game over screen
 * Fullscreen support
 * Trainers
 * Audio
-* Scoring
 * 2 player support
 * CRT filtering
 
 ## Stretch goals
 
 * Load/save game state
+* Record/Replay input
 * A level editor
 * Option to play with improved graphics
