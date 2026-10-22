@@ -1,3 +1,21 @@
+// Bruce Lee, a Windows port.
+// Copyright (C) 2026 Jacob Marner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+// No copyright is claimed over the original game, which is copyright 1984 Datasoft, Inc.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -12,6 +30,7 @@
 #include "pad.h"
 #include "room.h"
 #include "sound.h"
+#include "ui.h"
 
 int StandPose() {
     return g.facing < 0 ? 1 : 0;
@@ -1012,11 +1031,12 @@ void Tick() {
     const int treasureStick = treasure ? Room19Stick() : 0;
 
     const PadInput pad = ReadPad();
-    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0 || pad.left;
-    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0 || pad.right;
-    const bool up = (GetAsyncKeyState(VK_UP) & 0x8000) != 0 || pad.up;
-    const bool down = (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0 || pad.down;
-    const bool fire = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0 || pad.fire;
+    const bool keys = !UiOwnsKeyboard();
+    const bool left = (keys && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0) || pad.left;
+    const bool right = (keys && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0) || pad.right;
+    const bool up = (keys && (GetAsyncKeyState(VK_UP) & 0x8000) != 0) || pad.up;
+    const bool down = (keys && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0) || pad.down;
+    const bool fire = (keys && (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) || pad.fire;
 
     // $40BC runs before the overlap, and a held pose still reaches it.
     // The lamp glyphs flicker in every room. The charset selects the bytes.

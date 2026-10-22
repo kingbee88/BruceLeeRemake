@@ -2,6 +2,8 @@
 
 This project recreates the original *Bruce Lee* on the Commodore 64, written natively for Windows with no emulator. It is a homage to the original game and a way to preserve it for the future in source format.
 
+The Windows port is copyright Jacob Marner and is free software under the GNU General Public License, version 3 or any later version. The full text is in `LICENSE`. No copyright is claimed over the original game, its pictures, sound, room data, manual, disk image, or box art, and those files are not relicensed by this grant. The Commodore 64 game is copyright 1984 Datasoft, Inc. It was made by Ron J. Fortier, with graphics by Kelly Day and music by John A. Fitzpatrick. This Windows port was made as a homage to that game.
+
 This is still a work in progress. 
 
 Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.2-alpha/BruceLeeRemakev0.2.zip)
@@ -25,9 +27,16 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a com
 | Up | Jump. With Left or Right held, jump sideways |
 | Down | Duck. On a ladder, climb down |
 | Space | Punch while standing. Flying kick while moving |
-| Escape | Close the window |
+| Escape | Leave full screen, and close Settings if it is open |
+| Ctrl+R | Restart the game |
+| F1 | Open the game manual |
+| Ctrl+F1 | About |
+| Ctrl+, | Settings |
+| Alt+F4 | Exit |
 
-Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The display mode stays as it is. `FullScreen=True` in `config.ini`, or on the command line, starts in that mode.
+File also lists Save game, Load game, Quick save, and Quick load. Those stay disabled. Settings is the gear at the right of the menu bar. Full screen hides the menu bar; the shortcuts still work.
+
+Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in `config.ini`, or on the command line, starts in that mode. The program writes the settings back to the `config.ini` it opened when it closes.
 
 An Xbox pad, or any other XInput controller, does the same things. The keyboard keeps working while a pad is connected.
 
@@ -72,25 +81,26 @@ After completing the game, you will restart in room 0 again. After you complete 
 
 ## Current state
 
-* All 20 room added - most rooms are playable and has lamps, beams, doors, etc. working
-* All Bruce movement and fighting animations added and he can move as in original. 
+* All 20 room added and feature complete
+* All animation of Bruce, Yamo and Ninja and their behaviors are in.
 * Gamepad support
-* Prove the game is completable
-* Add Ninja and Yamo and health
-* Scoring
+* Scoring complete - added option to correct a fix in the original scoring.
 * Game over screen
-* Fullscreen support
-* Trainers
+* Full screen support
+* Infinite Lives and Invulnerability support
 * Original sound: the effects during play, and the tune on the options page
 
-## TODO
+## TODO before v1.0
 
 * 2 player support
 * CRT filtering
+* Bug fixing
 
-## Stretch goals
 
+## TODO after v1.0
+
+* Convert assets to something easier to edit.
 * Load/save game state
-* Record/Replay input
+* Record/Replay gameplay - set gamespeed
 * A level editor
-* Option to play with improved graphics
+* Option to play with improved graphics/audio

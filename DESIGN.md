@@ -2,9 +2,9 @@
 
 This is a Windows port of the first room of the Commodore 64 game. It is a C++ rewrite of the rules, not an emulator. The pictures and the collision test come from the original bytes.
 
-A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. A double-click toggles a borderless full screen, and the maximize button turns it on. Space or Enter opens the options page. F3 and F5 change the two options there, and F7 opens the PLAYER page, which holds and then starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape closes the window.
+A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. A double-click toggles a borderless full screen, and the maximize button turns it on. Space or Enter opens the options page. F3 and F5 change the two options there, and F7 opens the PLAYER page, which holds and then starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape leaves full screen and closes Settings. It does not close the program.
 
-`config.ini` beside the exe is read first. If that file is not there, `config.ini` in the parent folder is read. `Name=Value` on the command line overrides the file. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture, the options page, and the PLAYER page. `FullScreen` starts borderless over the monitor. A double-click toggles it, and the maximize button turns it on. `ShowCRTFilter` is read and not used yet.
+`config.ini` beside the exe is read first. If that file is not there, `config.ini` one folder up is read, then two folders up. `Name=Value` on the command line overrides the file. The Settings window changes these while the game is running, and the program writes them back to the file it opened when it closes. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture, the options page, and the PLAYER page. `FullScreen` starts borderless over the monitor. A double-click toggles it, and the maximize button turns it on. `ShowCRTFilter` is saved with the other settings and is not drawn yet.
 
 ## How a frame runs
 
@@ -33,7 +33,8 @@ The lamp flicker is `$40BC`, once per logic frame, before that test. Three count
 | --- | --- |
 | `src/game.h`, `src/game.cpp` | Screen size, the C64 palette, and the `Game` state every other file shares |
 | `src/load.cpp` | `LoadFile` reads one data file. It looks beside the exe, then in `data\` one directory up, then in `data\` beside the exe. A missing file or a short read comes back empty |
-| `src/config.cpp` | `LoadConfig` reads `config.ini` beside the exe, then in the parent folder, then applies the command line |
+| `src/config.cpp` | `LoadConfig` reads `config.ini` beside the exe, then one folder up, then two folders up, then applies the command line. `SaveConfig` writes the file that was opened |
+| `src/ui.cpp` | The menu bar, the Settings window, and the About box |
 | `src/scene.cpp` | Turns one screen pixel into a color. `BandAt` is the raster split (background, `$D022`, `$D023`). `PixelColor` returns a palette index, or -1 where the cell is empty or the same as the background |
 | `src/collision.cpp` | The original overlap test. `Probe` reports wall and floor for the pose he is about to use. `PoseWall` asks the same question for one picture only |
 | `src/bruce.cpp` | Which picture to show, where he starts, and `Tick` |

@@ -1,3 +1,21 @@
+// Bruce Lee, a Windows port.
+// Copyright (C) 2026 Jacob Marner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+//
+// No copyright is claimed over the original game, which is copyright 1984 Datasoft, Inc.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -15,8 +33,12 @@
 #include "pad.h"
 #include "room.h"
 #include "sound.h"
+#include "ui.h"
 
 #include <cwchar>
+#include <vector>
+
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -102,6 +124,7 @@ void Paint(HWND hwnd) {
 
     gTarget->BeginDraw();
     gTarget->Clear(kBorderF);
+    // ShowCRTFilter is saved with the other settings. Nothing is drawn with it yet.
     gTarget->DrawBitmap(gBitmap, dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
     const HRESULT hr = gTarget->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
@@ -117,6 +140,10 @@ bool gFullScreen = false;
 WINDOWPLACEMENT gWindowedPlace{};
 LONG gWindowedStyle = 0;
 LONG gWindowedExStyle = 0;
+HMENU gMenu = nullptr;
+HWND gHwnd = nullptr;
+std::vector<uint8_t> gTitle;
+int gShownRoom = -1;
 
 bool MonitorBounds(HWND hwnd, RECT& bounds) {
     const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -161,6 +188,7 @@ void SetFullScreen(HWND hwnd, bool full) {
         place.length = static_cast<UINT>(sizeof(place));
         RECT bounds{};
         if (!GetWindowPlacement(hwnd, &place) || !MonitorBounds(hwnd, bounds)) {
+            RefreshSettingsDialog();
             return;
         }
         // A window created hidden reports SW_HIDE. Putting that back would hide it.
@@ -177,10 +205,14 @@ void SetFullScreen(HWND hwnd, bool full) {
                                             WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
         gFullScreen = true;
         SetBorderlessFrame(hwnd, true);
+        SetMenu(hwnd, nullptr);
         RefitFullScreen(hwnd);
     } else {
         gFullScreen = false;
         SetBorderlessFrame(hwnd, false);
+        if (gMenu) {
+            SetMenu(hwnd, gMenu);
+        }
         const LONG visible = GetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE;
         SetWindowLongW(hwnd, GWL_STYLE, gWindowedStyle | visible);
         SetWindowLongW(hwnd, GWL_EXSTYLE, gWindowedExStyle);
@@ -188,9 +220,16 @@ void SetFullScreen(HWND hwnd, bool full) {
         SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                      SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOCOPYBITS);
+        DrawMenuBar(hwnd);
+        ApplyAppTheme(hwnd);
     }
+    gConfig.fullScreen = gFullScreen;
+    RefreshSettingsDialog();
     InvalidateRect(hwnd, nullptr, FALSE);
 }
+
+void RestartGame(HWND hwnd);
+void ApplySoundSetting(HWND hwnd, bool on);
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -208,6 +247,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_DISPLAYCHANGE:
         RefitFullScreen(hwnd);
+        return 0;
+    case WM_NCPAINT: {
+        const LRESULT result = DefWindowProcW(hwnd, msg, wp, lp);
+        // lp is a region here, not the menu-bar draw struct.
+        PaintDarkMenuBar(hwnd, 0);
+        return result;
+    }
+    case 0x0091:  // WM_UAHDRAWMENU. The themed menu bar asks for its background here.
+        if (PaintDarkMenuBar(hwnd, lp)) {
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_SETTINGCHANGE:
+    case WM_SYSCOLORCHANGE:
+    case WM_THEMECHANGED:
+        ApplyAppTheme(hwnd);
         return 0;
     case WM_LBUTTONDBLCLK:
         SetFullScreen(hwnd, !gFullScreen);
@@ -238,10 +293,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         EndPaint(hwnd, &ps);
         return 0;
     }
-    case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) {
+    case WM_COMMAND:
+        switch (LOWORD(wp)) {
+        case ID_RESTART:
+            RestartGame(hwnd);
+            return 0;
+        case ID_EXIT:
             DestroyWindow(hwnd);
-        } else if (gStage == Stage::Title && (wp == VK_SPACE || wp == VK_RETURN)) {
+            return 0;
+        case ID_MANUAL:
+            OpenManual(hwnd);
+            return 0;
+        case ID_ABOUT:
+            ShowAbout(hwnd);
+            return 0;
+        case ID_SETTINGS:
+            ToggleSettings(hwnd);
+            return 0;
+        default:
+            break;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_APP_FULLSCREEN:
+        SetFullScreen(hwnd, wp != 0);
+        return 0;
+    case WM_APP_SOUND:
+        ApplySoundSetting(hwnd, wp != 0);
+        return 0;
+    case WM_MEASUREITEM:
+        if (OnMenuMeasure(lp)) {
+            return TRUE;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_DRAWITEM:
+        if (OnMenuDraw(lp)) {
+            return TRUE;
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_MENUSELECT:
+        OnMenuSelect(hwnd, wp, lp);
+        return 0;
+    case WM_EXITMENULOOP:
+        HideGearTip();
+        return 0;
+    case WM_KEYDOWN:
+        if (gStage == Stage::Title && (wp == VK_SPACE || wp == VK_RETURN)) {
             // The title picture leaves on the fire button. Space is that
             // button here. The picture stays until the key is up, so the
             // options page does not see the same press.
@@ -249,6 +345,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_DESTROY:
+        // SetMenu(null) while full screen leaves the menu with us. An attached
+        // menu is destroyed with the window.
+        if (gMenu && GetMenu(hwnd) != gMenu) {
+            DestroyMenu(gMenu);
+        }
+        gMenu = nullptr;
+        SaveConfig();
         PostQuitMessage(0);
         return 0;
     default:
@@ -257,7 +360,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 bool KeyDown(int vk) {
+    if (UiOwnsKeyboard()) {
+        return false;
+    }
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
+void ApplySoundSetting(HWND hwnd, bool on) {
+    if (on) {
+        gConfig.sound = true;
+        if (!StartAudio()) {
+            gConfig.sound = false;
+            MessageBoxW(hwnd, L"Could not read data\\sound.bin.", L"Bruce Lee", MB_ICONERROR);
+        } else if (gStage == Stage::Menu) {
+            StartMenuMusic();
+        }
+    } else {
+        gConfig.sound = false;
+        StopAudio();
+    }
+    RefreshSettingsDialog();
 }
 
 void GiveStock() {
@@ -296,18 +418,63 @@ void ShowGameOver(HWND hwnd) {
     SetWindowTextW(hwnd, L"Bruce Lee");
 }
 
-// open_room after the game-over wait. Score, falls, lamps, and the run
-// counters start over. The top score stays. The room is 0, which is what
-// clear_work_ram leaves in $29. The options page keeps the choices already
-// made, the way $42CB and $42CC are copied back.
-void StartAfterGameOver() {
+// After the game-over wait. Score, falls, lamps, and the run counters start
+// over. The top score stays. Play begins in the configured start room. When
+// the title screen is on, the options page keeps the choices already made,
+// the way $42CB and $42CC are copied back. The title picture is not shown.
+void StartAfterGameOver(HWND hwnd) {
     ResetScore();
     ResetCollectedLamps();
     ResetRoomBonus();
     ResetRun();
-    EnterRoom(0);
+    if (!EnterRoom(ClampedStartRoom())) {
+        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee", MB_ICONERROR);
+        return;
+    }
     if (gConfig.showTitleScreen) {
         BeginMenu(false);
+        return;
+    }
+    GiveStock();
+    PlaceBruce();
+    Compose();
+    gStage = Stage::Play;
+}
+
+// A new session with the settings as they are now. Start room and the title
+// screen are read here. Top score stays, as it does after game over.
+void RestartGame(HWND hwnd) {
+    if (gConfig.showTitleScreen && gTitle.empty()) {
+        gTitle = LoadFile(L"title.bin", 8000);
+        if (gTitle.empty()) {
+            MessageBoxW(hwnd, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
+            return;
+        }
+    }
+    StopMenuMusic();
+    ClearOutOfLives();
+    ResetScore();
+    ResetCollectedLamps();
+    ResetRoomBonus();
+    ResetRun();
+    gTwoPlayers = false;
+    gHumanOpponent = false;
+    gTitleStart = false;
+    gMenuStart = false;
+    gAfterFall = false;
+    gGameOverFrames = 0;
+    gPlayerFrames = 0;
+    gPrevF3 = false;
+    gPrevF5 = false;
+    if (!EnterRoom(ClampedStartRoom())) {
+        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee", MB_ICONERROR);
+        return;
+    }
+    gShownRoom = -1;
+    SetWindowTextW(hwnd, L"Bruce Lee");
+    if (gConfig.showTitleScreen) {
+        ComposeTitle(gTitle.data());
+        gStage = Stage::Title;
         return;
     }
     GiveStock();
@@ -355,28 +522,21 @@ void PollMenu() {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     LoadConfig(commandLine);
     // StartRoom is $29, counting from 0. 0 is the opening room.
-    int start = gConfig.startRoom;
-    if (start < 0) {
-        start = 0;
-    }
-    if (start >= kRoomCount) {
-        start = kRoomCount - 1;
-    }
     g.frames = LoadFile(L"bruce.bin", static_cast<size_t>(kFrames * 2 * kFrameBytes));
     // front.bin holds the PLAYER page. A fall shows it even when the title is skipped.
-    if (g.frames.empty() || !LoadFighters() || !LoadFront() || !EnterRoom(start)) {
+    if (g.frames.empty() || !LoadFighters() || !LoadFront() || !EnterRoom(ClampedStartRoom())) {
         MessageBoxW(nullptr, L"Could not read data\\bruce.bin, the fighter pictures, the player page, and the room files.",
                     L"Bruce Lee", MB_ICONERROR);
         return 1;
     }
     g.pixels.assign(static_cast<size_t>(kWidth * kHeight), kPalette[0x0B]);
+    gTitle = LoadFile(L"title.bin", 8000);
     if (gConfig.showTitleScreen) {
-        const std::vector<uint8_t> title = LoadFile(L"title.bin", 8000);
-        if (title.empty()) {
+        if (gTitle.empty()) {
             MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
             return 1;
         }
-        ComposeTitle(title.data());
+        ComposeTitle(gTitle.data());
         gStage = Stage::Title;
     } else {
         PlaceBruce();
@@ -405,8 +565,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     wc.lpszClassName = L"BruceLeeWindow";
     RegisterClassW(&wc);
 
+    ApplyAppTheme(nullptr);
+    gMenu = CreateAppMenu();
     RECT rc{0, 0, kWidth * 3, kHeight * 3};
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
     // Hidden until the fullscreen choice is applied, so the windowed frame
     // does not flash up when FullScreen is on.
     HWND hwnd = CreateWindowExW(
@@ -414,11 +576,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         WS_OVERLAPPEDWINDOW,
         80, 80,
         rc.right - rc.left, rc.bottom - rc.top,
-        nullptr, nullptr, inst, nullptr);
+        nullptr, gMenu, inst, nullptr);
     if (!hwnd) {
+        DestroyMenu(gMenu);
+        gMenu = nullptr;
         StopAudio();
         return 1;
     }
+    gHwnd = hwnd;
+    ApplyAppTheme(hwnd);
+    HACCEL accel = CreateAppAccelerators();
     if (gConfig.fullScreen) {
         SetFullScreen(hwnd, true);
     }
@@ -428,12 +595,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
 
     MSG msg{};
     bool running = true;
-    int shownRoom = -1;
     while (running) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 running = false;
                 break;
+            }
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE &&
+                (msg.hwnd == hwnd || SettingsContains(msg.hwnd))) {
+                CloseSettings();
+                if (gFullScreen) {
+                    SetFullScreen(hwnd, false);
+                }
+                continue;
+            }
+            if (accel && TranslateAcceleratorW(hwnd, accel, &msg)) {
+                continue;
+            }
+            if (SettingsDialogMessage(&msg)) {
+                continue;
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -441,8 +621,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         if (!running) {
             break;
         }
-        if (gStage == Stage::Play && g.roomId != shownRoom) {
-            shownRoom = g.roomId;
+        if (gStage == Stage::Play && g.roomId != gShownRoom) {
+            gShownRoom = g.roomId;
             wchar_t title[40];
             swprintf_s(title, L"Bruce Lee - room %d", g.roomId);
             SetWindowTextW(hwnd, title);
@@ -476,15 +656,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         } else if (gStage == Stage::GameOver) {
             gGameOverFrames--;
             if (gGameOverFrames <= 0) {
-                shownRoom = -1;
-                StartAfterGameOver();
+                gShownRoom = -1;
+                StartAfterGameOver(hwnd);
             }
         } else {
             Tick();
             // lose_life has spent the fall. A count still positive runs
             // between_rooms in this room. A negative count is game over.
             if (OutOfLives()) {
-                shownRoom = -1;
+                gShownRoom = -1;
                 ShowGameOver(hwnd);
             } else if (BetweenLives()) {
                 ShowPlayerPage(true);
@@ -498,6 +678,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         Sleep(60);
     }
 
+    if (accel) {
+        DestroyAcceleratorTable(accel);
+    }
+    ReleaseUi();
     StopAudio();
     ReleaseTarget();
     gFactory->Release();
