@@ -13,7 +13,7 @@ Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v
 
 ## Overview
 
-The game is a C++ rewrite of the original game. Pictures, the room layout, and the collision test come from the original bytes in `data/`. A Windows window, drawn with Direct2D, shows a 320 by 200 screen scaled up with nearest-neighbor filtering. Nothing is running inside a Commodore 64 emulator.
+The game is a C++ rewrite of the original game. Pictures, the room layout, and the collision test come from the original bytes in `data/`. A Windows window, drawn with Direct2D, shows a 320 by 200 screen scaled up with nearest-neighbor filtering. `ShowCRTFilter` draws that same picture as a curved television. Nothing is running inside a Commodore 64 emulator.
 
 The `referencematerial/` contains a copy of the C64 floppy disk image, and a commented disassembly version of the game, and top of that is VICE snapshots from each room. None of the content in this folder are part of the build. It is purely they to help me understand the original game.
 
@@ -89,11 +89,11 @@ After completing the game, you will restart in room 0 again. After you complete 
 * Full screen support
 * Infinite Lives and Invulnerability support
 * Original sound: the effects during play, and the tune on the options page
+* CRT filter, from ShowCRTFilter. Curve, scanlines, blur, and vignette can each be turned off
 
 ## TODO before v1.0
 
 * 2 player support
-* CRT filtering
 * Bug fixing
 
 

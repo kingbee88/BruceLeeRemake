@@ -58,7 +58,7 @@ if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 echo Building %CONFIG% -^> %OUTDIR%\BruceLee.exe
 cl %CFLAGS% %PDB% /Fo:%OUTDIR%\ /Fe:%OUTDIR%\BruceLee.exe ^
-  src\game.cpp src\load.cpp src\config.cpp src\room.cpp src\roomfx.cpp src\scene.cpp src\collision.cpp src\bruce.cpp src\fighter.cpp src\pad.cpp src\draw.cpp src\front.cpp src\sound.cpp src\ui.cpp src\main.cpp ^
+  src\game.cpp src\load.cpp src\config.cpp src\room.cpp src\roomfx.cpp src\scene.cpp src\collision.cpp src\bruce.cpp src\fighter.cpp src\pad.cpp src\draw.cpp src\crt.cpp src\front.cpp src\sound.cpp src\ui.cpp src\main.cpp ^
   /link %LDFLAGS% d2d1.lib dwmapi.lib xinput.lib user32.lib gdi32.lib xaudio2.lib ole32.lib comctl32.lib shell32.lib windowscodecs.lib uxtheme.lib advapi32.lib
 if errorlevel 1 exit /b 1
 echo Built %OUTDIR%\BruceLee.exe

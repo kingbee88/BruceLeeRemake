@@ -53,6 +53,10 @@ constexpr int IDC_CRT = 207;
 constexpr int IDC_SOUND = 208;
 constexpr int IDC_HINT = 209;
 constexpr int IDC_ROOM_LABEL = 210;
+constexpr int IDC_CRT_CURVE = 211;
+constexpr int IDC_CRT_SCANLINES = 212;
+constexpr int IDC_CRT_BLUR = 213;
+constexpr int IDC_CRT_VIGNETTE = 214;
 // Room for the focus ring to the left of the checkbox. The ring is clipped if it
 // shares the checkbox's left edge.
 constexpr int kFocusPad = 4;
@@ -77,7 +81,19 @@ HWND gChkTitle = nullptr;
 HWND gChkFix = nullptr;
 HWND gChkFull = nullptr;
 HWND gChkCrt = nullptr;
+HWND gChkCurve = nullptr;
+HWND gChkScanlines = nullptr;
+HWND gChkBlur = nullptr;
+HWND gChkVignette = nullptr;
 HWND gChkSound = nullptr;
+// Nested CRT rows sit under Show CRT Filter, and only while that box is on.
+int gCrtNestTop = 0;
+int gCrtNestX = 0;
+int gCrtNestW = 0;
+int gCrtRowH = 0;
+int gSoundX = 0;
+int gSoundW = 0;
+int gSettingsPad = 0;
 HFONT gUiFont = nullptr;
 HFONT gGearFont = nullptr;
 HWND gTip = nullptr;
@@ -506,6 +522,14 @@ bool CheckValue(int id) {
         return gConfig.fullScreen;
     case IDC_CRT:
         return gConfig.showCrtFilter;
+    case IDC_CRT_CURVE:
+        return gConfig.crtCurve;
+    case IDC_CRT_SCANLINES:
+        return gConfig.crtScanlines;
+    case IDC_CRT_BLUR:
+        return gConfig.crtBlur;
+    case IDC_CRT_VIGNETTE:
+        return gConfig.crtVignette;
     case IDC_SOUND:
         return gConfig.sound;
     default:
@@ -549,9 +573,16 @@ void DestroySettingsChildren(HWND hwnd) {
     gChkFix = nullptr;
     gChkFull = nullptr;
     gChkCrt = nullptr;
+    gChkCurve = nullptr;
+    gChkScanlines = nullptr;
+    gChkBlur = nullptr;
+    gChkVignette = nullptr;
     gChkSound = nullptr;
     gRefreshing = false;
 }
+
+void FitSettingsWindow(HWND hwnd);
+void LayoutCrtOptions(HWND settings);
 
 void BuildSettings(HWND hwnd) {
     const HINSTANCE inst = GetModuleHandleW(nullptr);
@@ -591,6 +622,13 @@ void BuildSettings(HWND hwnd) {
     const int hintNatural = TextWidth(dc, hintText);
     const int em = TextWidth(dc, L"M");
     int inner = afterBox + labelW;
+    const wchar_t* crtParts[] = {L"Curve", L"Scanlines", L"Blur", L"Vignette"};
+    for (const wchar_t* label : crtParts) {
+        const int width = fontH + afterBox + TextWidth(dc, label);
+        if (width > inner) {
+            inner = width;
+        }
+    }
     const int roomRow = kFocusPad + roomLabelW + fontH / 2 + editW;
     if (roomRow > inner) {
         inner = roomRow;
@@ -666,6 +704,26 @@ void BuildSettings(HWND hwnd) {
     y += rowH;
     gChkCrt = MakeCheck(hwnd, inst, IDC_CRT, checks[5], x, y, inner, rowH);
     y += rowH;
+    // The part boxes line up under the CRT label, one step in from that box.
+    gCrtRowH = rowH;
+    gCrtNestX = x + fontH;
+    gCrtNestW = inner - fontH;
+    if (gCrtNestW < afterBox) {
+        gCrtNestW = inner;
+        gCrtNestX = x;
+    }
+    gCrtNestTop = y;
+    gSoundX = x;
+    gSoundW = inner;
+    gSettingsPad = pad;
+    gChkCurve = MakeCheck(hwnd, inst, IDC_CRT_CURVE, crtParts[0], gCrtNestX, y, gCrtNestW, rowH);
+    y += rowH;
+    gChkScanlines = MakeCheck(hwnd, inst, IDC_CRT_SCANLINES, crtParts[1], gCrtNestX, y, gCrtNestW, rowH);
+    y += rowH;
+    gChkBlur = MakeCheck(hwnd, inst, IDC_CRT_BLUR, crtParts[2], gCrtNestX, y, gCrtNestW, rowH);
+    y += rowH;
+    gChkVignette = MakeCheck(hwnd, inst, IDC_CRT_VIGNETTE, crtParts[3], gCrtNestX, y, gCrtNestW, rowH);
+    y += rowH;
     gChkSound = MakeCheck(hwnd, inst, IDC_SOUND, checks[6], x, y, inner, rowH);
     y += rowH + pad;
 
@@ -673,6 +731,7 @@ void BuildSettings(HWND hwnd) {
     gSettingsClientH = y;
     gBuiltFont = fontH;
     gBuiltDark = gTheme.dark;
+    LayoutCrtOptions(hwnd);
 }
 
 void FitSettingsWindow(HWND hwnd) {
@@ -680,6 +739,40 @@ void FitSettingsWindow(HWND hwnd) {
     AdjustWindowRectEx(&rc, WS_POPUP | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_TOOLWINDOW);
     SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// The four parts sit under Show CRT Filter while that box is on. Off, Sound
+// moves up and the parts leave the tab order.
+void LayoutCrtOptions(HWND settings) {
+    if (!gChkSound) {
+        return;
+    }
+    const bool show = gConfig.showCrtFilter;
+    HWND parts[] = {gChkCurve, gChkScanlines, gChkBlur, gChkVignette};
+    int y = gCrtNestTop;
+    for (HWND ctrl : parts) {
+        if (!ctrl) {
+            continue;
+        }
+        if (show) {
+            SetWindowPos(ctrl, nullptr, gCrtNestX, y, gCrtNestW, gCrtRowH,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            ShowWindow(ctrl, SW_SHOW);
+            EnableWindow(ctrl, TRUE);
+            y += gCrtRowH;
+        } else {
+            ShowWindow(ctrl, SW_HIDE);
+            EnableWindow(ctrl, FALSE);
+        }
+    }
+    SetWindowPos(gChkSound, nullptr, gSoundX, y, gSoundW, gCrtRowH,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    y += gCrtRowH + gSettingsPad;
+    gSettingsClientH = y;
+    if (settings) {
+        FitSettingsWindow(settings);
+        InvalidateRect(settings, nullptr, TRUE);
+    }
 }
 
 void ApplyRoomEdit() {
@@ -733,9 +826,26 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
         InvalidateCheck(gChkFix);
         break;
     case IDC_CRT:
-        // Stored for later. Paint does not filter the picture yet.
+        // Paint reads this on the next frame. The part rows follow the box.
         gConfig.showCrtFilter = !gConfig.showCrtFilter;
         InvalidateCheck(gChkCrt);
+        LayoutCrtOptions(hwnd);
+        break;
+    case IDC_CRT_CURVE:
+        gConfig.crtCurve = !gConfig.crtCurve;
+        InvalidateCheck(gChkCurve);
+        break;
+    case IDC_CRT_SCANLINES:
+        gConfig.crtScanlines = !gConfig.crtScanlines;
+        InvalidateCheck(gChkScanlines);
+        break;
+    case IDC_CRT_BLUR:
+        gConfig.crtBlur = !gConfig.crtBlur;
+        InvalidateCheck(gChkBlur);
+        break;
+    case IDC_CRT_VIGNETTE:
+        gConfig.crtVignette = !gConfig.crtVignette;
+        InvalidateCheck(gChkVignette);
         break;
     case IDC_FULL:
         SendMessageW(owner, WM_APP_FULLSCREEN, gConfig.fullScreen ? 0 : 1, 0);
@@ -1052,6 +1162,10 @@ void RefreshSettingsDialog() {
     InvalidateCheck(gChkFix);
     InvalidateCheck(gChkFull);
     InvalidateCheck(gChkCrt);
+    InvalidateCheck(gChkCurve);
+    InvalidateCheck(gChkScanlines);
+    InvalidateCheck(gChkBlur);
+    InvalidateCheck(gChkVignette);
     InvalidateCheck(gChkSound);
 }
 

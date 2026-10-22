@@ -4,7 +4,7 @@ This is a Windows port of the first room of the Commodore 64 game. It is a C++ r
 
 A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g.pixels` to the screen. The window waits 60ms between calls. That is three PAL screens, the count the game stores in `$48`. The window opens on the title picture. A double-click toggles a borderless full screen, and the maximize button turns it on. Space or Enter opens the options page. F3 and F5 change the two options there, and F7 opens the PLAYER page, which holds and then starts the room. Arrow keys move Bruce. Up jumps. On a ladder, up and down climb. Down on a floor ducks. Space punches while he is standing, and flying-kicks once a walk has already been going. Escape leaves full screen and closes Settings. It does not close the program.
 
-`config.ini` beside the exe is read first. If that file is not there, `config.ini` one folder up is read, then two folders up. `Name=Value` on the command line overrides the file. The Settings window changes these while the game is running, and the program writes them back to the file it opened when it closes. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture, the options page, and the PLAYER page. `FullScreen` starts borderless over the monitor. A double-click toggles it, and the maximize button turns it on. `ShowCRTFilter` is saved with the other settings and is not drawn yet.
+`config.ini` beside the exe is read first. If that file is not there, `config.ini` one folder up is read, then two folders up. `Name=Value` on the command line overrides the file. The Settings window changes these while the game is running, and the program writes them back to the file it opened when it closes. The names and the defaults are the commented lines in the root `config.ini`. `ShowTitleScreen` chooses the title picture, the options page, and the PLAYER page. `FullScreen` starts borderless over the monitor. A double-click toggles it, and the maximize button turns it on. `ShowCRTFilter` redraws that picture into the same rectangle. `CrtCurve`, `CrtScanlines`, `CrtBlur`, and `CrtVignette` each keep one part of that filter. They apply while `ShowCRTFilter` is on. Off leaves the nearest-neighbor scale.
 
 ## How a frame runs
 
@@ -19,7 +19,7 @@ A frame is one pass through `Tick` in `src/bruce.cpp`, then the window copies `g
 9. With neither ground nor a ladder under him, the first airborne frame drops 1 pixel. Later falling frames drop 2. The second falling frame also steps one xpos toward the way he faces when his torso is still on a ledge. The next frame lands him if his feet overlap ground or a ladder, so he rests in the first ground pixels. Open air shows the arms-out jump. Overlapping a wall shows the legs together.
 10. The picture is chosen after the step, from the overlap taken before it. The standing jump, sideways jump, and flying kick follow the timers above. A fresh move shows its first picture on the frame it starts, and moves on the frame after.
 11. If that new picture sits inside a wall, he is pushed sideways until it does not.
-12. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering.
+12. `Compose` paints the room, Bruce, and the score line into `g.pixels`. The window shows that buffer scaled up with nearest-neighbor filtering. `ShowCRTFilter` resamples the same rectangle. Curve, scanlines, blur, and vignette can each be left out.
 
 Before the move, the overlap is tested for a lamp. Bit 1 of that test is nibble 2, the hanger, and the same bit on a floor. The cells looked at are his column and the two to the right, on his tile row and the row below. A cell tiled `$13`, `$14`, or `$31` that is in this room's lamp list is replaced with the bare mount (`$12` or `$1F` on both rows of the pair) and 125 is added to the score. The six lamps are columns 31 and 38 of tile row 7, and columns 2, 25, 29, and 38 of tile row 10.
 
@@ -39,6 +39,7 @@ The lamp flicker is `$40BC`, once per logic frame, before that test. Three count
 | `src/collision.cpp` | The original overlap test. `Probe` reports wall and floor for the pose he is about to use. `PoseWall` asks the same question for one picture only |
 | `src/bruce.cpp` | Which picture to show, where he starts, and `Tick` |
 | `src/draw.cpp` | `Compose` fills `g.pixels`. `ComposeTitle` paints `title.bin` |
+| `src/crt.cpp` | `ApplyCrt` resamples `g.pixels` when `ShowCRTFilter` is on |
 | `src/front.cpp` | `ComposeMenu` and `ComposePlayerUp` paint the two pages in `front.bin` |
 | `src/main.cpp` | The window, Direct2D, and the message loop |
 

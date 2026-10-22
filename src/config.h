@@ -32,6 +32,11 @@ struct Config {
     // The maximize button turns it on.
     bool fullScreen = false;
     bool showCrtFilter = false;
+    // Parts of the television filter. They apply while showCrtFilter is on.
+    bool crtCurve = true;
+    bool crtScanlines = true;
+    bool crtBlur = true;
+    bool crtVignette = true;
     // False leaves the rooms and the options page silent.
     bool sound = true;
 };

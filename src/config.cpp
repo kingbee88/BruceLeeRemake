@@ -100,6 +100,14 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.fullScreen);
     } else if (key == L"showcrtfilter") {
         ParseBool(value, gConfig.showCrtFilter);
+    } else if (key == L"crtcurve") {
+        ParseBool(value, gConfig.crtCurve);
+    } else if (key == L"crtscanlines") {
+        ParseBool(value, gConfig.crtScanlines);
+    } else if (key == L"crtblur") {
+        ParseBool(value, gConfig.crtBlur);
+    } else if (key == L"crtvignette") {
+        ParseBool(value, gConfig.crtVignette);
     } else if (key == L"sound") {
         ParseBool(value, gConfig.sound);
     }
@@ -199,6 +207,10 @@ const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"showtitlescreen") return L"ShowTitleScreen";
     if (key == L"fullscreen") return L"FullScreen";
     if (key == L"showcrtfilter") return L"ShowCRTFilter";
+    if (key == L"crtcurve") return L"CrtCurve";
+    if (key == L"crtscanlines") return L"CrtScanlines";
+    if (key == L"crtblur") return L"CrtBlur";
+    if (key == L"crtvignette") return L"CrtVignette";
     if (key == L"sound") return L"Sound";
     return nullptr;
 }
@@ -212,6 +224,10 @@ std::wstring ValueOf(const std::wstring& key) {
     if (key == L"showtitlescreen") return boolean(gConfig.showTitleScreen);
     if (key == L"fullscreen") return boolean(gConfig.fullScreen);
     if (key == L"showcrtfilter") return boolean(gConfig.showCrtFilter);
+    if (key == L"crtcurve") return boolean(gConfig.crtCurve);
+    if (key == L"crtscanlines") return boolean(gConfig.crtScanlines);
+    if (key == L"crtblur") return boolean(gConfig.crtBlur);
+    if (key == L"crtvignette") return boolean(gConfig.crtVignette);
     if (key == L"sound") return boolean(gConfig.sound);
     return {};
 }
@@ -244,9 +260,11 @@ std::wstring Newline() {
 std::wstring RewriteIni(const std::wstring& text) {
     const wchar_t* order[] = {
         L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom", L"ShowTitleScreen",
-        L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter", L"Sound",
+        L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
+        L"CrtCurve", L"CrtScanlines", L"CrtBlur", L"CrtVignette", L"Sound",
     };
-    bool seen[8] = {};
+    constexpr int kSettingCount = 12;
+    bool seen[kSettingCount] = {};
     std::wstring out;
     size_t lineStart = 0;
     const std::wstring nl = Newline();
@@ -259,7 +277,7 @@ std::wstring RewriteIni(const std::wstring& text) {
         const wchar_t* canon = nullptr;
         out += RewriteLine(line, canon);
         if (canon != nullptr) {
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < kSettingCount; ++i) {
                 if (std::wstring(order[i]) == canon) {
                     seen[i] = true;
                 }
@@ -284,7 +302,7 @@ std::wstring RewriteIni(const std::wstring& text) {
         if (!out.empty() && out.back() != L'\n') {
             out += nl;
         }
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < kSettingCount; ++i) {
             if (seen[i]) {
                 continue;
             }

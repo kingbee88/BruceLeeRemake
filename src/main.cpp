@@ -25,6 +25,7 @@
 
 #include "bruce.h"
 #include "config.h"
+#include "crt.h"
 #include "draw.h"
 #include "fighter.h"
 #include "front.h"
@@ -35,6 +36,7 @@
 #include "sound.h"
 #include "ui.h"
 
+#include <cmath>
 #include <cwchar>
 #include <vector>
 
@@ -50,6 +52,12 @@ constexpr D2D1_COLOR_F kBorderF{0.f, 0.f, 0.f, 1.f};
 ID2D1Factory* gFactory = nullptr;
 ID2D1HwndRenderTarget* gTarget = nullptr;
 ID2D1Bitmap* gBitmap = nullptr;
+// The filtered picture is already at window size, so this bitmap changes
+// when the fitted rectangle does.
+ID2D1Bitmap* gCrtBitmap = nullptr;
+std::vector<uint32_t> gCrtPixels;
+UINT gCrtWidth = 0;
+UINT gCrtHeight = 0;
 
 // Title picture, then the options page, then between_rooms, then play.
 // GameOver is $188E, after the last fall.
@@ -74,6 +82,12 @@ constexpr int kGameOverFrames = 106;
 int gGameOverFrames = 0;
 
 void ReleaseTarget() {
+    if (gCrtBitmap) {
+        gCrtBitmap->Release();
+        gCrtBitmap = nullptr;
+    }
+    gCrtWidth = 0;
+    gCrtHeight = 0;
     if (gBitmap) {
         gBitmap->Release();
         gBitmap = nullptr;
@@ -82,6 +96,32 @@ void ReleaseTarget() {
         gTarget->Release();
         gTarget = nullptr;
     }
+}
+
+bool EnsureCrtBitmap(UINT width, UINT height) {
+    if (gCrtBitmap != nullptr && gCrtWidth == width && gCrtHeight == height) {
+        return true;
+    }
+    if (gCrtBitmap != nullptr) {
+        gCrtBitmap->Release();
+        gCrtBitmap = nullptr;
+    }
+    gCrtWidth = 0;
+    gCrtHeight = 0;
+    gCrtPixels.resize(static_cast<size_t>(width) * height);
+    const HRESULT hr = gTarget->CreateBitmap(
+        D2D1::SizeU(width, height),
+        nullptr,
+        width * static_cast<UINT32>(sizeof(uint32_t)),
+        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)),
+        &gCrtBitmap);
+    if (FAILED(hr) || gCrtBitmap == nullptr) {
+        gCrtBitmap = nullptr;
+        return false;
+    }
+    gCrtWidth = width;
+    gCrtHeight = height;
+    return true;
 }
 
 bool EnsureTarget(HWND hwnd) {
@@ -112,20 +152,47 @@ void Paint(HWND hwnd) {
     if (!EnsureTarget(hwnd)) {
         return;
     }
-    gBitmap->CopyFromMemory(nullptr, g.pixels.data(), kWidth * sizeof(uint32_t));
     const D2D1_SIZE_F size = gTarget->GetSize();
     const float cw = size.width;
     const float ch = size.height;
     const float scale = (cw / kWidth < ch / kHeight) ? cw / kWidth : ch / kHeight;
     const float dw = kWidth * scale;
     const float dh = kHeight * scale;
-    const D2D1_RECT_F dest = D2D1::RectF((cw - dw) * 0.5f, (ch - dh) * 0.5f,
-                                         (cw - dw) * 0.5f + dw, (ch - dh) * 0.5f + dh);
+    const D2D1_RECT_F sharp = D2D1::RectF((cw - dw) * 0.5f, (ch - dh) * 0.5f,
+                                          (cw - dw) * 0.5f + dw, (ch - dh) * 0.5f + dh);
+
+    // ShowCRTFilter resamples into the same fitted rectangle. The samples are
+    // already window pixels, so the blit is 1:1. Off, and a filter with every
+    // part turned off, keeps the nearest-neighbor scale of the 320 by 200 picture.
+    const CrtOptions crtOptions{gConfig.crtCurve, gConfig.crtScanlines, gConfig.crtBlur, gConfig.crtVignette};
+    const bool crtParts = crtOptions.curve || crtOptions.scanlines || crtOptions.blur || crtOptions.vignette;
+    bool crt = false;
+    D2D1_RECT_F crtDest{};
+    if (gConfig.showCrtFilter && crtParts && dw >= 1.f && dh >= 1.f) {
+        const UINT destW = static_cast<UINT>(dw);
+        const UINT destH = static_cast<UINT>(dh);
+        if (EnsureCrtBitmap(destW, destH)) {
+            ApplyCrt(g.pixels.data(), kWidth, kHeight, gCrtPixels.data(),
+                     static_cast<int>(destW), static_cast<int>(destH), crtOptions);
+            gCrtBitmap->CopyFromMemory(nullptr, gCrtPixels.data(),
+                                       destW * static_cast<UINT32>(sizeof(uint32_t)));
+            const float ox = std::floor((cw - static_cast<float>(destW)) * 0.5f);
+            const float oy = std::floor((ch - static_cast<float>(destH)) * 0.5f);
+            crtDest = D2D1::RectF(ox, oy, ox + static_cast<float>(destW), oy + static_cast<float>(destH));
+            crt = true;
+        }
+    }
+    if (!crt) {
+        gBitmap->CopyFromMemory(nullptr, g.pixels.data(), kWidth * sizeof(uint32_t));
+    }
 
     gTarget->BeginDraw();
     gTarget->Clear(kBorderF);
-    // ShowCRTFilter is saved with the other settings. Nothing is drawn with it yet.
-    gTarget->DrawBitmap(gBitmap, dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    if (crt) {
+        gTarget->DrawBitmap(gCrtBitmap, crtDest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    } else {
+        gTarget->DrawBitmap(gBitmap, sharp, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    }
     const HRESULT hr = gTarget->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
         ReleaseTarget();
