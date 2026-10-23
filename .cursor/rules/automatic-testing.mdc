@@ -1,0 +1,16 @@
+---
+description: Pass PauseOnFocusLoss=False when launching Bruce Lee for automatic testing
+alwaysApply: true
+---
+
+# Automatic testing
+
+When you start `BruceLee.exe` to test the game yourself, pass `PauseOnFocusLoss=False` on the command line. The game normally pauses when another program takes the keyboard. The switch leaves it running in that case, so the pause band does not freeze the run. Settings does not pause the game.
+
+P and the gamepad menu button still pause. A gamepad is still ignored while another program is in front.
+
+```
+build\Release\BruceLee.exe PauseOnFocusLoss=False
+```
+
+A leading `/` or `-` is also accepted: `/PauseOnFocusLoss=False`. Use the same argument for `build\Debug\BruceLee.exe`. Do not put this switch in `config.ini` or in the debugger launch configurations used for ordinary play.

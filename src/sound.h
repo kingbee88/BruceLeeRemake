@@ -30,5 +30,9 @@ void StopAudio();
 
 void PlayEffect(int id);
 void SilenceSound();
+
+// Hold the chip where it is and play silence. The tune and the effects
+// continue from that point when the hold ends.
+void SetAudioPaused(bool paused);
 void StartMenuMusic();
 void StopMenuMusic();

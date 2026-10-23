@@ -30,6 +30,18 @@ namespace {
 // XInputGetState on an empty slot can stall. A slot that just answered
 // "not connected" is left alone for about a second of logic frames.
 int idle[4] = {};
+PadInput cached{};
+bool haveCached = false;
+
+bool ForegroundIsOurs() {
+    const HWND fg = GetForegroundWindow();
+    if (fg == nullptr) {
+        return false;
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+}
 
 void Take(PadInput& pad, const XINPUT_GAMEPAD& gamepad) {
     const WORD buttons = gamepad.wButtons;
@@ -47,6 +59,17 @@ void Take(PadInput& pad, const XINPUT_GAMEPAD& gamepad) {
     }
     if ((buttons & XINPUT_GAMEPAD_A) != 0) {
         pad.fire = true;
+    }
+    // The menu button. Xbox pads report it as Start.
+    if ((buttons & XINPUT_GAMEPAD_START) != 0) {
+        pad.menu = true;
+    }
+    // The View button. Xbox pads report it as Back.
+    if ((buttons & XINPUT_GAMEPAD_BACK) != 0) {
+        pad.view = true;
+    }
+    if ((buttons & XINPUT_GAMEPAD_Y) != 0) {
+        pad.y = true;
     }
 
     // The stick is a direction once it leaves the dead zone XInput defines
@@ -67,8 +90,21 @@ void Take(PadInput& pad, const XINPUT_GAMEPAD& gamepad) {
 
 }  // namespace
 
+void BeginPadFrame() {
+    haveCached = false;
+}
+
 PadInput ReadPad() {
-    PadInput pad;
+    if (haveCached) {
+        return cached;
+    }
+    haveCached = true;
+    cached = PadInput{};
+    // Another program is in front. Leave the sticks with that program.
+    if (!ForegroundIsOurs()) {
+        return cached;
+    }
+    PadInput& pad = cached;
     for (DWORD i = 0; i < 4; ++i) {
         if (idle[i] > 0) {
             idle[i] -= 1;

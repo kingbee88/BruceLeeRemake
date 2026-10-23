@@ -34,3 +34,11 @@ void ComposePlayerUp(int player);
 // $188E. Blue screen, the GAME OVER glyphs, PLAYER 1, and the big score.
 // score is the 24-bit total. The low 6 decimal digits are drawn.
 void ComposeGameOver(int score);
+
+// A full-width blue band across the middle of the playfield. PAUSED is
+// drawn in it with the PLAYER 1 glyphs. The band covers kPausedBandTop
+// for kPausedBandHeight rows of g.pixels. restartProgress is 0..1 while
+// Y is held to restart, and negative when that bar is hidden.
+constexpr int kPausedBandTop = 76;
+constexpr int kPausedBandHeight = 48;
+void DrawPausedBanner(float restartProgress);

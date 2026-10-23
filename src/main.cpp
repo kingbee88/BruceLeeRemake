@@ -37,6 +37,7 @@
 #include "ui.h"
 
 #include <cmath>
+#include <cstring>
 #include <cwchar>
 #include <vector>
 
@@ -80,6 +81,55 @@ bool gAfterFall = false;
 // This loop sleeps three of those, so 106 passes is the same 318.
 constexpr int kGameOverFrames = 106;
 int gGameOverFrames = 0;
+// P, the gamepad menu button, or another program taking the keyboard.
+// Settings is this program, so it does not pause the game. A click on the
+// picture, P, or the menu button clears the pause. Focus coming back does
+// not: the picture stays covered until one of those.
+bool gPaused = false;
+// ShowWindow activates the window before the loop. Ignore that, and any
+// activate that arrives while the window is still being created.
+bool gRunLoop = false;
+// The click that resumes also completes a double-click. That second half
+// must not flip full screen.
+bool gPauseClick = false;
+// The menu button is an edge. Armed once the picture has the keyboard, so
+// a button already held when focus returns does not resume on its own.
+bool gMenuArmed = false;
+bool gPrevMenu = false;
+// The View button opens Settings, and closes it on the next press. Armed
+// while this program is in front, including while Settings itself is.
+bool gViewArmed = false;
+bool gPrevView = false;
+// Holding Y while paused. Negative hides the bar under PAUSED.
+constexpr ULONGLONG kRestartHoldMs = 2000;
+ULONGLONG gRestartHoldStart = 0;
+bool gRestartHolding = false;
+float gRestartProgress = -1.f;
+
+bool WindowHasKeyboardFocus(HWND hwnd) {
+    // The foreground window owns the keyboard. A menu can clear GetFocus
+    // without giving the keys to another window, so this follows the
+    // foreground window rather than GetFocus.
+    return hwnd != nullptr && !IsIconic(hwnd) && GetForegroundWindow() == hwnd;
+}
+
+bool ApplicationHasKeyboardFocus() {
+    const HWND fg = GetForegroundWindow();
+    if (fg == nullptr) {
+        return false;
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+void SetPaused(bool on) {
+    if (gPaused == on) {
+        return;
+    }
+    gPaused = on;
+    SetAudioPaused(on);
+}
 
 void ReleaseTarget() {
     if (gCrtBitmap) {
@@ -124,6 +174,33 @@ bool EnsureCrtBitmap(UINT width, UINT height) {
     return true;
 }
 
+void CoverPause() {
+    if (!gPaused) {
+        return;
+    }
+    DrawPausedBanner(gRestartProgress);
+}
+
+void RestorePause(const std::vector<uint32_t>& under) {
+    if (under.empty()) {
+        return;
+    }
+    for (int y = 0; y < kPausedBandHeight; ++y) {
+        uint32_t* dst = g.pixels.data() + static_cast<size_t>(kPausedBandTop + y) * kWidth;
+        const uint32_t* src = under.data() + static_cast<size_t>(y) * kWidth;
+        std::memcpy(dst, src, kWidth * sizeof(uint32_t));
+    }
+}
+
+std::vector<uint32_t> SavePauseBand() {
+    std::vector<uint32_t> under(static_cast<size_t>(kPausedBandHeight) * kWidth);
+    for (int y = 0; y < kPausedBandHeight; ++y) {
+        const uint32_t* src = g.pixels.data() + static_cast<size_t>(kPausedBandTop + y) * kWidth;
+        std::memcpy(under.data() + static_cast<size_t>(y) * kWidth, src, kWidth * sizeof(uint32_t));
+    }
+    return under;
+}
+
 bool EnsureTarget(HWND hwnd) {
     if (gTarget) {
         return true;
@@ -151,6 +228,13 @@ bool EnsureTarget(HWND hwnd) {
 void Paint(HWND hwnd) {
     if (!EnsureTarget(hwnd)) {
         return;
+    }
+    // The band is painted into g.pixels for this blit, then put back, so a
+    // later logic frame still has the picture that was under the letters.
+    std::vector<uint32_t> underPause;
+    if (gPaused) {
+        underPause = SavePauseBand();
+        CoverPause();
     }
     const D2D1_SIZE_F size = gTarget->GetSize();
     const float cw = size.width;
@@ -194,6 +278,7 @@ void Paint(HWND hwnd) {
         gTarget->DrawBitmap(gBitmap, sharp, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
     }
     const HRESULT hr = gTarget->EndDraw();
+    RestorePause(underPause);
     if (hr == D2DERR_RECREATE_TARGET) {
         ReleaseTarget();
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -331,9 +416,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_THEMECHANGED:
         ApplyAppTheme(hwnd);
         return 0;
+    case WM_ACTIVATEAPP:
+        // wParam is false when another program is taking the foreground.
+        // Moving to Settings stays inside this process and does not pause.
+        if (gRunLoop && gConfig.pauseOnFocusLoss && wp == FALSE) {
+            SetPaused(true);
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_LBUTTONDOWN:
+        if (gPaused) {
+            SetPaused(false);
+            gPauseClick = true;
+            return 0;
+        }
+        gPauseClick = false;
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_LBUTTONDBLCLK:
+        if (gPauseClick) {
+            gPauseClick = false;
+            return 0;
+        }
         SetFullScreen(hwnd, !gFullScreen);
         return 0;
+    case WM_NCLBUTTONDOWN:
+        // The picture click is WM_LBUTTONDOWN. The caption is part of the
+        // window too. Close, minimize, and the menu bar keep the pause.
+        if (gPaused && wp != HTCLOSE && wp != HTMINBUTTON && wp != HTMENU) {
+            SetPaused(false);
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_NCLBUTTONDBLCLK:
         // Close and minimize keep their own clicks. Maximize enters fullscreen.
         if (wp == HTCLOSE || wp == HTMINBUTTON) {
@@ -374,6 +485,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case ID_ABOUT:
             ShowAbout(hwnd);
             return 0;
+        case ID_KEYS:
+            ShowKeyboardShortcuts(hwnd);
+            return 0;
+        case ID_CONTROLLER:
+            ShowControllerMapping(hwnd);
+            return 0;
         case ID_SETTINGS:
             ToggleSettings(hwnd);
             return 0;
@@ -404,6 +521,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HideGearTip();
         return 0;
     case WM_KEYDOWN:
+        // Bit 30 is set when the key was already down, so a repeat does not
+        // flip the pause twice. Alt belongs to the menu.
+        if (wp == 'P' && (lp & (1 << 30)) == 0 && (lp & (1 << 29)) == 0 &&
+            !UiOwnsKeyboard() && WindowHasKeyboardFocus(hwnd)) {
+            SetPaused(!gPaused);
+            return 0;
+        }
+        if (gPaused) {
+            return 0;
+        }
         if (gStage == Stage::Title && (wp == VK_SPACE || wp == VK_RETURN)) {
             // The title picture leaves on the fire button. Space is that
             // button here. The picture stays until the key is up, so the
@@ -438,7 +565,7 @@ void ApplySoundSetting(HWND hwnd, bool on) {
         gConfig.sound = true;
         if (!StartAudio()) {
             gConfig.sound = false;
-            MessageBoxW(hwnd, L"Could not read data\\sound.bin.", L"Bruce Lee", MB_ICONERROR);
+            MessageBoxW(hwnd, L"Could not read data\\sound.bin.", L"Bruce Lee Remake", MB_ICONERROR);
         } else if (gStage == Stage::Menu) {
             StartMenuMusic();
         }
@@ -482,7 +609,7 @@ void ShowGameOver(HWND hwnd) {
     gGameOverFrames = kGameOverFrames;
     gStage = Stage::GameOver;
     ComposeGameOver(g.score);
-    SetWindowTextW(hwnd, L"Bruce Lee");
+    SetWindowTextW(hwnd, L"Bruce Lee Remake");
 }
 
 // After the game-over wait. Score, falls, lamps, and the run counters start
@@ -495,7 +622,7 @@ void StartAfterGameOver(HWND hwnd) {
     ResetRoomBonus();
     ResetRun();
     if (!EnterRoom(ClampedStartRoom())) {
-        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee", MB_ICONERROR);
+        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee Remake", MB_ICONERROR);
         return;
     }
     if (gConfig.showTitleScreen) {
@@ -514,7 +641,7 @@ void RestartGame(HWND hwnd) {
     if (gConfig.showTitleScreen && gTitle.empty()) {
         gTitle = LoadFile(L"title.bin", 8000);
         if (gTitle.empty()) {
-            MessageBoxW(hwnd, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
+            MessageBoxW(hwnd, L"Could not read data\\title.bin.", L"Bruce Lee Remake", MB_ICONERROR);
             return;
         }
     }
@@ -534,11 +661,11 @@ void RestartGame(HWND hwnd) {
     gPrevF3 = false;
     gPrevF5 = false;
     if (!EnterRoom(ClampedStartRoom())) {
-        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee", MB_ICONERROR);
+        MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee Remake", MB_ICONERROR);
         return;
     }
     gShownRoom = -1;
-    SetWindowTextW(hwnd, L"Bruce Lee");
+    SetWindowTextW(hwnd, L"Bruce Lee Remake");
     if (gConfig.showTitleScreen) {
         ComposeTitle(gTitle.data());
         gStage = Stage::Title;
@@ -584,6 +711,30 @@ void PollMenu() {
     }
 }
 
+// Y held for two seconds while paused starts the game over. Releasing Y
+// clears the bar. The count is wall time, not logic frames.
+void PollRestartHold(HWND hwnd, bool yDown) {
+    if (!gPaused || !yDown) {
+        gRestartHolding = false;
+        gRestartProgress = -1.f;
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (!gRestartHolding) {
+        gRestartHolding = true;
+        gRestartHoldStart = now;
+    }
+    const ULONGLONG elapsed = now - gRestartHoldStart;
+    if (elapsed >= kRestartHoldMs) {
+        gRestartHolding = false;
+        gRestartProgress = -1.f;
+        RestartGame(hwnd);
+        SetPaused(false);
+        return;
+    }
+    gRestartProgress = static_cast<float>(elapsed) / static_cast<float>(kRestartHoldMs);
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
@@ -593,14 +744,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     // front.bin holds the PLAYER page. A fall shows it even when the title is skipped.
     if (g.frames.empty() || !LoadFighters() || !LoadFront() || !EnterRoom(ClampedStartRoom())) {
         MessageBoxW(nullptr, L"Could not read data\\bruce.bin, the fighter pictures, the player page, and the room files.",
-                    L"Bruce Lee", MB_ICONERROR);
+                    L"Bruce Lee Remake", MB_ICONERROR);
         return 1;
     }
     g.pixels.assign(static_cast<size_t>(kWidth * kHeight), kPalette[0x0B]);
     gTitle = LoadFile(L"title.bin", 8000);
     if (gConfig.showTitleScreen) {
         if (gTitle.empty()) {
-            MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee", MB_ICONERROR);
+            MessageBoxW(nullptr, L"Could not read data\\title.bin.", L"Bruce Lee Remake", MB_ICONERROR);
             return 1;
         }
         ComposeTitle(gTitle.data());
@@ -612,7 +763,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     }
 
     if (!StartAudio()) {
-        MessageBoxW(nullptr, L"Could not read data\\sound.bin.", L"Bruce Lee", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Could not read data\\sound.bin.", L"Bruce Lee Remake", MB_ICONERROR);
         return 1;
     }
 
@@ -639,7 +790,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     // Hidden until the fullscreen choice is applied, so the windowed frame
     // does not flash up when FullScreen is on.
     HWND hwnd = CreateWindowExW(
-        0, wc.lpszClassName, L"Bruce Lee",
+        0, wc.lpszClassName, L"Bruce Lee Remake",
         WS_OVERLAPPEDWINDOW,
         80, 80,
         rc.right - rc.left, rc.bottom - rc.top,
@@ -659,6 +810,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     ShowWindow(hwnd, gFullScreen ? SW_SHOW : show);
     // ShowWindow can put a hidden window back on its created rect.
     RefitFullScreen(hwnd);
+    gRunLoop = true;
 
     MSG msg{};
     bool running = true;
@@ -691,50 +843,90 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         if (gStage == Stage::Play && g.roomId != gShownRoom) {
             gShownRoom = g.roomId;
             wchar_t title[40];
-            swprintf_s(title, L"Bruce Lee - room %d", g.roomId);
+            swprintf_s(title, L"Bruce Lee Remake - room %d", g.roomId);
             SetWindowTextW(hwnd, title);
         }
-        if (gStage == Stage::Title) {
-            const bool space = KeyDown(VK_SPACE);
-            const bool enter = KeyDown(VK_RETURN);
-            const bool fire = space || enter || ReadPad().fire;
-            if (fire) {
-                gTitleStart = true;
+        BeginPadFrame();
+        const bool gameFocus = WindowHasKeyboardFocus(hwnd);
+        if (!gameFocus) {
+            gMenuArmed = false;
+        }
+        // PauseOnFocusLoss=False on the command line keeps the frame moving
+        // while another program is in front. Settings is still this program.
+        if (!ApplicationHasKeyboardFocus() && gConfig.pauseOnFocusLoss) {
+            SetPaused(true);
+        }
+        // Settings is another window of this program, so View still reaches
+        // it there. Another program in front leaves the pad unread.
+        bool restartY = false;
+        if (gameFocus || UiOwnsKeyboard()) {
+            const PadInput pad = ReadPad();
+            if (gameFocus) {
+                // A fresh press pauses, and the next one resumes. The click
+                // path only resumes.
+                if (gMenuArmed && pad.menu && !gPrevMenu) {
+                    SetPaused(!gPaused);
+                }
+                gPrevMenu = pad.menu;
+                gMenuArmed = true;
+                restartY = pad.y;
             }
-            // The picture stays until fire is up. A on the pad is that
-            // button, the same as Space.
-            if (gTitleStart && !fire) {
-                gTitleStart = false;
-                BeginMenu(true);
-            }
-        } else if (gStage == Stage::Menu) {
-            PollMenu();
-        } else if (gStage == Stage::Player) {
-            gPlayerFrames--;
-            if (gPlayerFrames <= 0) {
-                if (gAfterFall) {
-                    gAfterFall = false;
-                    ResumeAfterFall();
-                    gStage = Stage::Play;
+            if (gViewArmed && pad.view && !gPrevView) {
+                if (SettingsIsOpen()) {
+                    CloseSettings();
                 } else {
-                    BeginPlay();
+                    ToggleSettings(hwnd);
                 }
             }
-        } else if (gStage == Stage::GameOver) {
-            gGameOverFrames--;
-            if (gGameOverFrames <= 0) {
-                gShownRoom = -1;
-                StartAfterGameOver(hwnd);
-            }
+            gPrevView = pad.view;
+            gViewArmed = true;
         } else {
-            Tick();
-            // lose_life has spent the fall. A count still positive runs
-            // between_rooms in this room. A negative count is game over.
-            if (OutOfLives()) {
-                gShownRoom = -1;
-                ShowGameOver(hwnd);
-            } else if (BetweenLives()) {
-                ShowPlayerPage(true);
+            gViewArmed = false;
+        }
+        PollRestartHold(hwnd, restartY);
+        if (!gPaused) {
+            if (gStage == Stage::Title) {
+                const bool space = KeyDown(VK_SPACE);
+                const bool enter = KeyDown(VK_RETURN);
+                const bool fire = space || enter || ReadPad().fire;
+                if (fire) {
+                    gTitleStart = true;
+                }
+                // The picture stays until fire is up. A on the pad is that
+                // button, the same as Space.
+                if (gTitleStart && !fire) {
+                    gTitleStart = false;
+                    BeginMenu(true);
+                }
+            } else if (gStage == Stage::Menu) {
+                PollMenu();
+            } else if (gStage == Stage::Player) {
+                gPlayerFrames--;
+                if (gPlayerFrames <= 0) {
+                    if (gAfterFall) {
+                        gAfterFall = false;
+                        ResumeAfterFall();
+                        gStage = Stage::Play;
+                    } else {
+                        BeginPlay();
+                    }
+                }
+            } else if (gStage == Stage::GameOver) {
+                gGameOverFrames--;
+                if (gGameOverFrames <= 0) {
+                    gShownRoom = -1;
+                    StartAfterGameOver(hwnd);
+                }
+            } else {
+                Tick();
+                // lose_life has spent the fall. A count still positive runs
+                // between_rooms in this room. A negative count is game over.
+                if (OutOfLives()) {
+                    gShownRoom = -1;
+                    ShowGameOver(hwnd);
+                } else if (BetweenLives()) {
+                    ShowPlayerPage(true);
+                }
             }
         }
         InvalidateRect(hwnd, nullptr, FALSE);

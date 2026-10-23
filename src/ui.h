@@ -37,6 +37,8 @@ enum AppCommand : UINT {
     ID_MANUAL,
     ID_ABOUT,
     ID_SETTINGS,
+    ID_KEYS,
+    ID_CONTROLLER,
 };
 
 // The Settings window asks the main window to apply these.
@@ -49,6 +51,7 @@ HACCEL CreateAppAccelerators();
 void ApplyAppTheme(HWND hwnd);
 void ToggleSettings(HWND owner);
 void CloseSettings();
+bool SettingsIsOpen();
 bool SettingsContains(HWND hwnd);
 bool UiOwnsKeyboard();
 void RefreshSettingsDialog();
@@ -56,6 +59,8 @@ bool SettingsDialogMessage(MSG* msg);
 
 void OpenManual(HWND owner);
 void ShowAbout(HWND owner);
+void ShowKeyboardShortcuts(HWND owner);
+void ShowControllerMapping(HWND owner);
 
 bool OnMenuMeasure(LPARAM lp);
 bool OnMenuDraw(LPARAM lp);

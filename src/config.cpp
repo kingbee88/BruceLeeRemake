@@ -122,7 +122,15 @@ void ApplyToken(std::wstring token) {
     if (split == std::wstring::npos) {
         return;
     }
-    ApplySetting(token.substr(0, split), token.substr(split + 1));
+    const std::wstring key = Lower(Trim(token.substr(0, split)));
+    const std::wstring value = Trim(token.substr(split + 1));
+    // Not an ini setting. A test passes it so another program in front does
+    // not freeze the run, and closing the game does not store it.
+    if (key == L"pauseonfocusloss") {
+        ParseBool(value, gConfig.pauseOnFocusLoss);
+        return;
+    }
+    ApplySetting(key, value);
 }
 
 // The ini is ASCII or UTF-8. A UTF-8 or UTF-16 BOM is skipped so Notepad

@@ -103,6 +103,10 @@ HBITMAP gAboutBitmap = nullptr;
 int gBuiltFont = 0;
 bool gBuiltDark = false;
 bool gSettingsReady = false;
+// Where Settings last sat, in screen coordinates. Kept for this session only.
+bool gSettingsPlaced = false;
+int gSettingsX = 0;
+int gSettingsY = 0;
 
 struct Theme {
     bool dark = false;
@@ -508,6 +512,26 @@ void PlaceOnOwner(HWND hwnd, HWND owner) {
     SetWindowPos(hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void RememberSettingsPlace(HWND hwnd) {
+    RECT rc{};
+    if (!GetWindowRect(hwnd, &rc)) {
+        return;
+    }
+    gSettingsX = rc.left;
+    gSettingsY = rc.top;
+    gSettingsPlaced = true;
+}
+
+void PlaceSettings(HWND hwnd, HWND owner) {
+    if (gSettingsPlaced) {
+        SetWindowPos(hwnd, nullptr, gSettingsX, gSettingsY, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    } else {
+        PlaceOnOwner(hwnd, owner);
+    }
+    RememberSettingsPlace(hwnd);
+}
+
 bool CheckValue(int id) {
     switch (id) {
     case IDC_LIVES:
@@ -603,11 +627,11 @@ void BuildSettings(HWND hwnd) {
     const wchar_t* checks[] = {
         L"Infinite Lives",
         L"Enemies cannot hit you",
-        L"Show Title Screen",
+        L"Show Title Screen at Start",
         L"Fix Bugs in Original",
-        L"Full Screen",
+        L"Enable Full Screen",
         L"Show CRT Filter",
-        L"Sound",
+        L"Enable Sound",
     };
     int labelW = 0;
     for (const wchar_t* label : checks) {
@@ -870,10 +894,6 @@ void RelayoutSettings(HWND hwnd) {
         BuildSettings(hwnd);
         FitSettingsWindow(hwnd);
         RefreshSettingsDialog();
-        HWND owner = GetWindow(hwnd, GW_OWNER);
-        if (owner) {
-            PlaceOnOwner(hwnd, owner);
-        }
     }
     ApplyFrameTheme(hwnd);
     InvalidateRect(hwnd, nullptr, TRUE);
@@ -906,6 +926,11 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RelayoutSettings(hwnd);
         }
         return 0;
+    case WM_MOVE:
+        if (gSettingsReady && hwnd == gSettings) {
+            RememberSettingsPlace(hwnd);
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_CLOSE:
         DestroyWindow(hwnd);
         return 0;
@@ -1104,6 +1129,636 @@ void EnsureTip(HWND owner) {
     SendMessageW(gTip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
 }
 
+// A null name is a section heading. The text is the heading.
+struct HelpLine {
+    const wchar_t* name;
+    const wchar_t* text;
+};
+
+constexpr int kHelpMax = 32;
+
+// The shortcut and controller lists share one modal frame. The labels sit on a
+// tall child, and that child moves up inside a viewport so the OK button stays.
+struct HelpState {
+    int ruleY = 0;
+    int inner = 0;
+    int listH = 0;
+    int page = 0;
+    int scroll = 0;
+    HFONT bold = nullptr;
+    HWND viewport = nullptr;
+    HWND content = nullptr;
+    HWND bar = nullptr;
+};
+
+HelpState gHelp;
+
+void ClearHelp() {
+    if (gHelp.bold) {
+        DeleteObject(gHelp.bold);
+    }
+    gHelp = {};
+}
+
+HFONT MakeBoldFont() {
+    LOGFONTW font = MessageFont();
+    font.lfWeight = FW_SEMIBOLD;
+    return CreateFontIndirectW(&font);
+}
+
+int WheelDelta(WPARAM wp) {
+    const unsigned int high = HIWORD(wp);
+    return static_cast<int>(static_cast<short>(static_cast<unsigned short>(high)));
+}
+
+void SetHelpScroll(int next) {
+    int maxScroll = gHelp.listH - gHelp.page;
+    if (maxScroll < 0) {
+        maxScroll = 0;
+    }
+    if (next < 0) {
+        next = 0;
+    }
+    if (next > maxScroll) {
+        next = maxScroll;
+    }
+    if (next == gHelp.scroll) {
+        return;
+    }
+    gHelp.scroll = next;
+    if (gHelp.content) {
+        SetWindowPos(gHelp.content, nullptr, 0, -next, gHelp.inner, gHelp.listH,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+    }
+    if (gHelp.bar) {
+        SetScrollPos(gHelp.bar, SB_CTL, next, TRUE);
+    }
+}
+
+void OnHelpVScroll(WPARAM wp) {
+    const int line = FontHeight() * 2;
+    int page = gHelp.page - FontHeight();
+    if (page < line) {
+        page = line;
+    }
+    switch (LOWORD(wp)) {
+    case SB_LINEUP:
+        SetHelpScroll(gHelp.scroll - line);
+        break;
+    case SB_LINEDOWN:
+        SetHelpScroll(gHelp.scroll + line);
+        break;
+    case SB_PAGEUP:
+        SetHelpScroll(gHelp.scroll - page);
+        break;
+    case SB_PAGEDOWN:
+        SetHelpScroll(gHelp.scroll + page);
+        break;
+    case SB_TOP:
+        SetHelpScroll(0);
+        break;
+    case SB_BOTTOM:
+        SetHelpScroll(gHelp.listH);
+        break;
+    case SB_THUMBTRACK:
+    case SB_THUMBPOSITION: {
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_TRACKPOS;
+        GetScrollInfo(gHelp.bar, SB_CTL, &si);
+        SetHelpScroll(si.nTrackPos);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void InitHelpBar() {
+    if (!gHelp.bar) {
+        return;
+    }
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = gHelp.listH > 1 ? gHelp.listH - 1 : 0;
+    si.nPage = static_cast<UINT>(gHelp.page > 0 ? gHelp.page : 1);
+    si.nPos = 0;
+    SetScrollInfo(gHelp.bar, SB_CTL, &si, TRUE);
+}
+
+LRESULT CALLBACK HelpViewProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(dc, &rc, gTheme.windowBrush);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    default:
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+LRESULT CALLBACK HelpListProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND: {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(reinterpret_cast<HDC>(wp), &rc, gTheme.windowBrush);
+        return 1;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        if (gHelp.inner > 0) {
+            HPEN pen = CreatePen(PS_SOLID, 1, gTheme.boxBorder);
+            const HGDIOBJ old = SelectObject(dc, pen);
+            MoveToEx(dc, 0, gHelp.ruleY, nullptr);
+            LineTo(dc, gHelp.inner, gHelp.ruleY);
+            SelectObject(dc, old);
+            DeleteObject(pen);
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+        return OnCtlColor(wp, lp, false);
+    default:
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+LRESULT CALLBACK HelpFrameProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND: {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(reinterpret_cast<HDC>(wp), &rc, gTheme.windowBrush);
+        return 1;
+    }
+    case WM_CTLCOLORBTN:
+        return OnCtlColor(wp, lp, false);
+    case WM_DRAWITEM:
+        PaintPush(reinterpret_cast<const DRAWITEMSTRUCT*>(lp));
+        return TRUE;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) {
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    case WM_VSCROLL:
+        if (gHelp.bar && reinterpret_cast<HWND>(lp) == gHelp.bar) {
+            OnHelpVScroll(wp);
+        }
+        return 0;
+    case WM_MOUSEWHEEL:
+        SetHelpScroll(gHelp.scroll - WheelDelta(wp) * FontHeight() * 2 / WHEEL_DELTA);
+        return 0;
+    case WM_KEYDOWN:
+        switch (wp) {
+        case VK_UP:
+            SetHelpScroll(gHelp.scroll - FontHeight() * 2);
+            break;
+        case VK_DOWN:
+            SetHelpScroll(gHelp.scroll + FontHeight() * 2);
+            break;
+        case VK_PRIOR:
+            SetHelpScroll(gHelp.scroll - (gHelp.page > FontHeight() ? gHelp.page - FontHeight() : FontHeight()));
+            break;
+        case VK_NEXT:
+            SetHelpScroll(gHelp.scroll + (gHelp.page > FontHeight() ? gHelp.page - FontHeight() : FontHeight()));
+            break;
+        case VK_HOME:
+            SetHelpScroll(0);
+            break;
+        case VK_END:
+            SetHelpScroll(gHelp.listH);
+            break;
+        default:
+            break;
+        }
+        return 0;
+    case WM_SETTINGCHANGE:
+    case WM_SYSCOLORCHANGE:
+    case WM_THEMECHANGED:
+        RebuildTheme();
+        ApplyFrameTheme(hwnd);
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        gHelp.viewport = nullptr;
+        gHelp.content = nullptr;
+        gHelp.bar = nullptr;
+        return 0;
+    default:
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+void RegisterHelpClass() {
+    static bool ready = false;
+    if (ready) {
+        return;
+    }
+    const HINSTANCE inst = GetModuleHandleW(nullptr);
+    const HCURSOR cursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    WNDCLASSW wc{};
+    wc.hInstance = inst;
+    wc.hCursor = cursor;
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+    wc.lpfnWndProc = HelpFrameProc;
+    wc.lpszClassName = L"BruceLeeHelp";
+    RegisterClassW(&wc);
+    wc.lpfnWndProc = HelpViewProc;
+    wc.lpszClassName = L"BruceLeeHelpView";
+    RegisterClassW(&wc);
+    wc.lpfnWndProc = HelpListProc;
+    wc.lpszClassName = L"BruceLeeHelpList";
+    RegisterClassW(&wc);
+    ready = true;
+}
+
+struct HelpLayout {
+    int keyW = 0;
+    int gap = 0;
+    int actionW = 0;
+    int pad = 0;
+    int fontH = 0;
+    int headerH = 0;
+    int ruleY = 0;
+    int tops[kHelpMax]{};
+    int heights[kHelpMax]{};
+    int noteTop = 0;
+    int noteH = 0;
+    int listH = 0;
+    int inner = 0;
+    int bodyH = 0;
+    int extraW = 0;
+    int clientW = 0;
+    int clientH = 0;
+    int btnW = 0;
+    int btnH = 0;
+};
+
+HelpLayout LayoutHelp(HWND owner, HFONT nameFont, const wchar_t* keyHeading,
+                      const HelpLine* lines, int count, const wchar_t* note) {
+    HelpLayout layout{};
+    HDC dc = GetDC(nullptr);
+    const HFONT textFont = UiFont();
+    const HFONT old = static_cast<HFONT>(SelectObject(dc, textFont));
+    TEXTMETRICW tm{};
+    GetTextMetricsW(dc, &tm);
+    const int fontH = tm.tmHeight > 0 ? tm.tmHeight : 16;
+    layout.fontH = fontH;
+    const int em = TextWidth(dc, L"M");
+    int pad = fontH;
+    if (pad < 12) {
+        pad = 12;
+    }
+    layout.pad = pad;
+    int gap = fontH;
+    if (gap < 16) {
+        gap = 16;
+    }
+    layout.gap = gap;
+    int rowGap = fontH / 3;
+    if (rowGap < 6) {
+        rowGap = 6;
+    }
+
+    const HFONT keys = nameFont ? nameFont : textFont;
+    SelectObject(dc, keys);
+    int keyW = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!lines[i].name) {
+            continue;
+        }
+        const int width = TextWidth(dc, lines[i].name);
+        if (width > keyW) {
+            keyW = width;
+        }
+    }
+    SelectObject(dc, textFont);
+    const int headingW = TextWidth(dc, keyHeading);
+    if (headingW > keyW) {
+        keyW = headingW;
+    }
+    keyW += 4;
+    layout.keyW = keyW;
+
+    int natural = TextWidth(dc, L"Action");
+    for (int i = 0; i < count; ++i) {
+        if (!lines[i].name) {
+            continue;
+        }
+        const int width = TextWidth(dc, lines[i].text);
+        if (width > natural) {
+            natural = width;
+        }
+    }
+    int cap = em * 32;
+    if (cap < 280) {
+        cap = 280;
+    }
+    int minAction = em * 16;
+    if (minAction < 160) {
+        minAction = 160;
+    }
+    int actionW = natural;
+    if (actionW > cap) {
+        actionW = cap;
+    }
+    if (actionW < minAction) {
+        actionW = minAction;
+    }
+
+    HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    RECT work{0, 0, 1280, 800};
+    if (GetMonitorInfoW(monitor, &monitorInfo)) {
+        work = monitorInfo.rcWork;
+    }
+    const int workW = work.right - work.left;
+    const int workH = work.bottom - work.top;
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    const DWORD exStyle = WS_EX_DLGMODALFRAME;
+    RECT chrome{0, 0, 0, 0};
+    AdjustWindowRectEx(&chrome, style, FALSE, exStyle);
+    const int chromeW = chrome.right - chrome.left;
+    const int chromeH = chrome.bottom - chrome.top;
+
+    int maxAction = workW - chromeW - pad * 2 - keyW - gap;
+    if (maxAction < minAction) {
+        maxAction = minAction;
+    }
+    if (actionW > maxAction) {
+        actionW = maxAction;
+    }
+
+    int btnH = fontH + fontH / 2;
+    if (btnH < 28) {
+        btnH = 28;
+    }
+    int btnW = TextWidth(dc, L"OK") + em * 4;
+    if (btnW < em * 8) {
+        btnW = em * 8;
+    }
+    layout.btnW = btnW;
+    layout.btnH = btnH;
+
+    auto measure = [&](int width) {
+        layout.actionW = width;
+        layout.inner = keyW + gap + width;
+        layout.ruleY = fontH + 3;
+        layout.headerH = fontH + fontH / 2 + 4;
+        if (layout.headerH < layout.ruleY + 8) {
+            layout.headerH = layout.ruleY + 8;
+        }
+        int y = layout.headerH;
+        for (int i = 0; i < count; ++i) {
+            if (!lines[i].name && i > 0) {
+                int sectionGap = fontH / 2;
+                if (sectionGap < 8) {
+                    sectionGap = 8;
+                }
+                y += sectionGap;
+            }
+            layout.tops[i] = y;
+            int h = fontH;
+            if (lines[i].name) {
+                h = WrapHeight(dc, lines[i].text, width);
+                if (h < fontH) {
+                    h = fontH;
+                }
+            }
+            h += 4;
+            layout.heights[i] = h;
+            y += h + rowGap;
+        }
+        if (note && note[0] != L'\0') {
+            int noteGap = fontH / 2;
+            if (noteGap < 8) {
+                noteGap = 8;
+            }
+            y += noteGap;
+            layout.noteTop = y;
+            layout.noteH = WrapHeight(dc, note, layout.inner);
+            if (layout.noteH < fontH) {
+                layout.noteH = fontH;
+            }
+            layout.noteH += 2;
+            y += layout.noteH;
+        } else {
+            layout.noteTop = y;
+            layout.noteH = 0;
+        }
+        layout.listH = y + 2;
+    };
+    measure(actionW);
+
+    auto clientHeight = [&](int body) {
+        return pad + body + pad / 2 + btnH + pad;
+    };
+    int bodyH = layout.listH;
+    int extraW = 0;
+    if (chromeH + clientHeight(bodyH) > workH) {
+        extraW = GetSystemMetrics(SM_CXVSCROLL);
+        int scrolled = maxAction - extraW;
+        if (scrolled < minAction) {
+            scrolled = minAction;
+        }
+        if (actionW > scrolled) {
+            actionW = scrolled;
+            measure(actionW);
+        }
+        int maxBody = workH - chromeH - (pad + pad / 2 + btnH + pad);
+        if (maxBody < fontH * 4) {
+            maxBody = fontH * 4;
+        }
+        bodyH = layout.listH;
+        if (bodyH > maxBody) {
+            bodyH = maxBody;
+        }
+        if (layout.listH <= bodyH) {
+            extraW = 0;
+            bodyH = layout.listH;
+        }
+    }
+    layout.bodyH = bodyH;
+    layout.extraW = extraW;
+    layout.clientW = pad * 2 + layout.inner + extraW;
+    if (layout.clientW < btnW + pad * 2) {
+        layout.clientW = btnW + pad * 2;
+    }
+    layout.clientH = clientHeight(bodyH);
+
+    SelectObject(dc, old);
+    ReleaseDC(nullptr, dc);
+    return layout;
+}
+
+HWND AddLabel(HWND parent, const wchar_t* text, DWORD extra, int x, int y, int w, int h,
+              HFONT font, int id) {
+    HWND ctrl = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | extra, x, y, w, h, parent,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                GetModuleHandleW(nullptr), nullptr);
+    if (ctrl && font) {
+        SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+    }
+    return ctrl;
+}
+
+bool HelpFrame(HWND hwnd) {
+    wchar_t name[32]{};
+    return GetClassNameW(hwnd, name, 32) > 0 && lstrcmpW(name, L"BruceLeeHelp") == 0;
+}
+
+// Escape and Enter close the box. The shortcut and controller lists also
+// scroll with the wheel and the arrow keys. About has nothing to scroll.
+void RunModal(HWND dlg, HWND owner) {
+    const bool help = HelpFrame(dlg);
+    EnableWindow(owner, FALSE);
+    MSG msg{};
+    for (;;) {
+        if (!IsWindow(dlg)) {
+            break;
+        }
+        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+        if (got == 0) {
+            PostQuitMessage(static_cast<int>(msg.wParam));
+            break;
+        }
+        if (got == -1) {
+            break;
+        }
+        const bool inside = msg.hwnd == dlg || IsChild(dlg, msg.hwnd);
+        if (inside && msg.message == WM_KEYDOWN &&
+            (msg.wParam == VK_ESCAPE || msg.wParam == VK_RETURN)) {
+            DestroyWindow(dlg);
+            continue;
+        }
+        if (help && inside && msg.message == WM_MOUSEWHEEL) {
+            SendMessageW(dlg, WM_MOUSEWHEEL, msg.wParam, msg.lParam);
+            continue;
+        }
+        if (help && inside && msg.message == WM_KEYDOWN &&
+            (msg.wParam == VK_UP || msg.wParam == VK_DOWN || msg.wParam == VK_PRIOR ||
+             msg.wParam == VK_NEXT || msg.wParam == VK_HOME || msg.wParam == VK_END)) {
+            SendMessageW(dlg, WM_KEYDOWN, msg.wParam, msg.lParam);
+            continue;
+        }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+}
+
+void ShowHelp(HWND owner, const wchar_t* title, const wchar_t* keyHeading, const HelpLine* lines,
+              int count, const wchar_t* note) {
+    if (!owner || !lines || count < 1 || count > kHelpMax) {
+        return;
+    }
+    EnsureUiClasses();
+    RegisterHelpClass();
+    RebuildTheme();
+    ClearHelp();
+    gHelp.bold = MakeBoldFont();
+    const HelpLayout layout = LayoutHelp(owner, gHelp.bold, keyHeading, lines, count, note);
+    gHelp.ruleY = layout.ruleY;
+    gHelp.inner = layout.inner;
+    gHelp.listH = layout.listH;
+    gHelp.page = layout.bodyH;
+    gHelp.scroll = 0;
+
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    const DWORD exStyle = WS_EX_DLGMODALFRAME;
+    RECT rc{0, 0, layout.clientW, layout.clientH};
+    AdjustWindowRectEx(&rc, style, FALSE, exStyle);
+    const HINSTANCE inst = GetModuleHandleW(nullptr);
+    HWND dlg = CreateWindowExW(exStyle, L"BruceLeeHelp", title, style, 0, 0, rc.right - rc.left,
+                               rc.bottom - rc.top, owner, nullptr, inst, nullptr);
+    if (!dlg) {
+        ClearHelp();
+        return;
+    }
+    ApplyFrameTheme(dlg);
+    HWND view = CreateWindowExW(0, L"BruceLeeHelpView", nullptr,
+                                WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                                layout.pad, layout.pad, layout.inner, layout.bodyH, dlg, nullptr, inst,
+                                nullptr);
+    if (!view) {
+        DestroyWindow(dlg);
+        ClearHelp();
+        return;
+    }
+    gHelp.viewport = view;
+    HWND content = CreateWindowExW(0, L"BruceLeeHelpList", nullptr,
+                                   WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0,
+                                   layout.inner, layout.listH, view, nullptr, inst, nullptr);
+    if (!content) {
+        DestroyWindow(dlg);
+        ClearHelp();
+        return;
+    }
+    gHelp.content = content;
+
+    const HFONT textFont = UiFont();
+    const HFONT nameFont = gHelp.bold ? gHelp.bold : textFont;
+    const DWORD single = SS_LEFTNOWORDWRAP | SS_NOPREFIX;
+    const DWORD wrapped = SS_LEFT | SS_NOPREFIX;
+    AddLabel(content, keyHeading, single, 0, 0, layout.keyW, layout.fontH, textFont, IDC_HINT);
+    AddLabel(content, L"Action", single, layout.keyW + layout.gap, 0, layout.actionW, layout.fontH,
+             textFont, IDC_HINT);
+    for (int i = 0; i < count; ++i) {
+        const int y = layout.tops[i];
+        const int h = layout.heights[i];
+        if (!lines[i].name) {
+            AddLabel(content, lines[i].text, single, 0, y, layout.inner, h, nameFont, 0);
+            continue;
+        }
+        AddLabel(content, lines[i].name, single, 0, y, layout.keyW, h, nameFont, 0);
+        AddLabel(content, lines[i].text, wrapped, layout.keyW + layout.gap, y, layout.actionW, h,
+                 textFont, 0);
+    }
+    if (note && note[0] != L'\0' && layout.noteH > 0) {
+        AddLabel(content, note, wrapped, 0, layout.noteTop, layout.inner, layout.noteH, textFont,
+                 IDC_HINT);
+    }
+    if (layout.extraW > 0) {
+        gHelp.bar = CreateWindowExW(0, L"SCROLLBAR", nullptr, WS_CHILD | WS_VISIBLE | SBS_VERT,
+                                    layout.pad + layout.inner, layout.pad, layout.extraW, layout.bodyH,
+                                    dlg, nullptr, inst, nullptr);
+        InitHelpBar();
+    }
+    const int btnY = layout.pad + layout.bodyH + layout.pad / 2;
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                              (layout.clientW - layout.btnW) / 2, btnY, layout.btnW, layout.btnH, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), inst, nullptr);
+    SetWindowSubclass(ok, CheckEraseProc, 1, 0);
+    PlaceOnOwner(dlg, owner);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(ok);
+    RunModal(dlg, owner);
+    if (!IsWindow(dlg)) {
+        ClearHelp();
+    }
+}
+
 }  // namespace
 
 HMENU CreateAppMenu() {
@@ -1121,7 +1776,10 @@ HMENU CreateAppMenu() {
 
     HMENU about = CreatePopupMenu();
     AppendMenuW(about, MF_STRING, ID_MANUAL, L"Game &Manual\tF1");
-    AppendMenuW(about, MF_STRING, ID_ABOUT, L"&About Bruce Lee...\tCtrl+F1");
+    AppendMenuW(about, MF_STRING, ID_KEYS, L"&Keyboard shortcuts");
+    AppendMenuW(about, MF_STRING, ID_CONTROLLER, L"&Controller mapping");
+    AppendMenuW(about, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(about, MF_STRING, ID_ABOUT, L"&About Bruce Lee Remake...\tCtrl+F1");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(about), L"&About");
     // Owner-drawn so the bar text can follow the dark theme. The popup menus stay attached.
     const wchar_t* captions[] = {L"&File", L"&About"};
@@ -1223,7 +1881,7 @@ void ToggleSettings(HWND owner) {
     BuildSettings(hwnd);
     FitSettingsWindow(hwnd);
     RefreshSettingsDialog();
-    PlaceOnOwner(hwnd, owner);
+    PlaceSettings(hwnd, owner);
     gSettingsReady = true;
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(gChkLives);
@@ -1234,6 +1892,10 @@ void CloseSettings() {
         DestroyWindow(gSettings);
         gSettings = nullptr;
     }
+}
+
+bool SettingsIsOpen() {
+    return gSettings != nullptr;
 }
 
 bool SettingsContains(HWND hwnd) {
@@ -1404,34 +2066,53 @@ void ShowAbout(HWND owner) {
     PlaceOnOwner(dlg, owner);
     ShowWindow(dlg, SW_SHOW);
     SetFocus(ok);
-    EnableWindow(owner, FALSE);
+    RunModal(dlg, owner);
+}
 
-    MSG msg{};
-    for (;;) {
-        if (!IsWindow(dlg)) {
-            break;
-        }
-        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
-        if (got == 0) {
-            PostQuitMessage(static_cast<int>(msg.wParam));
-            break;
-        }
-        if (got == -1) {
-            break;
-        }
-        if (msg.message == WM_KEYDOWN &&
-            (msg.wParam == VK_ESCAPE || msg.wParam == VK_RETURN) &&
-            (msg.hwnd == dlg || IsChild(dlg, msg.hwnd))) {
-            DestroyWindow(dlg);
-            continue;
-        }
-        if (!IsDialogMessageW(dlg, &msg)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-    EnableWindow(owner, TRUE);
-    SetForegroundWindow(owner);
+void ShowKeyboardShortcuts(HWND owner) {
+    static constexpr HelpLine lines[] = {
+        {nullptr, L"Playing"},
+        {L"Left / Right", L"Walk."},
+        {L"Up", L"Jump, or climb a ladder. With Left or Right held, jump sideways."},
+        {L"Down", L"Duck. On a ladder, climb down."},
+        {L"Space", L"Punch while standing. Flying kick while moving."},
+        {L"P", L"Pause. Press again to resume."},
+        {nullptr, L"Title and options"},
+        {L"Space or Enter", L"Leave the title picture."},
+        {L"F3", L"On the options page, switch 1 player / 2 players."},
+        {L"F5", L"On the options page, switch computer / opponent."},
+        {L"F7", L"Leave the options page."},
+        {nullptr, L"Window"},
+        {L"Escape", L"Leave full screen, and close Settings if it is open."},
+        {L"Ctrl+R", L"Restart the game."},
+        {L"F1", L"Open the game manual."},
+        {L"Ctrl+F1", L"About."},
+        {L"Ctrl+,", L"Settings."},
+        {L"Alt+F4", L"Exit."},
+    };
+    ShowHelp(owner, L"Keyboard shortcuts", L"Key", lines,
+             static_cast<int>(sizeof(lines) / sizeof(lines[0])), nullptr);
+}
+
+void ShowControllerMapping(HWND owner) {
+    static constexpr HelpLine lines[] = {
+        {L"A",
+         L"Leave the title picture. Leave the options page. Punch while standing. Flying kick while moving."},
+        {L"Left stick",
+         L"Left and right walk. Up jumps. Up with left or right jumps sideways. Down ducks. On a ladder, up and down climb."},
+        {L"D-pad", L"Same as the left stick."},
+        {L"Menu (Start)", L"Pause. Press again to resume."},
+        {L"View (Back)", L"Open Settings. Press again to close it."},
+        {L"Y",
+         L"While paused, hold for 2 seconds to restart. A bar under PAUSED fills while Y is held."},
+    };
+    static constexpr wchar_t note[] =
+        L"An Xbox pad uses these names. Menu is the button to the right of the Xbox button, "
+        L"and View is the button to the left. The other buttons are not used. Any other "
+        L"XInput controller uses this same layout. The keyboard keeps working while a pad "
+        L"is connected. The pad is read only while this program is in front.";
+    ShowHelp(owner, L"Controller mapping", L"Control", lines,
+             static_cast<int>(sizeof(lines) / sizeof(lines[0])), note);
 }
 
 HFONT MenuFont() {

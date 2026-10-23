@@ -397,6 +397,7 @@ float hp = 0;
 float prevIn = 0;
 std::atomic<bool> audioOn{false};
 std::atomic<bool> run{false};
+std::atomic<bool> held{false};
 std::mutex mu;
 std::condition_variable started;
 bool ready = false;
@@ -914,8 +915,17 @@ void AudioMain() {
         }
         {
             std::lock_guard<std::mutex> lock(mu);
-            for (int i = 0; i < kBlock; ++i) {
-                bufs[slot][static_cast<size_t>(i)] = NextSample();
+            // A pause keeps the chip on this sample. Silence fills the
+            // queue so the voice does not underrun, and the tune does not
+            // run on ahead.
+            if (held.load()) {
+                for (int i = 0; i < kBlock; ++i) {
+                    bufs[slot][static_cast<size_t>(i)] = 0;
+                }
+            } else {
+                for (int i = 0; i < kBlock; ++i) {
+                    bufs[slot][static_cast<size_t>(i)] = NextSample();
+                }
             }
         }
         XAUDIO2_BUFFER buffer{};
@@ -1042,6 +1052,10 @@ void PlayEffect(int id) {
 
 void SilenceSound() {
     audio::Silence();
+}
+
+void SetAudioPaused(bool paused) {
+    audio::held = paused;
 }
 
 void StartMenuMusic() {

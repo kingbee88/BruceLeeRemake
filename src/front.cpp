@@ -249,3 +249,151 @@ void ComposeGameOver(int score) {
         DrawCell(LogoCharset(), base + 3, col + 1, 9, true, kLightGrey);
     }
 }
+
+namespace {
+
+// One multicolor glyph, 4 dots wide. localY is the row inside the 16-pixel
+// letter, so the ink follows the PLAYER page stripe even though the band
+// sits in the middle of the screen. On that page the glyphs start at
+// screen y 56, and between_raster walks the greys across them.
+void PaintMulti(const uint8_t* glyph, int x, int y, int localY) {
+    for (int row = 0; row < 8; ++row) {
+        const int py = y + row;
+        if (py < 0 || py >= kHeight) {
+            continue;
+        }
+        const int ink = PlayerInk(56 + localY + row);
+        const int color[4] = {kBlue, ink, kLightGrey, kYellow};
+        const int bits = glyph[row];
+        uint32_t* dest = g.pixels.data() + static_cast<size_t>(py) * kWidth;
+        for (int col = 0; col < 4; ++col) {
+            const uint32_t pixel = kPalette[color[(bits >> (6 - col * 2)) & 3]];
+            const int px = x + col * 2;
+            if (px >= 0 && px + 1 < kWidth) {
+                dest[px] = pixel;
+                dest[px + 1] = pixel;
+            }
+        }
+    }
+}
+
+void PaintLetter(const uint8_t* topLeft, const uint8_t* topRight,
+                 const uint8_t* bottomLeft, const uint8_t* bottomRight,
+                 int x, int y) {
+    PaintMulti(topLeft, x, y, 0);
+    PaintMulti(topRight, x + 8, y, 0);
+    PaintMulti(bottomLeft, x, y + 8, 8);
+    PaintMulti(bottomRight, x + 8, y + 8, 8);
+}
+
+// Charset $8000 has the PLAYER letters and not S or D. These two use that
+// same grid: 8 multicolor dots, pair 01 for the ink, four blank rows, and
+// the stroke of P and C. Each letter is top-left, top-right, bottom-left,
+// bottom-right, 8 bytes a glyph.
+const uint8_t kLetterS[32] = {
+    0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x14, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x50, 0x54, 0x14, 0x00,
+    0x15, 0x15, 0x00, 0x00, 0x14, 0x14, 0x15, 0x05,
+    0x50, 0x54, 0x14, 0x14, 0x14, 0x14, 0x54, 0x50,
+};
+const uint8_t kLetterD[32] = {
+    0x00, 0x00, 0x00, 0x00, 0x15, 0x15, 0x14, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x50, 0x54, 0x14, 0x14,
+    0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x15, 0x15,
+    0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x54, 0x50,
+};
+
+void PaintCharsetLetter(int code, int x, int y) {
+    const uint8_t* charset = LogoCharset();
+    PaintLetter(charset + ((code | 0x80) * 8),
+                charset + (((code + 2) | 0x80) * 8),
+                charset + (((code + 1) | 0x80) * 8),
+                charset + (((code + 3) | 0x80) * 8),
+                x, y);
+}
+
+void PaintRawLetter(const uint8_t* raw, int x, int y) {
+    PaintLetter(raw, raw + 8, raw + 16, raw + 24, x, y);
+}
+
+}  // namespace
+
+void DrawRestartBar(int left, int right, int top, int height, float progress) {
+    if (progress < 0.f || height < 3 || right - left < 3) {
+        return;
+    }
+    if (progress > 1.f) {
+        progress = 1.f;
+    }
+    const uint32_t frame = kPalette[kLightGrey];
+    const uint32_t fill = kPalette[kWhite];
+    const uint32_t blue = kPalette[kBlue];
+    for (int y = top; y < top + height; ++y) {
+        if (y < 0 || y >= kHeight) {
+            continue;
+        }
+        uint32_t* row = g.pixels.data() + static_cast<size_t>(y) * kWidth;
+        for (int x = left; x < right; ++x) {
+            if (x < 0 || x >= kWidth) {
+                continue;
+            }
+            const bool border = y == top || y + 1 == top + height || x == left || x + 1 == right;
+            row[x] = border ? frame : blue;
+        }
+    }
+    const int innerLeft = left + 1;
+    const int innerWidth = (right - 1) - innerLeft;
+    int filled = static_cast<int>(static_cast<float>(innerWidth) * progress + 0.5f);
+    if (filled > innerWidth) {
+        filled = innerWidth;
+    }
+    for (int y = top + 1; y + 1 < top + height; ++y) {
+        if (y < 0 || y >= kHeight) {
+            continue;
+        }
+        uint32_t* row = g.pixels.data() + static_cast<size_t>(y) * kWidth;
+        for (int x = innerLeft; x < innerLeft + filled; ++x) {
+            if (x >= 0 && x < kWidth) {
+                row[x] = fill;
+            }
+        }
+    }
+}
+
+void DrawPausedBanner(float restartProgress) {
+    const uint32_t blue = kPalette[kBlue];
+    const int bandBottom = kPausedBandTop + kPausedBandHeight;
+    for (int y = kPausedBandTop; y < bandBottom; ++y) {
+        if (y < 0 || y >= kHeight) {
+            continue;
+        }
+        uint32_t* row = g.pixels.data() + static_cast<size_t>(y) * kWidth;
+        for (int x = 0; x < kWidth; ++x) {
+            row[x] = blue;
+        }
+    }
+    if (gFront.empty()) {
+        return;
+    }
+    // P A U are in the logo charset. S and D are the matching shapes above.
+    // E is the GAME OVER E. Six letters, 16 pixels each, centered in the band.
+    constexpr int kLetter = 16;
+    constexpr int kCount = 6;
+    const int textW = kCount * kLetter;
+    const int textX = (kWidth - textW) / 2;
+    const int textY = kPausedBandTop + (kPausedBandHeight - kLetter) / 2;
+    const int codes[kCount] = {0x20, 0x00, 0x28, -1, 0x0C, -2};
+    for (int i = 0; i < kCount; ++i) {
+        const int x = textX + i * kLetter;
+        if (codes[i] == -1) {
+            PaintRawLetter(kLetterS, x, textY);
+        } else if (codes[i] == -2) {
+            PaintRawLetter(kLetterD, x, textY);
+        } else {
+            PaintCharsetLetter(codes[i], x, textY);
+        }
+    }
+    // Under the word. The glyph block is 16 pixels, and the band has room
+    // below it for a 6-pixel bar.
+    DrawRestartBar(textX, textX + textW, textY + kLetter + 4, 6, restartProgress);
+}

@@ -39,6 +39,9 @@ struct Config {
     bool crtVignette = true;
     // False leaves the rooms and the options page silent.
     bool sound = true;
+    // False leaves the game running when another program is in front.
+    // Command line only. SaveConfig does not write it.
+    bool pauseOnFocusLoss = true;
 };
 
 extern Config gConfig;
