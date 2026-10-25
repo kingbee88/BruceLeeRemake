@@ -1,0 +1,10 @@
+---
+description: Draft a commit message and wait for the user to accept it before committing
+alwaysApply: true
+---
+
+# Commit message
+
+When the user asks you to commit, or to commit and push, and the request does not include the commit message, draft one from the staged changes and show it as a starting point. Wait for them to accept it or send a replacement. Do not commit or push until then.
+
+Use the message they accept or send. A message already written in the same request is the one to use, so do not draft another.
