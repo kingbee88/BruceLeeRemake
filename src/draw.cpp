@@ -170,6 +170,42 @@ void DrawSpark(int index) {
 
 }  // namespace
 
+bool ComposeWelcomeRoom(std::vector<uint32_t>& dest) {
+    // Room 1. Its two spawn points are both on screen, so the Ninja and Yamo
+    // can stand in the same picture. Bruce's spawn is the left one; he stands
+    // just to the right of Yamo so neither fighter is covered.
+    if (!ShowRoomPicture(1)) {
+        return false;
+    }
+    const int bruceX = g.x;
+    const int bruceY = g.y;
+    const int bruceFacing = g.facing;
+    const int brucePose = g.pose;
+    std::vector<uint32_t> pixels = g.pixels;
+
+    int leftX = 0;
+    int leftY = 0;
+    RoomSpawn(1, leftX, leftY);
+    const int rightX = 0x95 * 2 - 24;
+    const int rightY = 0x92 - 21;
+    StandFighters(rightX, rightY, -1, leftX, leftY, 1);
+    g.x = leftX + 40;
+    g.y = leftY;
+    g.facing = 1;
+    g.pose = 0;
+    Compose();
+    dest = g.pixels;
+
+    g.x = bruceX;
+    g.y = bruceY;
+    g.facing = bruceFacing;
+    g.pose = brucePose;
+    g.pixels = std::move(pixels);
+    RestoreFighters();
+    RestoreRoomPicture();
+    return dest.size() == static_cast<size_t>(kWidth * kHeight);
+}
+
 void ComposeTitle(const uint8_t* bitmap) {
     // boot01_title.vsf is bitmap mode with multicolor on ($D011 $3B, $D016 $18).
     // $D018 is $18, so this bitmap is $2000 and the video matrix is $0400.

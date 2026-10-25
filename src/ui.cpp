@@ -30,10 +30,15 @@
 #include "ui.h"
 
 #include "config.h"
+#include "crt.h"
+#include "draw.h"
+#include "game.h"
 #include "load.h"
 #include "room.h"
 
+#include <cmath>
 #include <cstdint>
+#include <vector>
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -57,6 +62,14 @@ constexpr int IDC_CRT_CURVE = 211;
 constexpr int IDC_CRT_SCANLINES = 212;
 constexpr int IDC_CRT_BLUR = 213;
 constexpr int IDC_CRT_VIGNETTE = 214;
+constexpr int IDC_WIZ_MODERN = 220;
+constexpr int IDC_WIZ_AUTHENTIC = 221;
+constexpr int IDC_WIZ_MODERN_PIC = 222;
+constexpr int IDC_WIZ_AUTHENTIC_PIC = 223;
+constexpr int IDC_WIZ_NOTE = 224;
+// Which welcome-wizard experience is selected. Owner-drawn buttons do not
+// keep a check of their own.
+bool gWizardModern = true;
 // Room for the focus ring to the left of the checkbox. The ring is clipped if it
 // shares the checkbox's left edge.
 constexpr int kFocusPad = 4;
@@ -370,9 +383,29 @@ void DrawTick(HDC dc, const RECT& box, COLORREF color) {
 
 bool CheckValue(int id);
 
-void PaintCheck(const DRAWITEMSTRUCT* draw) {
-    RECT rc = draw->rcItem;
-    FillRect(draw->hDC, &rc, gTheme.windowBrush);
+void DrawChoiceCaption(HDC dc, const RECT& rc, const RECT& boxRc, int box, HWND item, UINT itemState) {
+    wchar_t label[128]{};
+    const int count = GetWindowTextW(item, label, 128);
+    RECT text = rc;
+    text.left = boxRc.right + (box >= 18 ? 10 : 8);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, gTheme.text);
+    const HFONT oldFont = static_cast<HFONT>(SelectObject(dc, UiFont()));
+    DrawTextW(dc, label, count, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if ((itemState & ODS_FOCUS) != 0) {
+        SIZE size{};
+        GetTextExtentPoint32W(dc, label, count, &size);
+        int right = text.left + static_cast<int>(size.cx) + 6;
+        if (right > rc.right - 1) {
+            right = rc.right - 1;
+        }
+        RECT focus{rc.left + 1, rc.top + 1, right, rc.bottom - 1};
+        DrawFocusRing(dc, focus);
+    }
+    SelectObject(dc, oldFont);
+}
+
+int ChoiceBox(const RECT& rc, RECT& boxRc) {
     const int fontH = FontHeight();
     int box = fontH;
     if (box < 14) {
@@ -383,7 +416,15 @@ void PaintCheck(const DRAWITEMSTRUCT* draw) {
         box = limit;
     }
     const int top = rc.top + (rc.bottom - rc.top - box) / 2;
-    RECT boxRc{rc.left + kFocusPad, top, rc.left + kFocusPad + box, top + box};
+    boxRc = RECT{rc.left + kFocusPad, top, rc.left + kFocusPad + box, top + box};
+    return box;
+}
+
+void PaintCheck(const DRAWITEMSTRUCT* draw) {
+    RECT rc = draw->rcItem;
+    FillRect(draw->hDC, &rc, gTheme.windowBrush);
+    RECT boxRc{};
+    const int box = ChoiceBox(rc, boxRc);
     const bool on = CheckValue(static_cast<int>(GetDlgCtrlID(draw->hwndItem)));
     HBRUSH fill = CreateSolidBrush(on ? gTheme.boxChecked : gTheme.boxFill);
     HPEN pen = CreatePen(PS_SOLID, 1, on ? gTheme.boxChecked : gTheme.boxBorder);
@@ -398,25 +439,37 @@ void PaintCheck(const DRAWITEMSTRUCT* draw) {
     if (on) {
         DrawTick(draw->hDC, boxRc, gTheme.checkMark);
     }
-    wchar_t label[128]{};
-    const int count = GetWindowTextW(draw->hwndItem, label, 128);
-    RECT text = rc;
-    text.left = boxRc.right + (box >= 18 ? 10 : 8);
-    SetBkMode(draw->hDC, TRANSPARENT);
-    SetTextColor(draw->hDC, gTheme.text);
-    const HFONT oldFont = static_cast<HFONT>(SelectObject(draw->hDC, UiFont()));
-    DrawTextW(draw->hDC, label, count, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    if ((draw->itemState & ODS_FOCUS) != 0) {
-        SIZE size{};
-        GetTextExtentPoint32W(draw->hDC, label, count, &size);
-        int right = text.left + static_cast<int>(size.cx) + 6;
-        if (right > rc.right - 1) {
-            right = rc.right - 1;
-        }
-        RECT focus{rc.left + 1, rc.top + 1, right, rc.bottom - 1};
-        DrawFocusRing(draw->hDC, focus);
+    DrawChoiceCaption(draw->hDC, rc, boxRc, box, draw->hwndItem, draw->itemState);
+}
+
+void PaintRadio(const DRAWITEMSTRUCT* draw) {
+    RECT rc = draw->rcItem;
+    FillRect(draw->hDC, &rc, gTheme.windowBrush);
+    RECT boxRc{};
+    const int box = ChoiceBox(rc, boxRc);
+    const int id = static_cast<int>(GetDlgCtrlID(draw->hwndItem));
+    const bool on = id == IDC_WIZ_MODERN ? gWizardModern : !gWizardModern;
+    HBRUSH fill = CreateSolidBrush(on ? gTheme.boxChecked : gTheme.boxFill);
+    HPEN pen = CreatePen(PS_SOLID, 1, on ? gTheme.boxChecked : gTheme.boxBorder);
+    const HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
+    const HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+    Ellipse(draw->hDC, boxRc.left, boxRc.top, boxRc.right, boxRc.bottom);
+    SelectObject(draw->hDC, oldBrush);
+    SelectObject(draw->hDC, oldPen);
+    DeleteObject(fill);
+    DeleteObject(pen);
+    if (on) {
+        const int inset = box >= 16 ? 4 : 3;
+        HBRUSH mark = CreateSolidBrush(gTheme.checkMark);
+        const HGDIOBJ oldMark = SelectObject(draw->hDC, mark);
+        const HGDIOBJ oldDot = SelectObject(draw->hDC, GetStockObject(NULL_PEN));
+        Ellipse(draw->hDC, boxRc.left + inset, boxRc.top + inset, boxRc.right - inset,
+                boxRc.bottom - inset);
+        SelectObject(draw->hDC, oldDot);
+        SelectObject(draw->hDC, oldMark);
+        DeleteObject(mark);
     }
-    SelectObject(draw->hDC, oldFont);
+    DrawChoiceCaption(draw->hDC, rc, boxRc, box, draw->hwndItem, draw->itemState);
 }
 
 void PaintPush(const DRAWITEMSTRUCT* draw) {
@@ -454,7 +507,7 @@ LRESULT OnCtlColor(WPARAM wp, LPARAM lp, bool edit) {
         return reinterpret_cast<LRESULT>(gTheme.editBrush);
     }
     const int id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
-    SetTextColor(dc, id == IDC_HINT ? gTheme.muted : gTheme.text);
+    SetTextColor(dc, (id == IDC_HINT || id == IDC_WIZ_NOTE) ? gTheme.muted : gTheme.text);
     SetBkColor(dc, gTheme.window);
     return reinterpret_cast<LRESULT>(gTheme.windowBrush);
 }
@@ -1627,9 +1680,11 @@ bool HelpFrame(HWND hwnd) {
 
 // Escape and Enter close the box. The shortcut and controller lists also
 // scroll with the wheel and the arrow keys. About has nothing to scroll.
-void RunModal(HWND dlg, HWND owner) {
+// False means the message loop was quit.
+bool RunModal(HWND dlg, HWND owner) {
     const bool help = HelpFrame(dlg);
     EnableWindow(owner, FALSE);
+    bool quit = false;
     MSG msg{};
     for (;;) {
         if (!IsWindow(dlg)) {
@@ -1638,6 +1693,7 @@ void RunModal(HWND dlg, HWND owner) {
         const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
         if (got == 0) {
             PostQuitMessage(static_cast<int>(msg.wParam));
+            quit = true;
             break;
         }
         if (got == -1) {
@@ -1666,6 +1722,7 @@ void RunModal(HWND dlg, HWND owner) {
     }
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
+    return !quit;
 }
 
 void ShowHelp(HWND owner, const wchar_t* title, const wchar_t* keyHeading, const HelpLine* lines,
@@ -2067,6 +2124,751 @@ void ShowAbout(HWND owner) {
     ShowWindow(dlg, SW_SHOW);
     SetFocus(ok);
     RunModal(dlg, owner);
+}
+
+constexpr wchar_t kWelcomeHeading[] = L"Welcome to Bruce Lee Remake.";
+constexpr wchar_t kWelcomeIntro[] =
+    L"How do you want your experience to look? "
+    L"You can change this and more later in Settings.";
+constexpr wchar_t kModernExperience[] = L"Modern experience";
+constexpr wchar_t kAuthenticExperience[] = L"Authentic experience";
+constexpr wchar_t kModernNote[] = L"Modern TV. Fix scoring bug in the original.";
+constexpr wchar_t kAuthenticNote[] = L"Old School TV. Keep original scoring bug.";
+constexpr wchar_t kTrainersHeading[] = L"Trainers";
+
+HBITMAP gWizardModernBmp = nullptr;
+HBITMAP gWizardAuthenticBmp = nullptr;
+HFONT gWizardBold = nullptr;
+bool gWizardSave = true;
+bool gWizardDone = false;
+int gWizardShotW = 0;
+int gWizardShotH = 0;
+
+struct WizardLayout {
+    int pad = 0;
+    int imageGap = 0;
+    int clientW = 0;
+    int clientH = 0;
+    int contentW = 0;
+    int colW = 0;
+    int imageW = 0;
+    int imageH = 0;
+    int radioH = 0;
+    int noteH = 0;
+    int noteW = 0;
+    int afterBox = 0;
+    bool stacked = false;
+    int headingY = 0;
+    int headingH = 0;
+    int introY = 0;
+    int introH = 0;
+    int colX[2] = {};
+    int colY[2] = {};
+    int trainersY = 0;
+    int trainersH = 0;
+    int checksY = 0;
+    int checksW = 0;
+    int rowH = 0;
+    int btnX = 0;
+    int btnY = 0;
+    int btnW = 0;
+    int btnH = 0;
+};
+
+// Sharp picture, and one landing pays 50 once. The four television parts
+// stay as they are, so Settings can turn the old picture back on.
+void ApplyModernExperience() {
+    gConfig.showCrtFilter = false;
+    gConfig.fixBugsInOriginal = true;
+}
+
+// The old television, and the original landing score.
+void ApplyAuthenticExperience() {
+    gConfig.showCrtFilter = true;
+    gConfig.crtCurve = true;
+    gConfig.crtScanlines = true;
+    gConfig.crtBlur = true;
+    gConfig.crtVignette = true;
+    gConfig.fixBugsInOriginal = false;
+}
+
+void SelectWizard(HWND dlg, bool modern) {
+    gWizardModern = modern;
+    if (modern) {
+        ApplyModernExperience();
+    } else {
+        ApplyAuthenticExperience();
+    }
+    if (!dlg) {
+        return;
+    }
+    InvalidateRect(GetDlgItem(dlg, IDC_WIZ_MODERN), nullptr, FALSE);
+    InvalidateRect(GetDlgItem(dlg, IDC_WIZ_AUTHENTIC), nullptr, FALSE);
+}
+
+void FinishWizard() {
+    if (gWizardDone) {
+        return;
+    }
+    gWizardDone = true;
+    if (!gWizardSave) {
+        return;
+    }
+    if (gWizardModern) {
+        ApplyModernExperience();
+    } else {
+        ApplyAuthenticExperience();
+    }
+    gConfig.firstTimeRun = false;
+    SaveConfig();
+}
+
+void ReleaseWizardPictures() {
+    if (gWizardModernBmp) {
+        DeleteObject(gWizardModernBmp);
+        gWizardModernBmp = nullptr;
+    }
+    if (gWizardAuthenticBmp) {
+        DeleteObject(gWizardAuthenticBmp);
+        gWizardAuthenticBmp = nullptr;
+    }
+}
+
+void ReleaseWizardFont() {
+    if (gWizardBold) {
+        DeleteObject(gWizardBold);
+        gWizardBold = nullptr;
+    }
+}
+
+uint32_t PackedColor(COLORREF color) {
+    return 0xFF000000u | (static_cast<uint32_t>(GetRValue(color)) << 16) |
+           (static_cast<uint32_t>(GetGValue(color)) << 8) | static_cast<uint32_t>(GetBValue(color));
+}
+
+// Room 1 with the Ninja and Yamo, scaled into the thumbnail. Modern is the
+// nearest-neighbor scale. Authentic is the television, drawn large enough
+// that its scanlines resolve and then averaged back to this size.
+std::vector<uint32_t> gWizardSource;
+
+const float* ThumbnailLinear() {
+    static float table[256];
+    static bool ready = false;
+    if (ready) {
+        return table;
+    }
+    for (int channel = 0; channel < 256; ++channel) {
+        const float c = static_cast<float>(channel) / 255.f;
+        if (c <= 0.04045f) {
+            table[channel] = c / 12.92f;
+        } else {
+            table[channel] = std::pow((c + 0.055f) / 1.055f, 2.4f);
+        }
+    }
+    ready = true;
+    return table;
+}
+
+int ThumbnailByte(float linear) {
+    if (linear <= 0.f) {
+        return 0;
+    }
+    if (linear >= 1.f) {
+        return 255;
+    }
+    float encoded = linear * 12.92f;
+    if (linear > 0.0031308f) {
+        encoded = 1.055f * std::pow(linear, 1.f / 2.4f) - 0.055f;
+    }
+    int byte = static_cast<int>(encoded * 255.f + 0.5f);
+    if (byte < 0) {
+        return 0;
+    }
+    if (byte > 255) {
+        return 255;
+    }
+    return byte;
+}
+
+// The thumbnail is about one pixel per source row, and the television draws
+// a scanline on every row. Sampled at that size the lines beat against the
+// pixels and turn into waves. Four samples across each source pixel let the
+// lines exist, and averaging them in linear light leaves the glass without
+// the waves.
+void DrawAuthenticShot(const uint32_t* src, uint32_t* dest, int destW, int innerW, int innerH) {
+    int scale = 1;
+    while (scale < 8 && innerH * scale < kHeight * 4) {
+        ++scale;
+    }
+    if (scale == 1) {
+        std::vector<uint32_t> temp(static_cast<size_t>(innerW) * static_cast<size_t>(innerH));
+        ApplyCrt(src, kWidth, kHeight, temp.data(), innerW, innerH, CrtOptions{true, true, true, true});
+        for (int y = 0; y < innerH; ++y) {
+            uint32_t* row = dest + static_cast<size_t>(y + 1) * static_cast<size_t>(destW) + 1;
+            const uint32_t* from = temp.data() + static_cast<size_t>(y) * static_cast<size_t>(innerW);
+            for (int x = 0; x < innerW; ++x) {
+                row[x] = from[x];
+            }
+        }
+        return;
+    }
+    const int bigW = innerW * scale;
+    const int bigH = innerH * scale;
+    std::vector<uint32_t> big(static_cast<size_t>(bigW) * static_cast<size_t>(bigH));
+    ApplyCrt(src, kWidth, kHeight, big.data(), bigW, bigH, CrtOptions{true, true, true, true});
+    const float* linear = ThumbnailLinear();
+    const float samples = static_cast<float>(scale * scale);
+    for (int y = 0; y < innerH; ++y) {
+        uint32_t* row = dest + static_cast<size_t>(y + 1) * static_cast<size_t>(destW) + 1;
+        for (int x = 0; x < innerW; ++x) {
+            float red = 0.f;
+            float green = 0.f;
+            float blue = 0.f;
+            for (int sy = 0; sy < scale; ++sy) {
+                const uint32_t* from = big.data() +
+                                       (static_cast<size_t>(y * scale + sy) * static_cast<size_t>(bigW) +
+                                        static_cast<size_t>(x * scale));
+                for (int sx = 0; sx < scale; ++sx) {
+                    const uint32_t pixel = from[sx];
+                    red += linear[(pixel >> 16) & 255u];
+                    green += linear[(pixel >> 8) & 255u];
+                    blue += linear[pixel & 255u];
+                }
+            }
+            row[x] = 0xFF000000u | (static_cast<uint32_t>(ThumbnailByte(red / samples)) << 16) |
+                     (static_cast<uint32_t>(ThumbnailByte(green / samples)) << 8) |
+                     static_cast<uint32_t>(ThumbnailByte(blue / samples));
+        }
+    }
+}
+
+HBITMAP MakeExperienceBitmap(bool crt, int destW, int destH) {
+    if (destW < 4 || destH < 4) {
+        return nullptr;
+    }
+    const uint32_t* srcPixels = gWizardSource.size() == static_cast<size_t>(kWidth * kHeight)
+                                    ? gWizardSource.data()
+                                    : g.pixels.data();
+    if (gWizardSource.size() != static_cast<size_t>(kWidth * kHeight) &&
+        g.pixels.size() != static_cast<size_t>(kWidth * kHeight)) {
+        return nullptr;
+    }
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = destW;
+    info.bmiHeader.biHeight = -destH;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC screen = GetDC(nullptr);
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    ReleaseDC(nullptr, screen);
+    if (!bitmap || !bits) {
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
+        return nullptr;
+    }
+    auto* dest = static_cast<uint32_t*>(bits);
+    const uint32_t border = PackedColor(gTheme.boxBorder);
+    const int count = destW * destH;
+    for (int i = 0; i < count; ++i) {
+        dest[i] = border;
+    }
+    const int innerW = destW - 2;
+    const int innerH = destH - 2;
+    const uint32_t* src = srcPixels;
+    if (crt) {
+        DrawAuthenticShot(src, dest, destW, innerW, innerH);
+    } else {
+        for (int y = 0; y < innerH; ++y) {
+            const int sy = static_cast<int>((static_cast<long long>(y) * kHeight) / innerH);
+            uint32_t* row = dest + static_cast<size_t>(y + 1) * static_cast<size_t>(destW) + 1;
+            const uint32_t* from = src + static_cast<size_t>(sy) * static_cast<size_t>(kWidth);
+            for (int x = 0; x < innerW; ++x) {
+                const int sx = static_cast<int>((static_cast<long long>(x) * kWidth) / innerW);
+                row[x] = from[sx];
+            }
+        }
+    }
+    return bitmap;
+}
+
+void SwapShot(HWND picture, HBITMAP& slot, HBITMAP next) {
+    if (!next) {
+        return;
+    }
+    if (!picture) {
+        DeleteObject(next);
+        return;
+    }
+    const auto previous = reinterpret_cast<HBITMAP>(
+        SendMessageW(picture, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(next)));
+    if (previous && previous != next) {
+        DeleteObject(previous);
+    }
+    slot = next;
+}
+
+void RefreshWizardShots(HWND dlg) {
+    if (gWizardShotW < 4 || gWizardShotH < 4) {
+        return;
+    }
+    SwapShot(GetDlgItem(dlg, IDC_WIZ_MODERN_PIC), gWizardModernBmp,
+             MakeExperienceBitmap(false, gWizardShotW, gWizardShotH));
+    SwapShot(GetDlgItem(dlg, IDC_WIZ_AUTHENTIC_PIC), gWizardAuthenticBmp,
+             MakeExperienceBitmap(true, gWizardShotW, gWizardShotH));
+}
+
+// Owner-drawn buttons share their type bits with BS_AUTORADIOBUTTON, so the
+// two experiences are a group only in this proc. Any arrow moves to the other.
+LRESULT CALLBACK WizardRadioProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_ERASEBKGND) {
+        return 1;
+    }
+    if (msg == WM_KEYDOWN &&
+        (wp == VK_LEFT || wp == VK_RIGHT || wp == VK_UP || wp == VK_DOWN)) {
+        const bool toModern = GetDlgCtrlID(hwnd) != IDC_WIZ_MODERN;
+        HWND dlg = GetParent(hwnd);
+        SelectWizard(dlg, toModern);
+        SetFocus(GetDlgItem(dlg, toModern ? IDC_WIZ_MODERN : IDC_WIZ_AUTHENTIC));
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+int Larger(int a, int b) {
+    return a > b ? a : b;
+}
+
+WizardLayout LayoutWizard(HDC dc, HFONT bold, int maxW, int maxH) {
+    WizardLayout layout{};
+    const HFONT old = static_cast<HFONT>(SelectObject(dc, UiFont()));
+    TEXTMETRICW tm{};
+    GetTextMetricsW(dc, &tm);
+    const int fontH = tm.tmHeight > 0 ? tm.tmHeight : 16;
+    int pad = fontH;
+    if (pad < 12) {
+        pad = 12;
+    }
+    const int em = TextWidth(dc, L"M");
+    const int rowH = fontH + fontH / 2 + 4;
+    int box = fontH;
+    if (box < 14) {
+        box = 14;
+    }
+    const int afterBox = kFocusPad + box + (box >= 18 ? 10 : 8);
+    const int labelNeed = afterBox + Larger(TextWidth(dc, kModernExperience), TextWidth(dc, kAuthenticExperience));
+    const int noteNeed = afterBox + Larger(TextWidth(dc, kModernNote), TextWidth(dc, kAuthenticNote));
+    const int checksNeed = afterBox + Larger(TextWidth(dc, L"Infinite Lives"), TextWidth(dc, L"Enemies cannot hit you"));
+    // A column narrower than the 320-wide picture makes the television hard to
+    // see. The fit below shrinks it when the work area cannot hold two.
+    int colWant = Larger(labelNeed, noteNeed);
+    if (colWant < kWidth) {
+        colWant = kWidth;
+    }
+    int cap = em * 48;
+    if (cap < kWidth) {
+        cap = kWidth;
+    }
+    if (cap < labelNeed) {
+        cap = labelNeed;
+    }
+    if (colWant > cap) {
+        colWant = cap;
+    }
+    SelectObject(dc, bold ? bold : UiFont());
+    TEXTMETRICW boldTm{};
+    GetTextMetricsW(dc, &boldTm);
+    const int boldH = boldTm.tmHeight > 0 ? boldTm.tmHeight : fontH + 2;
+    const int headingLine = TextWidth(dc, kWelcomeHeading);
+    SelectObject(dc, UiFont());
+    int btnH = fontH + fontH / 2;
+    if (btnH < 28) {
+        btnH = 28;
+    }
+    int btnW = TextWidth(dc, L"OK") + em * 4;
+    if (btnW < em * 8) {
+        btnW = em * 8;
+    }
+    const int gap = pad;
+    const int imageGap = pad / 2 > 4 ? pad / 2 : 4;
+    if (maxW < 80) {
+        maxW = 80;
+    }
+    if (maxH < 80) {
+        maxH = 80;
+    }
+
+    bool stacked = false;
+    int colW = colWant;
+    int imageW = colW;
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        if (!stacked) {
+            const int pairW = pad * 2 + colW * 2 + gap;
+            if (pairW > maxW) {
+                const int fit = (maxW - pad * 2 - gap) / 2;
+                if (fit >= labelNeed && fit < colW) {
+                    colW = fit;
+                    if (imageW > colW) {
+                        imageW = colW;
+                    }
+                    continue;
+                }
+                stacked = true;
+                int room = maxW - pad * 2;
+                if (room < labelNeed) {
+                    room = labelNeed;
+                }
+                int comfortable = em * 42;
+                if (comfortable < checksNeed) {
+                    comfortable = checksNeed;
+                }
+                if (comfortable < labelNeed) {
+                    comfortable = labelNeed;
+                }
+                if (room > comfortable) {
+                    room = comfortable;
+                }
+                colW = room;
+                imageW = colW;
+                continue;
+            }
+        }
+
+        int contentW = stacked ? colW : colW * 2 + gap;
+        if (contentW < checksNeed) {
+            contentW = checksNeed;
+            if (stacked && colW < contentW) {
+                colW = contentW;
+                if (imageW > colW) {
+                    imageW = colW;
+                }
+            }
+        }
+        if (imageW > colW) {
+            imageW = colW;
+        }
+        if (imageW < 8) {
+            imageW = 8;
+        }
+        int imageH = (imageW - 2) * kHeight / kWidth + 2;
+        if (imageH < 4) {
+            imageH = 4;
+        }
+        int noteW = colW - afterBox;
+        if (noteW < 20) {
+            noteW = 20;
+        }
+        const int noteH = Larger(WrapHeight(dc, kModernNote, noteW), WrapHeight(dc, kAuthenticNote, noteW)) + 2;
+
+        SelectObject(dc, bold ? bold : UiFont());
+        int headingH = boldH;
+        if (headingLine > contentW) {
+            headingH = WrapHeight(dc, kWelcomeHeading, contentW) + 2;
+        }
+        const int trainerH = boldH;
+        SelectObject(dc, UiFont());
+        int introH = WrapHeight(dc, kWelcomeIntro, contentW) + 2;
+        if (introH < fontH) {
+            introH = fontH;
+        }
+
+        const int optionH = rowH + noteH + imageGap + imageH;
+        int y = pad;
+        const int headingY = y;
+        y += headingH + pad / 2;
+        const int introY = y;
+        y += introH + pad;
+        const int optionY = y;
+        int colY0 = optionY;
+        int colY1 = optionY;
+        if (stacked) {
+            colY1 = optionY + optionH + pad;
+            y = colY1 + optionH + pad;
+        } else {
+            y = optionY + optionH + pad;
+        }
+        const int trainersY = y;
+        y += trainerH + 4;
+        const int checksY = y;
+        y += rowH * 2;
+        y += pad / 2;
+        const int btnY = y;
+        y += btnH + pad;
+
+        int clientW = pad * 2 + contentW;
+        if (clientW < btnW + pad * 2) {
+            clientW = btnW + pad * 2;
+        }
+        const int clientH = y;
+
+        bool retry = false;
+        const int minImageH = fontH * 4;
+        if (clientH > maxH && imageH > minImageH && attempt < 11) {
+            const int slots = stacked ? 2 : 1;
+            int reduce = (clientH - maxH) / slots + 1;
+            int newH = imageH - reduce;
+            if (newH < minImageH) {
+                newH = minImageH;
+            }
+            int newW = (newH - 2) * kWidth / kHeight;
+            if (newW < 8) {
+                newW = 8;
+            }
+            if (newW > colW) {
+                newW = colW;
+            }
+            if (newW < imageW) {
+                imageW = newW;
+                retry = true;
+            }
+        }
+
+        layout.pad = pad;
+        layout.imageGap = imageGap;
+        layout.clientW = clientW;
+        layout.clientH = clientH;
+        layout.contentW = contentW;
+        layout.colW = colW;
+        layout.imageW = imageW;
+        layout.imageH = imageH;
+        layout.radioH = rowH;
+        layout.noteH = noteH;
+        layout.noteW = noteW;
+        layout.afterBox = afterBox;
+        layout.stacked = stacked;
+        layout.headingY = headingY;
+        layout.headingH = headingH;
+        layout.introY = introY;
+        layout.introH = introH;
+        layout.colX[0] = pad;
+        layout.colY[0] = colY0;
+        layout.colX[1] = stacked ? pad : pad + colW + gap;
+        layout.colY[1] = colY1;
+        layout.trainersY = trainersY;
+        layout.trainersH = trainerH;
+        layout.checksY = checksY;
+        layout.checksW = contentW;
+        layout.rowH = rowH;
+        layout.btnW = btnW;
+        layout.btnH = btnH;
+        layout.btnX = (clientW - btnW) / 2;
+        layout.btnY = btnY;
+        if (!retry) {
+            break;
+        }
+    }
+    SelectObject(dc, old);
+    return layout;
+}
+
+LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND: {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(reinterpret_cast<HDC>(wp), &rc, gTheme.windowBrush);
+        return 1;
+    }
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+        return OnCtlColor(wp, lp, false);
+    case WM_DRAWITEM: {
+        const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
+        const int id = static_cast<int>(GetDlgCtrlID(draw->hwndItem));
+        if (id == IDOK) {
+            PaintPush(draw);
+        } else if (id == IDC_WIZ_MODERN || id == IDC_WIZ_AUTHENTIC) {
+            PaintRadio(draw);
+        } else {
+            PaintCheck(draw);
+        }
+        return TRUE;
+    }
+    case WM_COMMAND: {
+        const int id = LOWORD(wp);
+        const int code = HIWORD(wp);
+        if (code != BN_CLICKED) {
+            return 0;
+        }
+        if (id == IDC_WIZ_MODERN || id == IDC_WIZ_MODERN_PIC) {
+            SelectWizard(hwnd, true);
+            SetFocus(GetDlgItem(hwnd, IDC_WIZ_MODERN));
+            return 0;
+        }
+        if (id == IDC_WIZ_AUTHENTIC || id == IDC_WIZ_AUTHENTIC_PIC) {
+            SelectWizard(hwnd, false);
+            SetFocus(GetDlgItem(hwnd, IDC_WIZ_AUTHENTIC));
+            return 0;
+        }
+        if (id == IDC_LIVES) {
+            gConfig.infiniteLives = !gConfig.infiniteLives;
+            InvalidateRect(reinterpret_cast<HWND>(lp), nullptr, FALSE);
+            return 0;
+        }
+        if (id == IDC_ENEMIES) {
+            gConfig.enemiesCantHitYou = !gConfig.enemiesCantHitYou;
+            InvalidateRect(reinterpret_cast<HWND>(lp), nullptr, FALSE);
+            return 0;
+        }
+        if (id == IDOK) {
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    }
+    case WM_SETTINGCHANGE:
+    case WM_SYSCOLORCHANGE:
+    case WM_THEMECHANGED:
+        RebuildTheme();
+        ApplyFrameTheme(hwnd);
+        RefreshWizardShots(hwnd);
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        FinishWizard();
+        return 0;
+    case WM_NCDESTROY:
+        ReleaseWizardPictures();
+        ReleaseWizardFont();
+        return 0;
+    default:
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+}
+
+void RegisterWizardClass() {
+    static bool ready = false;
+    if (ready) {
+        return;
+    }
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = WizardProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+    wc.lpszClassName = L"BruceLeeWelcome";
+    RegisterClassW(&wc);
+    ready = true;
+}
+
+bool ShowIntroWizard(HWND owner) {
+    if (!gConfig.firstTimeRun || !owner) {
+        return true;
+    }
+    gWizardModern = true;
+    gWizardSave = true;
+    gWizardDone = false;
+    gWizardShotW = 0;
+    gWizardShotH = 0;
+    ReleaseWizardPictures();
+    ReleaseWizardFont();
+    RegisterWizardClass();
+    RebuildTheme();
+    gWizardBold = MakeBoldFont();
+
+    HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    RECT work{0, 0, 1280, 800};
+    if (GetMonitorInfoW(monitor, &info)) {
+        work = info.rcWork;
+    }
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    const DWORD ex = WS_EX_DLGMODALFRAME;
+    RECT frame{0, 0, 0, 0};
+    AdjustWindowRectEx(&frame, style, FALSE, ex);
+    const int maxW = (work.right - work.left) - (frame.right - frame.left) - 8;
+    const int maxH = (work.bottom - work.top) - (frame.bottom - frame.top) - 8;
+
+    HDC dc = GetDC(owner);
+    const WizardLayout layout = LayoutWizard(dc, gWizardBold, maxW, maxH);
+    ReleaseDC(owner, dc);
+
+    gWizardShotW = layout.imageW;
+    gWizardShotH = layout.imageH;
+    if (!ComposeWelcomeRoom(gWizardSource)) {
+        gWizardSource = g.pixels;
+    }
+    gWizardModernBmp = MakeExperienceBitmap(false, layout.imageW, layout.imageH);
+    gWizardAuthenticBmp = MakeExperienceBitmap(true, layout.imageW, layout.imageH);
+
+    RECT rc{0, 0, layout.clientW, layout.clientH};
+    AdjustWindowRectEx(&rc, style, FALSE, ex);
+    const HINSTANCE inst = GetModuleHandleW(nullptr);
+    // Unowned, so a hidden game window does not keep the wizard off the
+    // taskbar and behind whatever was already open.
+    HWND dlg = CreateWindowExW(ex, L"BruceLeeWelcome", L"Welcome", style, 0, 0, rc.right - rc.left,
+                               rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
+    if (!dlg) {
+        ReleaseWizardPictures();
+        ReleaseWizardFont();
+        return true;
+    }
+    ApplyFrameTheme(dlg);
+    const HFONT headingFont = gWizardBold ? gWizardBold : UiFont();
+    AddLabel(dlg, kWelcomeHeading, SS_NOPREFIX, layout.pad, layout.headingY, layout.contentW, layout.headingH,
+             headingFont, 0);
+    AddLabel(dlg, kWelcomeIntro, SS_NOPREFIX, layout.pad, layout.introY, layout.contentW, layout.introH, UiFont(),
+             0);
+
+    const wchar_t* titles[] = {kModernExperience, kAuthenticExperience};
+    const wchar_t* notes[] = {kModernNote, kAuthenticNote};
+    const int radioIds[] = {IDC_WIZ_MODERN, IDC_WIZ_AUTHENTIC};
+    const int pictureIds[] = {IDC_WIZ_MODERN_PIC, IDC_WIZ_AUTHENTIC_PIC};
+    HBITMAP pictures[] = {gWizardModernBmp, gWizardAuthenticBmp};
+    HWND modernRadio = nullptr;
+    for (int i = 0; i < 2; ++i) {
+        HWND radio = CreateWindowExW(0, L"BUTTON", titles[i],
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                                     layout.colX[i], layout.colY[i], layout.colW, layout.radioH, dlg,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(radioIds[i])), inst, nullptr);
+        SetWindowSubclass(radio, WizardRadioProc, 1, 0);
+        if (i == 0) {
+            modernRadio = radio;
+        }
+        AddLabel(dlg, notes[i], SS_NOPREFIX, layout.colX[i] + layout.afterBox, layout.colY[i] + layout.radioH,
+                 layout.noteW, layout.noteH, UiFont(), IDC_WIZ_NOTE);
+        if (pictures[i]) {
+            const int x = layout.colX[i] + (layout.colW - layout.imageW) / 2;
+            const int y = layout.colY[i] + layout.radioH + layout.noteH + layout.imageGap;
+            HWND picture = CreateWindowExW(0, L"STATIC", nullptr,
+                                           WS_CHILD | WS_VISIBLE | SS_BITMAP | SS_NOTIFY, x, y, layout.imageW,
+                                           layout.imageH, dlg,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(pictureIds[i])), inst,
+                                           nullptr);
+            SendMessageW(picture, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(pictures[i]));
+        }
+    }
+    AddLabel(dlg, kTrainersHeading, SS_NOPREFIX, layout.pad, layout.trainersY, layout.contentW, layout.trainersH,
+             headingFont, 0);
+    MakeCheck(dlg, inst, IDC_LIVES, L"Infinite Lives", layout.pad, layout.checksY, layout.checksW, layout.rowH);
+    MakeCheck(dlg, inst, IDC_ENEMIES, L"Enemies cannot hit you", layout.pad, layout.checksY + layout.rowH,
+              layout.checksW, layout.rowH);
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                              layout.btnX, layout.btnY, layout.btnW, layout.btnH, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), inst, nullptr);
+    SetWindowSubclass(ok, CheckEraseProc, 1, 0);
+
+    SelectWizard(dlg, true);
+    PlaceOnOwner(dlg, owner);
+    ShowWindow(dlg, SW_SHOWNORMAL);
+    SetWindowPos(dlg, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(dlg, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(dlg);
+    SetFocus(modernRadio ? modernRadio : ok);
+    const bool okRun = RunModal(dlg, owner);
+    if (IsWindow(dlg)) {
+        if (!okRun) {
+            gWizardSave = false;
+        }
+        DestroyWindow(dlg);
+    }
+    return okRun;
 }
 
 void ShowKeyboardShortcuts(HWND owner) {

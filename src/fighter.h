@@ -30,6 +30,11 @@ bool LoadFighters();
 // change call this.
 void ResetFighters();
 
+// Stand both of them for one picture, then RestoreFighters puts them back.
+// Coordinates are screen pixels, the same as g.x and g.y. Facing is -1 or +1.
+void StandFighters(int ninjaX, int ninjaY, int ninjaFacing, int yamoX, int yamoY, int yamoFacing);
+void RestoreFighters();
+
 // One logic frame for both fighters, then the sprite hits. True when that
 // hit spent one of Bruce's falls. The room is already the one he respawned in.
 bool TickFighters();

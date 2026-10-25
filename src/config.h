@@ -39,6 +39,9 @@ struct Config {
     bool crtVignette = true;
     // False leaves the rooms and the options page silent.
     bool sound = true;
+    // True opens the welcome wizard before the game window. The wizard
+    // writes false when it closes.
+    bool firstTimeRun = true;
     // False leaves the game running when another program is in front.
     // Command line only. SaveConfig does not write it.
     bool pauseOnFocusLoss = true;

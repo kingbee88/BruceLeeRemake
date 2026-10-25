@@ -804,6 +804,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
     gHwnd = hwnd;
     ApplyAppTheme(hwnd);
     HACCEL accel = CreateAppAccelerators();
+    // The welcome wizard runs while this window is still hidden, so the
+    // title does not sit behind it. A quit there leaves the window unshown.
+    if (gConfig.firstTimeRun && !ShowIntroWizard(hwnd)) {
+        DestroyWindow(hwnd);
+        if (accel) {
+            DestroyAcceleratorTable(accel);
+        }
+        ReleaseUi();
+        StopAudio();
+        ReleaseTarget();
+        gFactory->Release();
+        gFactory = nullptr;
+        return 0;
+    }
     if (gConfig.fullScreen) {
         SetFullScreen(hwnd, true);
     }

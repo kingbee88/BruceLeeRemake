@@ -1187,6 +1187,38 @@ bool LoadFighters() {
     return true;
 }
 
+Fighter gSavedNinja;
+Fighter gSavedYamo;
+bool gFightersHeld = false;
+
+void StandFighters(int ninjaX, int ninjaY, int ninjaFacing, int yamoX, int yamoY, int yamoFacing) {
+    if (!gFightersHeld) {
+        gSavedNinja = ninja;
+        gSavedYamo = yamo;
+        gFightersHeld = true;
+    }
+    const auto stand = [](Fighter& fighter, int x, int y, int facing) {
+        fighter.on = true;
+        fighter.x = x;
+        fighter.y = y;
+        fighter.facing = facing < 0 ? -1 : 1;
+        fighter.pose = facing < 0 ? 1 : 0;
+        fighter.action = 0;
+        fighter.actionTimer = 0;
+    };
+    stand(ninja, ninjaX, ninjaY, ninjaFacing);
+    stand(yamo, yamoX, yamoY, yamoFacing);
+}
+
+void RestoreFighters() {
+    if (!gFightersHeld) {
+        return;
+    }
+    ninja = gSavedNinja;
+    yamo = gSavedYamo;
+    gFightersHeld = false;
+}
+
 void ResetFighters() {
     // $2FC6 reloads both waits when the room opens. 0 spawns on the first tick.
     ninja.on = false;

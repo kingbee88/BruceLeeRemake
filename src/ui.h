@@ -59,6 +59,9 @@ bool SettingsDialogMessage(MSG* msg);
 
 void OpenManual(HWND owner);
 void ShowAbout(HWND owner);
+// Welcome wizard. False means that loop was quit, and the game window
+// should stay hidden.
+bool ShowIntroWizard(HWND owner);
 void ShowKeyboardShortcuts(HWND owner);
 void ShowControllerMapping(HWND owner);
 

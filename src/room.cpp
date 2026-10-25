@@ -194,6 +194,82 @@ bool EnterRoom(int roomId) {
     return true;
 }
 
+// The picture ShowRoomPicture replaced. One level deep is enough: the welcome
+// shot borrows a room and puts this back before the game runs.
+struct HeldPicture {
+    std::vector<uint8_t> charset;
+    std::vector<uint8_t> room;
+    std::vector<uint8_t> color;
+    int roomId = 0;
+    int charsetId = 0;
+    uint8_t bands[12] = {};
+    uint8_t splits[4] = {};
+};
+
+HeldPicture gHeldPicture;
+bool gPictureHeld = false;
+
+bool ShowRoomPicture(int roomId) {
+    if (gPictureHeld || roomId < 0 || roomId >= kRoomCount) {
+        return false;
+    }
+    const RoomInfo& info = kRooms[roomId];
+    const wchar_t* charsetName = L"charset.bin";
+    if (info.charset == 1) {
+        charsetName = L"charset1.bin";
+    } else if (info.charset == 2) {
+        charsetName = L"charset2.bin";
+    }
+    wchar_t roomName[32];
+    wchar_t colorName[32];
+    swprintf_s(roomName, L"room%d.bin", roomId);
+    swprintf_s(colorName, L"room%d.col", roomId);
+    std::vector<uint8_t> charset = LoadFile(charsetName, 2048);
+    std::vector<uint8_t> screen = LoadFile(roomName, 1000);
+    std::vector<uint8_t> color = LoadFile(colorName, 1000);
+    if (charset.empty() || screen.empty() || color.empty()) {
+        return false;
+    }
+    gHeldPicture.charset = std::move(g.charset);
+    gHeldPicture.room = std::move(g.room);
+    gHeldPicture.color = std::move(g.color);
+    gHeldPicture.roomId = g.roomId;
+    gHeldPicture.charsetId = g.charsetId;
+    for (int i = 0; i < 12; ++i) {
+        gHeldPicture.bands[i] = g.bands[i];
+        g.bands[i] = info.bands[i];
+    }
+    for (int i = 0; i < 4; ++i) {
+        gHeldPicture.splits[i] = g.splits[i];
+        g.splits[i] = info.splits[i];
+    }
+    g.charset = std::move(charset);
+    g.room = std::move(screen);
+    g.color = std::move(color);
+    g.roomId = roomId;
+    g.charsetId = info.charset;
+    gPictureHeld = true;
+    return true;
+}
+
+void RestoreRoomPicture() {
+    if (!gPictureHeld) {
+        return;
+    }
+    g.charset = std::move(gHeldPicture.charset);
+    g.room = std::move(gHeldPicture.room);
+    g.color = std::move(gHeldPicture.color);
+    g.roomId = gHeldPicture.roomId;
+    g.charsetId = gHeldPicture.charsetId;
+    for (int i = 0; i < 12; ++i) {
+        g.bands[i] = gHeldPicture.bands[i];
+    }
+    for (int i = 0; i < 4; ++i) {
+        g.splits[i] = gHeldPicture.splits[i];
+    }
+    gPictureHeld = false;
+}
+
 void RoomSpawn(int roomId, int& x, int& y) {
     const RoomInfo& info = kRooms[roomId];
     x = info.spawnX * 2 - 24;

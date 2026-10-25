@@ -28,6 +28,11 @@ constexpr int kRoomCount = 20;
 // Asking for room 11 loads room 13 once rooms 12, 14, and 16 are clear.
 bool EnterRoom(int roomId);
 
+// Put roomId's picture in place of the one on screen. RestoreRoomPicture puts
+// the previous picture back. No score, sound, or enter hook.
+bool ShowRoomPicture(int roomId);
+void RestoreRoomPicture();
+
 // wake_actor's cold-start position for this room, in screen pixels.
 // g.x = xpos * 2 - 24 and g.y = ypos - 21.
 void RoomSpawn(int roomId, int& x, int& y);

@@ -110,6 +110,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.crtVignette);
     } else if (key == L"sound") {
         ParseBool(value, gConfig.sound);
+    } else if (key == L"firsttimerun") {
+        ParseBool(value, gConfig.firstTimeRun);
     }
 }
 
@@ -220,6 +222,7 @@ const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"crtblur") return L"CrtBlur";
     if (key == L"crtvignette") return L"CrtVignette";
     if (key == L"sound") return L"Sound";
+    if (key == L"firsttimerun") return L"FirstTimeRun";
     return nullptr;
 }
 
@@ -237,6 +240,7 @@ std::wstring ValueOf(const std::wstring& key) {
     if (key == L"crtblur") return boolean(gConfig.crtBlur);
     if (key == L"crtvignette") return boolean(gConfig.crtVignette);
     if (key == L"sound") return boolean(gConfig.sound);
+    if (key == L"firsttimerun") return boolean(gConfig.firstTimeRun);
     return {};
 }
 
@@ -267,11 +271,11 @@ std::wstring Newline() {
 
 std::wstring RewriteIni(const std::wstring& text) {
     const wchar_t* order[] = {
-        L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom", L"ShowTitleScreen",
-        L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
+        L"FirstTimeRun", L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom",
+        L"ShowTitleScreen", L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
         L"CrtCurve", L"CrtScanlines", L"CrtBlur", L"CrtVignette", L"Sound",
     };
-    constexpr int kSettingCount = 12;
+    constexpr int kSettingCount = 13;
     bool seen[kSettingCount] = {};
     std::wstring out;
     size_t lineStart = 0;

@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 // Paint the room, Bruce's current pose, and the score line into g.pixels.
 // Call after Tick has chosen g.pose and g.x / g.y.
@@ -28,3 +29,7 @@ void Compose();
 // same four colors from the title snapshot. Light blue along the outer edge
 // is the border color, so it is drawn as the grey field.
 void ComposeTitle(const uint8_t* bitmap);
+
+// Room 1, with the Ninja and Yamo standing on its two spawn points.
+// The live picture is put back. False when that room cannot be read.
+bool ComposeWelcomeRoom(std::vector<uint32_t>& dest);
