@@ -396,21 +396,35 @@ void ApplyCommandLine(const wchar_t* commandLine) {
 
 void LoadConfig(const wchar_t* commandLine) {
     const std::wstring dir = ExeDirectory();
-    // The file beside the exe wins even when it sets nothing. One folder up
-    // is the workspace copy when the exe is in build\. Two folders up is
-    // that copy when the exe is in build\Debug or build\Release. That opened
-    // file is the only one SaveConfig writes.
-    const std::wstring candidates[] = {
-        dir + L"\\config.ini",
-        dir + L"\\..\\config.ini",
-        dir + L"\\..\\..\\config.ini",
+    // Beside the exe, then one folder up, then two folders up. One folder
+    // up is the workspace copy when the exe is in build\. Two folders up
+    // is that copy when the exe is in build\Debug or build\Release. In
+    // each folder config.local.ini wins over config.ini. The opened file
+    // is the only one SaveConfig writes.
+    const std::wstring folders[] = {
+        dir,
+        dir + L"\\..",
+        dir + L"\\..\\..",
+    };
+    const wchar_t* names[] = {
+        L"config.local.ini",
+        L"config.ini",
     };
     std::string bytes;
     gConfigPath.clear();
-    for (const std::wstring& path : candidates) {
-        if (ReadIni(path, bytes)) {
+    for (const std::wstring& folder : folders) {
+        bool opened = false;
+        for (const wchar_t* name : names) {
+            const std::wstring path = folder + L"\\" + name;
+            if (!ReadIni(path, bytes)) {
+                continue;
+            }
             gConfigPath = FullPath(path);
             NoteEncoding(bytes);
+            opened = true;
+            break;
+        }
+        if (opened) {
             break;
         }
     }

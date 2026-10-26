@@ -18,7 +18,8 @@
 
 #pragma once
 
-// Settings from config.ini, with the command line applied on top.
+// Settings from config.ini, or from config.local.ini when that file is
+// present, with the command line applied on top.
 struct Config {
     // True keeps FALLS on the full starting count for the whole game.
     bool infiniteLives = false;
@@ -49,14 +50,15 @@ struct Config {
 
 extern Config gConfig;
 
-// Read config.ini beside the exe. If that file is not there, read config.ini
-// one folder up, then two folders up. The file that was opened is the one
-// SaveConfig writes. Then apply Name=Value words from the command line.
+// Look beside the exe, then one folder up, then two folders up. In each
+// folder, config.local.ini is read when it is there, and otherwise
+// config.ini. A closer folder still wins. The file that was opened is the
+// one SaveConfig writes. Then apply Name=Value words from the command line.
 void LoadConfig(const wchar_t* commandLine);
 
 // Start room clamped into 0 .. 19. 0 is the opening room.
 int ClampedStartRoom();
 
-// Write the live settings to the config.ini LoadConfig opened. Comments and
+// Write the live settings to the file LoadConfig opened. Comments and
 // blank lines stay. If no file was opened, write config.ini beside the exe.
 void SaveConfig();

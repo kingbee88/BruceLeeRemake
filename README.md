@@ -35,7 +35,7 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 | Ctrl+, | Settings |
 | Alt+F4 | Exit |
 
-Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in `config.ini`, or on the command line, starts in that mode. The program writes the settings back to the `config.ini` it opened when it closes.
+Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in the settings file, or on the command line, starts in that mode. Beside the exe, then one folder up, then two folders up, `config.local.ini` is used when that file is there, and otherwise `config.ini`. The program writes the settings back to the file it opened when it closes.
 
 An Xbox pad, or any other XInput controller, does the same things. The keyboard keeps working while a pad is connected.
 
