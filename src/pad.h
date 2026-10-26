@@ -63,8 +63,12 @@ void BeginPadFrame();
 PadInput ReadPad();
 
 // Match the saved controller id. When it is connected, ReadPad samples it.
-// Otherwise ReadPad samples the first connected controller, and the saved id
-// becomes that controller. With none connected, the saved id is left unchanged.
+// A DirectInput id and a Windows.Gaming.Input id for the same pad are one
+// controller. The first list in a session often has only the DirectInput
+// name, so a saved id that is missing from that list is left unchanged.
+// Once the saved controller has been found, and it is later absent, ReadPad
+// samples the first connected controller and the saved id becomes that one.
+// With none connected, the saved id is left unchanged.
 GamepadList SyncGamepads();
 
 // Gamepad names come from the Windows Runtime. Construct this on the main

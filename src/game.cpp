@@ -40,6 +40,8 @@ int lifeMark = 0x009C40;
 constexpr int kLifeStep = 0x007530;
 // $4388. Stays 0 until the score passes it. A new process starts it at 0.
 int topScore = 0;
+// $43BD. $10 is the state init_hardware leaves, with the word showing.
+int captionTimer = 0x10;
 
 bool MarkReached(int score, int mark) {
     for (int shift = 16; shift >= 0; shift -= 8) {
@@ -76,6 +78,23 @@ void ResetScore() {
 
 int TopScore() {
     return topScore;
+}
+
+void TickPlayerCaption() {
+    captionTimer -= 1;
+    if (captionTimer == 0) {
+        captionTimer = 0x20;
+    }
+}
+
+void ResetPlayerCaption() {
+    captionTimer = 0x11;
+    TickPlayerCaption();
+}
+
+bool PlayerCaptionOn() {
+    // Tick reloads 0 to $20, so the blank half is $11-$20 and the word is $01-$10.
+    return captionTimer <= 0x10;
 }
 
 void FormatFalls(int lives, char out[3]) {

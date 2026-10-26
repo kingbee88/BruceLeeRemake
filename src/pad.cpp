@@ -83,6 +83,13 @@ int gDirectButtons = 0;
 int gDirectPovs = 0;
 int gActiveXInput = -1;
 std::wstring gActiveId;
+// The pad ReadPad is sampling. Kept when its id string changes, so a
+// DirectInput alias and the later Windows.Gaming.Input id stay one controller.
+UINT16 gBoundVid = 0;
+UINT16 gBoundPid = 0;
+// Set once the saved id has been found. Until then an incomplete list must
+// not replace that id with whichever pad happened to be enumerated first.
+bool gSavedMatched = false;
 ULONGLONG gNextPadScan = 0;
 bool haveCached = false;
 PadInput cached{};
@@ -614,6 +621,9 @@ void FinishLabels(std::vector<ListedPad>& items) {
 struct EnumResult {
     bool ok = false;
     std::vector<ListedPad> items;
+    // DirectInput ids for controllers already present under another id.
+    std::vector<std::wstring> aliasIds;
+    std::vector<int> aliasOf;
 };
 
 // The name joy.cpl shows. Windows.Gaming.Input often calls a plain stick
@@ -721,18 +731,6 @@ std::vector<DWORD> XInputProductIds() {
     return ids;
 }
 
-bool ListedVidPid(const std::vector<ListedPad>& items, UINT16 vid, UINT16 pid) {
-    if (vid == 0 && pid == 0) {
-        return false;
-    }
-    for (const ListedPad& item : items) {
-        if (item.vid == vid && item.pid == pid) {
-            return true;
-        }
-    }
-    return false;
-}
-
 std::wstring DirectInputId(const GUID& guid) {
     wchar_t buf[80];
     swprintf_s(buf, L"di:{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
@@ -743,8 +741,10 @@ std::wstring DirectInputId(const GUID& guid) {
 }
 
 // Controllers joy.cpl lists that Windows.Gaming.Input does not. Xbox pads are
-// already in the list, so their DirectInput aliases are left out.
-void AddDirectInputOnly(std::vector<ListedPad>& items) {
+// already in the list, so their DirectInput aliases are left out. An alias
+// of a pad that is already listed keeps its DirectInput id so a saved id
+// from that list still selects the same pad.
+void AddDirectInputOnly(EnumResult& result) {
     if (!EnsureDirectInput()) {
         return;
     }
@@ -766,7 +766,19 @@ void AddDirectInputOnly(std::vector<ListedPad>& items) {
         }
         const UINT16 vid = static_cast<UINT16>(dev.product.Data1);
         const UINT16 pid = static_cast<UINT16>(dev.product.Data1 >> 16);
-        if (ListedVidPid(items, vid, pid)) {
+        int listed = -1;
+        if (vid != 0 || pid != 0) {
+            for (int i = 0; i < static_cast<int>(result.items.size()); ++i) {
+                const ListedPad& item = result.items[static_cast<size_t>(i)];
+                if (item.vid == vid && item.pid == pid) {
+                    listed = i;
+                    break;
+                }
+            }
+        }
+        if (listed >= 0) {
+            result.aliasIds.push_back(DirectInputId(dev.instance));
+            result.aliasOf.push_back(listed);
             continue;
         }
         ListedPad item;
@@ -776,7 +788,7 @@ void AddDirectInputOnly(std::vector<ListedPad>& items) {
         item.pid = pid;
         item.name = dev.name;
         item.id = DirectInputId(dev.instance);
-        items.push_back(std::move(item));
+        result.items.push_back(std::move(item));
     }
 }
 
@@ -968,7 +980,7 @@ EnumResult EnumWgi() {
     if (!result.ok) {
         return result;
     }
-    AddDirectInputOnly(result.items);
+    AddDirectInputOnly(result);
     FinishLabels(result.items);
     return result;
 }
@@ -992,7 +1004,7 @@ EnumResult EnumXInput() {
         item.name = L"Gamepad " + std::to_wstring(i + 1);
         result.items.push_back(std::move(item));
     }
-    AddDirectInputOnly(result.items);
+    AddDirectInputOnly(result);
     FinishLabels(result.items);
     return result;
 }
@@ -1010,6 +1022,8 @@ void Bind(const std::vector<ListedPad>& items, int active) {
         return;
     }
     const ListedPad& item = items[static_cast<size_t>(active)];
+    gBoundVid = item.vid;
+    gBoundPid = item.pid;
     if (item.id == gActiveId && ActiveStillWorks()) {
         return;
     }
@@ -1043,6 +1057,9 @@ GamepadList ToList(const std::vector<ListedPad>& items, int active) {
 
 void ReleasePadRuntime() {
     ClearActive();
+    gBoundVid = 0;
+    gBoundPid = 0;
+    gSavedMatched = false;
     gGamepadStatics.Reset();
     gRawStatics.Reset();
     gDirectInput.Reset();
@@ -1076,21 +1093,60 @@ GamepadList SyncGamepads() {
     if (!enumerated.ok) {
         return gShown;
     }
+    const std::vector<ListedPad>& items = enumerated.items;
     int active = -1;
+    bool matchedSaved = false;
     if (!gConfig.gamepad.empty()) {
-        for (int i = 0; i < static_cast<int>(enumerated.items.size()); ++i) {
-            if (enumerated.items[static_cast<size_t>(i)].id == gConfig.gamepad) {
+        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+            if (items[static_cast<size_t>(i)].id == gConfig.gamepad) {
                 active = i;
+                matchedSaved = true;
                 break;
             }
         }
     }
-    if (active < 0 && !enumerated.items.empty()) {
-        active = 0;
-        gConfig.gamepad = enumerated.items[0].id;
+    // The same pad is often listed as a DirectInput device before Windows
+    // Gaming Input has its id. That DirectInput id is kept as an alias.
+    if (active < 0 && !gConfig.gamepad.empty()) {
+        for (size_t i = 0; i < enumerated.aliasIds.size() && i < enumerated.aliasOf.size(); ++i) {
+            const int index = enumerated.aliasOf[i];
+            if (enumerated.aliasIds[i] != gConfig.gamepad || index < 0 ||
+                index >= static_cast<int>(items.size())) {
+                continue;
+            }
+            active = index;
+            gConfig.gamepad = items[static_cast<size_t>(index)].id;
+            matchedSaved = true;
+            break;
+        }
     }
-    Bind(enumerated.items, active);
-    gShown = ToList(enumerated.items, active);
+    // The pad we already matched can come back under a new id string.
+    if (active < 0 && gSavedMatched && (gBoundVid != 0 || gBoundPid != 0)) {
+        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+            const ListedPad& item = items[static_cast<size_t>(i)];
+            if (item.vid == gBoundVid && item.pid == gBoundPid) {
+                active = i;
+                gConfig.gamepad = item.id;
+                matchedSaved = true;
+                break;
+            }
+        }
+    }
+    if (active < 0 && !items.empty()) {
+        active = 0;
+        // Leave a saved id alone until that pad has been seen. The first
+        // list in a session is often only the DirectInput alias, and
+        // replacing the id here makes the next list bind the first pad.
+        if (gConfig.gamepad.empty() || gSavedMatched) {
+            gConfig.gamepad = items[0].id;
+            matchedSaved = true;
+        }
+    }
+    if (matchedSaved) {
+        gSavedMatched = true;
+    }
+    Bind(items, active);
+    gShown = ToList(items, active);
     gNextPadScan = GetTickCount64() + 1000;
     return gShown;
 }
@@ -1113,6 +1169,14 @@ PadInput ReadPad() {
             SyncGamepads();
             cached = {};
             ReadActiveInto(cached);
+        } else if (!gSavedMatched) {
+            // The first list can be a DirectInput alias of the saved pad.
+            // Look again until that saved id shows up, and keep reading this
+            // pad in the meantime.
+            const ULONGLONG now = GetTickCount64();
+            if (now >= gNextPadScan) {
+                SyncGamepads();
+            }
         }
         return cached;
     }

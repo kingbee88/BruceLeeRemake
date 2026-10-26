@@ -135,6 +135,14 @@ void SetPaused(bool on) {
     }
     gPaused = on;
     SetAudioPaused(on);
+    // $1A42. Space and the idle timeout enter the $0105 pause by storing
+    // $11 and calling timed_caption, so the word is up, and the following
+    // frames skip the countdown. The picture is already composed for this
+    // frame, so it is drawn again with the word showing.
+    if (on && gStage == Stage::Play) {
+        ResetPlayerCaption();
+        Compose();
+    }
 }
 
 void ReleaseTarget() {
@@ -880,6 +888,8 @@ void BeginPlay() {
     GiveStock();
     gStage = Stage::Play;
     PlaceBruce();
+    // init_hardware, after the PLAYER page. The word starts showing.
+    ResetPlayerCaption();
     Compose();
 }
 
@@ -925,6 +935,7 @@ void StartAfterGameOver(HWND hwnd) {
     }
     GiveStock();
     PlaceBruce();
+    ResetPlayerCaption();
     Compose();
     gStage = Stage::Play;
 }
@@ -967,6 +978,7 @@ void RestartGame(HWND hwnd) {
     }
     GiveStock();
     PlaceBruce();
+    ResetPlayerCaption();
     Compose();
     gStage = Stage::Play;
 }
@@ -1056,6 +1068,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         gStage = Stage::Title;
     } else {
         PlaceBruce();
+        ResetPlayerCaption();
         Compose();
         gStage = Stage::Play;
     }

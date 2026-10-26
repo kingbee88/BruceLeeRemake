@@ -117,6 +117,17 @@
 ; so an award split into two adds is tested between them and the order
 ; matters. $4395 is the other player's mark.
 ;
+; timed_caption flashes the player word on that same row. $43BD counts down
+; once per logic frame. At $10 it prints string $03+1. At 0 it prints string
+; 0 and reloads $20. String 1, at $448C, is 31 55 50: "1UP". String 2, at
+; $4490, is 32 55 50: "2UP". String 0, at $4488, is three spaces. The row-0
+; pointer is $8C00 and the column in Y is $2C, so the cells are $8C2C-$8C2E,
+; row 1 columns 4-6, just left of the score. The word is up for the sixteen
+; counts $10 down through $01, then blank for the sixteen counts $20 down
+; through $11. init_hardware stores $11 and calls it once, so a life starts
+; with the word showing. enter_room writes $20 across $8C00-$8C27 only, and
+; these three cells are left as they are.
+;
 ; $BC,X collects the blows. Bit 1 is the strike: 2 health and no points.
 ; Bit 2 is the punch: $64, which is 100, and 3 health. Bit 3 is the kick:
 ; $4B, which is 75, and 7 health. Bit 4 is the landing: $32, which is 50,
@@ -236,6 +247,7 @@
 ;   force_knockdown   $D1 went negative. Kill score, then back to landing_blow.
 ;   draw_score        low six digits of the binary total at $41
 ;   draw_top          low six digits of the top score at $4388
+;   timed_caption     $43BD. "1UP" or "2UP" for 16 frames, then blank for 16.
 ;   check_life_mark   $4392, one byte at a time, high byte first
 ;   extra_fall        room 16, tiles $2D and $2E. INC $28, the DEC is not a gate.
 ;   retire_actor      clear active bit 0, then load that fighter's count
@@ -756,6 +768,8 @@ L_07D0:
         LDA #$80                        ; $07FD
         JSR draw_score                      ; $07FF
         JSR draw_top                      ; $0802
+; $43BD starts at $11. timed_caption decrements it to $10 and prints the
+; player word, so the score row comes up with "1UP" or "2UP" already there.
         LDA #$11                        ; $0805
         STA $43BD                       ; $0807
         JSR timed_caption                      ; $080A
@@ -2328,7 +2342,18 @@ L_147E:
         STA $010A                       ; $1484
         RTS                             ; $1487
 
-; $1488  28 bytes of data between routines
+; $1488  28 bytes of data between routines.
+; scan_stick_only tests four pairs. A pair is a $DC00 row mask and the
+; $DC01 value that one key alone produces. $1490 holds the code, in the
+; same order. in_game_key sets $010E, so play reads this list.
+;   $1488 FE EF   F1      code $04
+;   $148A FD DF   S       code $0D
+;   $148C 7F EF   Space   code $3C
+;   $148E F7 7F   V       code $1F
+; $1494 is FE FD FB F7 EF DF BF 7F. scan_keyboard uses those bytes as the
+; row select and, again, as the column mask. $149C is 00 08 10 18 20 28
+; 30 38, added to the column index. That full scan is what the options
+; page uses, and F1, S, Space, and V come out as the same four codes.
 
 ; between_rooms points the raster here, at line $63. It waits until $6E, then
 ; walks $D022 through dark grey $B, grey $C, light grey $F, white $1, and
@@ -2555,8 +2580,10 @@ L_160F:
 L_1611:
         STA $8C4D                       ; $1611
 ; One raster of the visit clock. $0104 clear is the demo, and a negative
-; $0105 is the idle timeout, so neither one advances it. $88 stops when
-; its own sign bit is set, at $80. That is 128 wraps, 32768 rasters.
+; $0105 is the pause, so neither one advances it. Space toggles that flag
+; from in_game_key. The idle count below sets it when $82 wraps negative.
+; $88 stops when its own sign bit is set, at $80. That is 128 wraps,
+; 32768 rasters.
 count_visit:
         LDA $0104                       ; $1614
         BEQ L_1628                      ; $1617
@@ -2574,6 +2601,8 @@ L_1628:
         BMI L_163F                      ; $162E
         INC $82                         ; $1630
         BPL L_163F                      ; $1632
+; Idle pause. $86 sets the sign bit and the three-frame lockout in bits 1-2.
+; L_1A42 forces the player word on and prints "** PAUSED **".
         LDA #$86                        ; $1634
         STA $0105                       ; $1636
         JSR L_1A42                      ; $1639
@@ -3182,6 +3211,9 @@ L_1A08:
         LDA $DC00,X                     ; $1A1B
         AND #$10                        ; $1A1E
         BNE L_1A51                      ; $1A20
+; Toggle bit 7 of $0105. The $06 is a three-frame lockout, counted down by
+; L_19EC, so the pass that set the flag cannot toggle it straight back.
+; Clearing the bit wipes "** PAUSED **" with string $0C and reprints TOP.
 L_1A22:
         LDA $0105                       ; $1A22
         EOR #$80                        ; $1A25
@@ -3197,12 +3229,19 @@ L_1A38:
         STA $82                         ; $1A3A
         JSR L_1ABB                      ; $1A3C
         JMP draw_top                      ; $1A3F
+; Enter the pause. The same $11 and timed_caption pair as init_hardware, so
+; the player word is forced on and $43BD sits at $10. frame then sees the
+; sign bit and skips timed_caption, and the word stays up until the flag
+; clears. The next live frame decrements $10, so the visible phase runs on.
 L_1A42:
         LDA #$11                        ; $1A42
         STA $43BD                       ; $1A44
         JSR timed_caption                      ; $1A47
         LDA #$51                        ; $1A4A
         STA $82                         ; $1A4C
+; String $0B is "** PAUSED **", twelve codes. X = 1 is row 1, whose pointer
+; is $8C28, and Y = $0F, so the line covers columns 15-26: TOP and the top
+; score. FALLS, at column 28, stays. L_1BB6 clears it with twelve spaces.
         JMP L_1BA4                      ; $1A4E
 L_1A51:
         RTS                             ; $1A51
@@ -3249,7 +3288,16 @@ L_1A8E:
         DEY                             ; $1A92
         BPL L_1A8E                      ; $1A93
         RTS                             ; $1A95
-; $43BD counts down. At $10 and at 0 a caption string is printed on row $2C.
+; $43BD counts down once per logic frame. The two prints share column $2C
+; and X = 0. point_at_row then uses the row-0 pointer init_hardware left at
+; $8C00, so $8C00+$2C is $8C2C: character row 1, column 4.
+; At $10 the string is $03 plus 1. $03 is the player, so player 0 prints
+; string 1 ("1UP", $448C) and player 1 prints string 2 ("2UP", $4490).
+; At 0, string 0 ($4488, three spaces) clears those cells and $43BD is
+; reloaded with $20. The word therefore shows while the count sits in
+; $01-$10 and is blank while it sits in $11-$20, sixteen logic frames each.
+; Glyph 0 is empty, so the off phase is the grey of $D021. The score digits
+; start at column 8 and are not touched.
 timed_caption:
         DEC $43BD                       ; $1A96
         BNE L_1AA8                      ; $1A99
@@ -3327,9 +3375,13 @@ draw_split_digits:
         ORA #$10                        ; $1B23
         STA $8C01,Y                     ; $1B25
         RTS                             ; $1B28
-; Keys during play. $04 jumps back to the cold start. $0D toggles $1385.
-; Nonzero skips the options tune. $09BB is cleared, so the next options
-; page starts the tune at once. $3C and $1F are the other two.
+; Keys during play, the four codes from scan_stick_only. Bit 7 is Shift
+; and is masked off, so a shifted key still matches.
+; $04 is F1, and jumps back to the cold start.
+; $0D is S. It toggles $1385. Nonzero skips the options tune. $09BB is
+; cleared, so the next options page starts the tune at once.
+; $3C is Space, and toggles the $0105 pause.
+; $1F is V, and toggles the credit line on row 0.
 in_game_key:
         LDA #$01                        ; $1B29
         STA $010E                       ; $1B2B
@@ -3363,6 +3415,10 @@ L_1B5C:
         RTS                             ; $1B64
 L_1B65:
         JMP L_1A22                      ; $1B65
+; V. Row 0 normally holds screen code $20, the solid black bar. The forty
+; codes at $4707 replace it: "BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF".
+; They are score-font codes, the same numbers print_string stores. A first
+; cell that is not $20 fills the row with $20 again.
 L_1B68:
         LDA #$20                        ; $1B68
         CMP $8C00                       ; $1B6A
@@ -3447,6 +3503,8 @@ L_1BDF:
         LDA $D3                         ; $1BE5
         AND #$87                        ; $1BE7
         STA $D3                         ; $1BE9
+; Player word. Runs when $0104 is clear as well. A negative $0105 has
+; already jumped to wait_for_tick, which is what holds the word during pause.
         JSR timed_caption                      ; $1BEB
         JSR flicker_lamps                      ; $1BEE
         LDA $7A                         ; $1BF1
@@ -9504,8 +9562,9 @@ blank_top_row:
 ; Per-frame hook for room 19. While $49 or $4A is still set, the flame
 ; rows are recoloured and string 4 is printed. String 4 is
 ; "** CONGRATULATIONS **". X = 0 is row 0 and Y = $0A is the column, so
-; the line sits on the grey bar. The score on row 1 is left alone. The
-; line is printed again every logic frame.
+; the line sits on the grey bar. The score on row 1 is left alone, and
+; timed_caption keeps flashing the player word on that row. The line is
+; printed again every logic frame.
 ; When both timer bytes are 0, $40 gains one finished game. This
 ; player's four bytes at $014B go back to 1. Room 13 spends the first
 ; three of those, once each. copy_room_defaults reloads the lamp counts,
@@ -9557,8 +9616,11 @@ flicker_flames:
         JMP print_string                ; $42C2
 ; $42C5  1217 bytes of data. $42C9 and $42CA are the two option flags inside
 ; this block, then $42CB and $42CC, their copies. print_string reads the
-; table at $43BE. String $04 is "** CONGRATULATIONS **", printed on the
-; blanked top row by hook_frame_19. String $4F is the F3 line, $50 the F5
+; table at $43BE. String 0 at $4488 is 20 20 20, three spaces. String 1 at
+; $448C is 31 55 50, "1UP". String 2 at $4490 is 32 55 50, "2UP".
+; timed_caption prints one of those at column $2C. String $04 is
+; "** CONGRATULATIONS **", printed on the blanked top row by hook_frame_19.
+; String $4F is the F3 line, $50 the F5
 ; line, $51 the F7 line. $08, $09, $0A, and $0D are the four handedness lines.
 ; $42CD and $42DF are the GAME OVER picture, eighteen screen codes each.
 ; paint_over_word ORs $80 and stores them at column 11 of rows 1 and 2.
@@ -9568,6 +9630,10 @@ flicker_flames:
 ; Top row, in pairs: G A M E, the gap, O V E R. The bottom row is the
 ; lower half of the same letters. Both E's share 0C 0E and 0D 0F.
 ; $4322 is 18 3C 3C 18. paint_sparks reads it from the last byte.
+; $4707 is forty score-font codes, one screen row. V copies them onto $8C00
+; when that row is still the $20 bar:
+;   BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF
+; '(' is glyph $08 and ')' is glyph $09, ROM $28 and $29 shifted down by $20.
 
 L_4786:
         INC $04                         ; $4786

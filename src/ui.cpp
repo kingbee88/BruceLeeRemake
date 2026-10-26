@@ -986,8 +986,35 @@ bool GamepadComboShows(const GamepadList& list) {
     return static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0)) == list.active;
 }
 
+bool GamepadListOpen() {
+    return gPadCombo && SendMessageW(gPadCombo, CB_GETDROPPEDSTATE, 0, 0) != 0;
+}
+
+// The row under the pointer while the list is open. CB_GETCURSEL stays on
+// the controller that was current when the list opened, until it closes.
+int GamepadHighlight() {
+    COMBOBOXINFO info{};
+    info.cbSize = sizeof(info);
+    if (gPadCombo && GetComboBoxInfo(gPadCombo, &info) && info.hwndList) {
+        const LRESULT cur = SendMessageW(info.hwndList, LB_GETCURSEL, 0, 0);
+        if (cur != LB_ERR) {
+            return static_cast<int>(cur);
+        }
+    }
+    if (!gPadCombo) {
+        return -1;
+    }
+    return static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
+}
+
 void RefreshGamepadCombo() {
     if (!gPadCombo) {
+        return;
+    }
+    // The dropped list highlights the row under the pointer. Rebuilding it,
+    // or CB_SETCURSEL, puts that highlight back on the closed selection.
+    // A pad that arrives while the list is open is picked up once it closes.
+    if (GamepadListOpen()) {
         return;
     }
     const GamepadList list = SyncGamepads();
@@ -1048,12 +1075,22 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
         gRefreshing = false;
         return;
     }
-    if (code == CBN_SELCHANGE && id == IDC_GAMEPAD) {
-        const int sel = static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
-        if (sel >= 0 && sel < static_cast<int>(gPadItems.size())) {
-            gConfig.gamepad = gPadItems[static_cast<size_t>(sel)].id;
+    if (id == IDC_GAMEPAD) {
+        // While the list is open, CBN_SELCHANGE follows the pointer and
+        // CB_GETCURSEL is still the controller the box had when it opened.
+        // Writing that id and refreshing snaps the highlight to the first
+        // row. The click, or Enter, is CBN_SELENDOK. Arrow keys on the
+        // closed box send CBN_SELCHANGE with the list shut.
+        const bool choose = code == CBN_SELENDOK || (code == CBN_SELCHANGE && !GamepadListOpen());
+        if (choose) {
+            const int sel = GamepadListOpen()
+                                ? GamepadHighlight()
+                                : static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
+            if (sel >= 0 && sel < static_cast<int>(gPadItems.size())) {
+                gConfig.gamepad = gPadItems[static_cast<size_t>(sel)].id;
+                SyncGamepads();
+            }
         }
-        RefreshGamepadCombo();
         return;
     }
     if (code != BN_CLICKED) {

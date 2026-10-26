@@ -102,3 +102,16 @@ int TopScore();
 // $1AED. Two screen characters. 0..99 are digits. From 100 the high
 // nibble is A-F, and 160 paints as 00.
 void FormatFalls(int lives, char out[3]);
+
+// $0805. init_hardware stores $11 and timed_caption leaves $10, so the
+// word is showing. between_lives runs that init again. $1A42, the pause
+// entry, uses the same pair of instructions and the word stays up.
+void ResetPlayerCaption();
+
+// $1A96, called from frame at $1BEB. $10 prints the word and 0 blanks it,
+// then reloads $20. Sixteen logic frames on, sixteen off. A negative
+// $0105 skips the call, so a pause holds the count.
+void TickPlayerCaption();
+
+// $43BD in $01-$10. The cells are row 1, columns 4-6.
+bool PlayerCaptionOn();

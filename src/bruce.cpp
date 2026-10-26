@@ -1018,6 +1018,8 @@ void ClearOutOfLives() {
 
 void ResumeAfterFall() {
     awaitingLife = false;
+    // between_lives calls init_hardware, which restarts the player word.
+    ResetPlayerCaption();
     if (EnterRoom(g.roomId)) {
         PlaceBruce();
     }
@@ -1025,6 +1027,10 @@ void ResumeAfterFall() {
 }
 
 void Tick() {
+    // $1BEB. Before the room hook, and skipped in the original while $0105
+    // is negative. This Tick is itself skipped while the port is paused.
+    TickPlayerCaption();
+
     // $17C4 runs on every logic frame, including a hold, and the raster
     // count in $87 does too. The value is applied where the stick is built.
     const bool treasure = g.roomId == 19;
