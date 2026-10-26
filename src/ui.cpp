@@ -67,6 +67,7 @@ constexpr int IDC_WIZ_AUTHENTIC = 221;
 constexpr int IDC_WIZ_MODERN_PIC = 222;
 constexpr int IDC_WIZ_AUTHENTIC_PIC = 223;
 constexpr int IDC_WIZ_NOTE = 224;
+constexpr int IDC_WIZ_ADVICE = 225;
 // Which welcome-wizard experience is selected. Owner-drawn buttons do not
 // keep a check of their own.
 bool gWizardModern = true;
@@ -2135,10 +2136,13 @@ constexpr wchar_t kAuthenticExperience[] = L"Authentic experience";
 constexpr wchar_t kModernNote[] = L"Modern TV. Fix scoring bug in the original.";
 constexpr wchar_t kAuthenticNote[] = L"Old School TV. Keep original scoring bug.";
 constexpr wchar_t kTrainersHeading[] = L"Trainers";
+constexpr wchar_t kPadAdvice[] =
+    L"It is highly recommended to play with a gamepad. Prefer the D-pad.";
 
 HBITMAP gWizardModernBmp = nullptr;
 HBITMAP gWizardAuthenticBmp = nullptr;
 HFONT gWizardBold = nullptr;
+HFONT gWizardLarge = nullptr;
 bool gWizardSave = true;
 bool gWizardDone = false;
 int gWizardShotW = 0;
@@ -2169,6 +2173,10 @@ struct WizardLayout {
     int checksY = 0;
     int checksW = 0;
     int rowH = 0;
+    int adviceX = 0;
+    int adviceY = 0;
+    int adviceW = 0;
+    int adviceH = 0;
     int btnX = 0;
     int btnY = 0;
     int btnW = 0;
@@ -2234,10 +2242,27 @@ void ReleaseWizardPictures() {
     }
 }
 
+HFONT MakeLargeFont() {
+    LOGFONTW font = MessageFont();
+    if (font.lfHeight < 0) {
+        font.lfHeight = font.lfHeight * 3 / 2;
+    } else if (font.lfHeight > 0) {
+        font.lfHeight = font.lfHeight * 3 / 2;
+    } else {
+        font.lfHeight = -22;
+    }
+    font.lfWeight = FW_SEMIBOLD;
+    return CreateFontIndirectW(&font);
+}
+
 void ReleaseWizardFont() {
     if (gWizardBold) {
         DeleteObject(gWizardBold);
         gWizardBold = nullptr;
+    }
+    if (gWizardLarge) {
+        DeleteObject(gWizardLarge);
+        gWizardLarge = nullptr;
     }
 }
 
@@ -2442,7 +2467,7 @@ int Larger(int a, int b) {
     return a > b ? a : b;
 }
 
-WizardLayout LayoutWizard(HDC dc, HFONT bold, int maxW, int maxH) {
+WizardLayout LayoutWizard(HDC dc, HFONT bold, HFONT large, int maxW, int maxH) {
     WizardLayout layout{};
     const HFONT old = static_cast<HFONT>(SelectObject(dc, UiFont()));
     TEXTMETRICW tm{};
@@ -2594,7 +2619,31 @@ WizardLayout LayoutWizard(HDC dc, HFONT bold, int maxW, int maxH) {
         y += trainerH + 4;
         const int checksY = y;
         y += rowH * 2;
-        y += pad / 2;
+        y += pad;
+        SelectObject(dc, large ? large : (bold ? bold : UiFont()));
+        const int textW = TextWidth(dc, kPadAdvice);
+        int adviceW = textW + pad * 2;
+        int adviceH = 0;
+        if (adviceW > contentW) {
+            adviceW = contentW;
+            int innerW = contentW - pad;
+            if (innerW < 20) {
+                innerW = 20;
+            }
+            adviceH = WrapHeight(dc, kPadAdvice, innerW) + pad;
+        } else {
+            TEXTMETRICW largeTm{};
+            GetTextMetricsW(dc, &largeTm);
+            const int largeH = largeTm.tmHeight > 0 ? largeTm.tmHeight : fontH * 3 / 2;
+            adviceH = largeH + pad;
+        }
+        SelectObject(dc, UiFont());
+        if (adviceH < fontH) {
+            adviceH = fontH;
+        }
+        const int adviceX = pad + (contentW - adviceW) / 2;
+        const int adviceY = y;
+        y += adviceH + pad;
         const int btnY = y;
         y += btnH + pad;
 
@@ -2652,6 +2701,10 @@ WizardLayout LayoutWizard(HDC dc, HFONT bold, int maxW, int maxH) {
         layout.checksY = checksY;
         layout.checksW = contentW;
         layout.rowH = rowH;
+        layout.adviceX = adviceX;
+        layout.adviceY = adviceY;
+        layout.adviceW = adviceW;
+        layout.adviceH = adviceH;
         layout.btnW = btnW;
         layout.btnH = btnH;
         layout.btnX = (clientW - btnW) / 2;
@@ -2662,6 +2715,46 @@ WizardLayout LayoutWizard(HDC dc, HFONT bold, int maxW, int maxH) {
     }
     SelectObject(dc, old);
     return layout;
+}
+
+void PaintAdvice(const DRAWITEMSTRUCT* draw) {
+    RECT rc = draw->rcItem;
+    FillRect(draw->hDC, &rc, gTheme.windowBrush);
+    HBRUSH fill = CreateSolidBrush(gTheme.boxChecked);
+    HPEN pen = CreatePen(PS_SOLID, 1, gTheme.boxChecked);
+    const HGDIOBJ oldBrush = SelectObject(draw->hDC, fill);
+    const HGDIOBJ oldPen = SelectObject(draw->hDC, pen);
+    const int height = rc.bottom - rc.top;
+    const int radius = height > 4 ? height / 2 : 2;
+    RoundRect(draw->hDC, rc.left, rc.top, rc.right, rc.bottom, radius, radius);
+    SelectObject(draw->hDC, oldBrush);
+    SelectObject(draw->hDC, oldPen);
+    DeleteObject(fill);
+    DeleteObject(pen);
+
+    int inset = FontHeight() / 2;
+    if (inset < 8) {
+        inset = 8;
+    }
+    RECT text = rc;
+    InflateRect(&text, -inset, 0);
+    if (text.right < text.left) {
+        text = rc;
+    }
+    const HFONT font = gWizardLarge ? gWizardLarge : UiFont();
+    const HFONT oldFont = static_cast<HFONT>(SelectObject(draw->hDC, font));
+    RECT measure = text;
+    DrawTextW(draw->hDC, kPadAdvice, -1, &measure, DT_CALCRECT | DT_WORDBREAK | DT_CENTER | DT_NOPREFIX);
+    const int textH = measure.bottom - measure.top;
+    const int extra = (rc.bottom - rc.top) - textH;
+    if (extra > 0) {
+        text.top += extra / 2;
+    }
+    text.bottom = text.top + textH;
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, gTheme.checkMark);
+    DrawTextW(draw->hDC, kPadAdvice, -1, &text, DT_WORDBREAK | DT_CENTER | DT_NOPREFIX);
+    SelectObject(draw->hDC, oldFont);
 }
 
 LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -2680,6 +2773,8 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const int id = static_cast<int>(GetDlgCtrlID(draw->hwndItem));
         if (id == IDOK) {
             PaintPush(draw);
+        } else if (id == IDC_WIZ_ADVICE) {
+            PaintAdvice(draw);
         } else if (id == IDC_WIZ_MODERN || id == IDC_WIZ_AUTHENTIC) {
             PaintRadio(draw);
         } else {
@@ -2770,6 +2865,7 @@ bool ShowIntroWizard(HWND owner) {
     RegisterWizardClass();
     RebuildTheme();
     gWizardBold = MakeBoldFont();
+    gWizardLarge = MakeLargeFont();
 
     HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{};
@@ -2786,7 +2882,7 @@ bool ShowIntroWizard(HWND owner) {
     const int maxH = (work.bottom - work.top) - (frame.bottom - frame.top) - 8;
 
     HDC dc = GetDC(owner);
-    const WizardLayout layout = LayoutWizard(dc, gWizardBold, maxW, maxH);
+    const WizardLayout layout = LayoutWizard(dc, gWizardBold, gWizardLarge, maxW, maxH);
     ReleaseDC(owner, dc);
 
     gWizardShotW = layout.imageW;
@@ -2849,6 +2945,10 @@ bool ShowIntroWizard(HWND owner) {
     MakeCheck(dlg, inst, IDC_LIVES, L"Infinite Lives", layout.pad, layout.checksY, layout.checksW, layout.rowH);
     MakeCheck(dlg, inst, IDC_ENEMIES, L"Enemies cannot hit you", layout.pad, layout.checksY + layout.rowH,
               layout.checksW, layout.rowH);
+    HWND advice = CreateWindowExW(0, L"STATIC", kPadAdvice, WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+                                  layout.adviceX, layout.adviceY, layout.adviceW, layout.adviceH, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_WIZ_ADVICE)), inst, nullptr);
+    SetWindowSubclass(advice, CheckEraseProc, 1, 0);
     HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                               layout.btnX, layout.btnY, layout.btnW, layout.btnH, dlg,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), inst, nullptr);
