@@ -65,6 +65,7 @@ constexpr int IDC_CRT_BLUR = 213;
 constexpr int IDC_CRT_VIGNETTE = 214;
 constexpr int IDC_GAMEPAD = 215;
 constexpr int IDC_GAMEPAD_LABEL = 216;
+constexpr int IDC_RESET_TOP = 217;
 constexpr UINT_PTR kGamepadTimer = 1;
 constexpr wchar_t kNoGamepad[] = L"<no gamepad found>";
 constexpr int IDC_WIZ_MODERN = 220;
@@ -107,6 +108,9 @@ HWND gChkVignette = nullptr;
 HWND gChkSound = nullptr;
 HWND gPadLabel = nullptr;
 HWND gPadCombo = nullptr;
+HWND gResetTop = nullptr;
+int gResetTopW = 0;
+int gResetTopH = 0;
 std::vector<GamepadChoice> gPadItems;
 // Nested CRT rows sit under Show CRT Filter, and only while that box is on.
 int gCrtNestTop = 0;
@@ -673,6 +677,7 @@ void DestroySettingsChildren(HWND hwnd) {
     gChkSound = nullptr;
     gPadLabel = nullptr;
     gPadCombo = nullptr;
+    gResetTop = nullptr;
     gPadItems.clear();
     gRefreshing = false;
 }
@@ -757,6 +762,17 @@ void BuildSettings(HWND hwnd) {
     if (gamepadRow > inner) {
         inner = gamepadRow;
     }
+    int resetH = fontH + fontH / 2;
+    if (resetH < 28) {
+        resetH = 28;
+    }
+    int resetW = TextWidth(dc, L"Reset Top Score") + em * 2;
+    if (resetW < em * 8) {
+        resetW = em * 8;
+    }
+    if (kFocusPad + resetW > inner) {
+        inner = kFocusPad + resetW;
+    }
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
@@ -770,6 +786,14 @@ void BuildSettings(HWND hwnd) {
             inner = maxInner;
         }
     }
+    if (resetW > inner - kFocusPad) {
+        resetW = inner - kFocusPad;
+    }
+    if (resetW < 48) {
+        resetW = 48;
+    }
+    gResetTopW = resetW;
+    gResetTopH = resetH;
     const int hintW = inner - afterBox;
     const int hintH = WrapHeight(dc, hintText, hintW > 20 ? hintW : 20);
     SelectObject(dc, old);
@@ -887,6 +911,12 @@ void BuildSettings(HWND hwnd) {
             gGamepadMoveH = gGamepadDropH;
         }
     }
+    gResetTop = CreateWindowExW(0, L"BUTTON", L"Reset Top Score",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                                x + kFocusPad, y, gResetTopW, gResetTopH, hwnd,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RESET_TOP)),
+                                inst, nullptr);
+    SetWindowSubclass(gResetTop, CheckEraseProc, 1, 0);
     y += rowH + pad;
 
     gSettingsClientW = pad + inner + pad;
@@ -904,7 +934,8 @@ void FitSettingsWindow(HWND hwnd) {
 }
 
 // The four parts sit under Show CRT Filter while that box is on. Off, Sound
-// moves up and the parts leave the tab order. The gamepad row stays under Sound.
+// moves up and the parts leave the tab order. The gamepad row stays under
+// Sound, and Reset Top Score stays under the gamepad.
 void LayoutCrtOptions(HWND settings) {
     if (!gChkSound) {
         return;
@@ -944,7 +975,18 @@ void LayoutCrtOptions(HWND settings) {
         const int moveH = gGamepadMoveH > 0 ? gGamepadMoveH : visual;
         SetWindowPos(gPadCombo, nullptr, gSoundX + kFocusPad + gGamepadLabelW + gGamepadGap, comboY,
                      gGamepadComboW, moveH, SWP_NOZORDER | SWP_NOACTIVATE);
-        y += gCrtRowH;
+        int used = gCrtRowH;
+        // A closed list taller than the row would cover the button under it.
+        if (moveH > used && moveH < gGamepadDropH / 2) {
+            used = moveH;
+        }
+        y += used;
+    }
+    if (gResetTop) {
+        y += gSettingsGroup;
+        SetWindowPos(gResetTop, nullptr, gSoundX + kFocusPad, y, gResetTopW, gResetTopH,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        y += gResetTopH;
     }
     y += gSettingsPad;
     gSettingsClientH = y;
@@ -1143,6 +1185,9 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
     case IDC_SOUND:
         SendMessageW(owner, WM_APP_SOUND, gConfig.sound ? 0 : 1, 0);
         break;
+    case IDC_RESET_TOP:
+        SendMessageW(owner, WM_APP_RESET_TOP, 0, 0);
+        break;
     default:
         break;
     }
@@ -1179,9 +1224,15 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX:
         return OnCtlColor(wp, lp, true);
-    case WM_DRAWITEM:
-        PaintCheck(reinterpret_cast<const DRAWITEMSTRUCT*>(lp));
+    case WM_DRAWITEM: {
+        const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
+        if (static_cast<int>(GetDlgCtrlID(draw->hwndItem)) == IDC_RESET_TOP) {
+            PaintPush(draw);
+        } else {
+            PaintCheck(draw);
+        }
         return TRUE;
+    }
     case WM_COMMAND:
         OnSettingCommand(hwnd, LOWORD(wp), HIWORD(wp));
         return 0;

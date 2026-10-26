@@ -45,6 +45,9 @@ struct Config {
     // Controller id from Settings. Empty, or an id that is not connected,
     // uses the first gamepad found. Nothing is read when none are connected.
     std::wstring gamepad;
+    // $4388. The best score, shown as TOP. Written with the other settings
+    // when the program closes. 0 until a score passes it.
+    int topScore = 0;
     // True opens the welcome wizard before the game window. The wizard
     // writes false when it closes.
     bool firstTimeRun = true;

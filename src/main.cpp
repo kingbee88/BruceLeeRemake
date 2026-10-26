@@ -815,6 +815,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_SOUND:
         ApplySoundSetting(hwnd, wp != 0);
         return 0;
+    case WM_APP_RESET_TOP:
+        ResetTopScore();
+        // The score line is part of the play picture. Title, options, and
+        // game over keep their own pictures.
+        if (gStage == Stage::Play) {
+            Compose();
+        }
+        return 0;
     case WM_MEASUREITEM:
         if (OnMenuMeasure(lp)) {
             return TRUE;

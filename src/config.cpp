@@ -126,6 +126,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.sound);
     } else if (key == L"gamepad") {
         gConfig.gamepad = CleanGamepadId(value);
+    } else if (key == L"topscore") {
+        ParseInt(value, gConfig.topScore);
     } else if (key == L"firsttimerun") {
         ParseBool(value, gConfig.firstTimeRun);
     }
@@ -239,8 +241,21 @@ const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"crtvignette") return L"CrtVignette";
     if (key == L"sound") return L"Sound";
     if (key == L"gamepad") return L"Gamepad";
+    if (key == L"topscore") return L"TopScore";
     if (key == L"firsttimerun") return L"FirstTimeRun";
     return nullptr;
+}
+
+// The score is 24 bits. A value outside that range is pulled back in.
+int ClampedTopScore() {
+    int top = gConfig.topScore;
+    if (top < 0) {
+        top = 0;
+    }
+    if (top > 0xFFFFFF) {
+        top = 0xFFFFFF;
+    }
+    return top;
 }
 
 std::wstring ValueOf(const std::wstring& key) {
@@ -258,6 +273,7 @@ std::wstring ValueOf(const std::wstring& key) {
     if (key == L"crtvignette") return boolean(gConfig.crtVignette);
     if (key == L"sound") return boolean(gConfig.sound);
     if (key == L"gamepad") return gConfig.gamepad;
+    if (key == L"topscore") return std::to_wstring(ClampedTopScore());
     if (key == L"firsttimerun") return boolean(gConfig.firstTimeRun);
     return {};
 }
@@ -292,7 +308,7 @@ std::wstring RewriteIni(const std::wstring& text) {
         L"FirstTimeRun", L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom",
         L"ShowTitleScreen", L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
         L"CrtCurve", L"CrtScanlines", L"CrtBlur", L"CrtVignette", L"Sound",
-        L"Gamepad",
+        L"Gamepad", L"TopScore",
     };
     constexpr int kSettingCount = sizeof(order) / sizeof(order[0]);
     bool seen[kSettingCount] = {};
@@ -457,6 +473,7 @@ void LoadConfig(const wchar_t* commandLine) {
     if (gConfig.startRoom >= kRoomCount) {
         gConfig.startRoom = kRoomCount - 1;
     }
+    gConfig.topScore = ClampedTopScore();
 }
 
 int ClampedStartRoom() {

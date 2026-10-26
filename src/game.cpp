@@ -38,8 +38,6 @@ namespace {
 int lifeMark = 0x009C40;
 // $438E. Added into the mark after each extra fall. 00 75 30.
 constexpr int kLifeStep = 0x007530;
-// $4388. Stays 0 until the score passes it. A new process starts it at 0.
-int topScore = 0;
 // $43BD. $10 is the state init_hardware leaves, with the word showing.
 int captionTimer = 0x10;
 
@@ -77,7 +75,11 @@ void ResetScore() {
 }
 
 int TopScore() {
-    return topScore;
+    return gConfig.topScore;
+}
+
+void ResetTopScore() {
+    gConfig.topScore = g.score & 0xFFFFFF;
 }
 
 void TickPlayerCaption() {
@@ -130,8 +132,8 @@ void AddScoreByte(int slot, int amount) {
         lifeMark = (lifeMark + kLifeStep) & 0xFFFFFF;
         GrantLife();
     }
-    if (topScore < g.score) {
-        topScore = g.score;
+    if (gConfig.topScore < g.score) {
+        gConfig.topScore = g.score;
     }
 }
 

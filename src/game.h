@@ -97,7 +97,12 @@ void SyncLives();
 void ResetScore();
 
 // $4388. Compared as a 24-bit total. The line shows its low 6 digits.
+// TopScore in the settings file keeps it for the next time the program starts.
 int TopScore();
+
+// The top score becomes the score on screen. That score is 0 at the start
+// of a game and after game over.
+void ResetTopScore();
 
 // $1AED. Two screen characters. 0..99 are digits. From 100 the high
 // nibble is A-F, and 160 paints as 00.

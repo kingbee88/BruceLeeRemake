@@ -45,6 +45,7 @@ enum AppCommand : UINT {
 // The Settings window asks the main window to apply these.
 constexpr UINT WM_APP_FULLSCREEN = WM_APP + 1;
 constexpr UINT WM_APP_SOUND = WM_APP + 2;
+constexpr UINT WM_APP_RESET_TOP = WM_APP + 3;
 
 HMENU CreateAppMenu();
 HACCEL CreateAppAccelerators();
