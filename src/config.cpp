@@ -70,6 +70,20 @@ bool ParseBool(const std::wstring& text, bool& value) {
     return false;
 }
 
+std::wstring CleanGamepadId(std::wstring value) {
+    std::wstring out;
+    out.reserve(value.size());
+    for (wchar_t ch : value) {
+        if (ch >= 32 && ch != 0x7f) {
+            out.push_back(ch);
+        }
+    }
+    if (out.size() > 1024) {
+        out.resize(1024);
+    }
+    return out;
+}
+
 bool ParseInt(const std::wstring& text, int& value) {
     if (text.empty()) {
         return false;
@@ -110,6 +124,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.crtVignette);
     } else if (key == L"sound") {
         ParseBool(value, gConfig.sound);
+    } else if (key == L"gamepad") {
+        gConfig.gamepad = CleanGamepadId(value);
     } else if (key == L"firsttimerun") {
         ParseBool(value, gConfig.firstTimeRun);
     }
@@ -222,6 +238,7 @@ const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"crtblur") return L"CrtBlur";
     if (key == L"crtvignette") return L"CrtVignette";
     if (key == L"sound") return L"Sound";
+    if (key == L"gamepad") return L"Gamepad";
     if (key == L"firsttimerun") return L"FirstTimeRun";
     return nullptr;
 }
@@ -240,6 +257,7 @@ std::wstring ValueOf(const std::wstring& key) {
     if (key == L"crtblur") return boolean(gConfig.crtBlur);
     if (key == L"crtvignette") return boolean(gConfig.crtVignette);
     if (key == L"sound") return boolean(gConfig.sound);
+    if (key == L"gamepad") return gConfig.gamepad;
     if (key == L"firsttimerun") return boolean(gConfig.firstTimeRun);
     return {};
 }
@@ -274,8 +292,9 @@ std::wstring RewriteIni(const std::wstring& text) {
         L"FirstTimeRun", L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom",
         L"ShowTitleScreen", L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
         L"CrtCurve", L"CrtScanlines", L"CrtBlur", L"CrtVignette", L"Sound",
+        L"Gamepad",
     };
-    constexpr int kSettingCount = 13;
+    constexpr int kSettingCount = sizeof(order) / sizeof(order[0]);
     bool seen[kSettingCount] = {};
     std::wstring out;
     size_t lineStart = 0;

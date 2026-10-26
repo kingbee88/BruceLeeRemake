@@ -1032,7 +1032,11 @@ void PollRestartHold(HWND hwnd, bool yDown) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
+    // Gamepad names come from the Windows Runtime. That init has to be the
+    // first COM init on this thread, before the screenshot and picture loads.
+    PadSession pads;
     LoadConfig(commandLine);
+    SyncGamepads();
     // StartRoom is $29, counting from 0. 0 is the opening room.
     g.frames = LoadFile(L"bruce.bin", static_cast<size_t>(kFrames * 2 * kFrameBytes));
     // front.bin holds the PLAYER page. A fall shows it even when the title is skipped.

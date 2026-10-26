@@ -34,6 +34,7 @@
 #include "draw.h"
 #include "game.h"
 #include "load.h"
+#include "pad.h"
 #include "room.h"
 
 #include <cmath>
@@ -62,6 +63,10 @@ constexpr int IDC_CRT_CURVE = 211;
 constexpr int IDC_CRT_SCANLINES = 212;
 constexpr int IDC_CRT_BLUR = 213;
 constexpr int IDC_CRT_VIGNETTE = 214;
+constexpr int IDC_GAMEPAD = 215;
+constexpr int IDC_GAMEPAD_LABEL = 216;
+constexpr UINT_PTR kGamepadTimer = 1;
+constexpr wchar_t kNoGamepad[] = L"<no gamepad found>";
 constexpr int IDC_WIZ_MODERN = 220;
 constexpr int IDC_WIZ_AUTHENTIC = 221;
 constexpr int IDC_WIZ_MODERN_PIC = 222;
@@ -100,6 +105,9 @@ HWND gChkScanlines = nullptr;
 HWND gChkBlur = nullptr;
 HWND gChkVignette = nullptr;
 HWND gChkSound = nullptr;
+HWND gPadLabel = nullptr;
+HWND gPadCombo = nullptr;
+std::vector<GamepadChoice> gPadItems;
 // Nested CRT rows sit under Show CRT Filter, and only while that box is on.
 int gCrtNestTop = 0;
 int gCrtNestX = 0;
@@ -108,6 +116,13 @@ int gCrtRowH = 0;
 int gSoundX = 0;
 int gSoundW = 0;
 int gSettingsPad = 0;
+int gSettingsGroup = 0;
+int gGamepadLabelW = 0;
+int gGamepadGap = 0;
+int gGamepadComboW = 0;
+int gGamepadDropH = 0;
+int gGamepadVisualH = 0;
+int gGamepadMoveH = 0;
 HFONT gUiFont = nullptr;
 HFONT gGearFont = nullptr;
 HWND gTip = nullptr;
@@ -656,6 +671,9 @@ void DestroySettingsChildren(HWND hwnd) {
     gChkBlur = nullptr;
     gChkVignette = nullptr;
     gChkSound = nullptr;
+    gPadLabel = nullptr;
+    gPadCombo = nullptr;
+    gPadItems.clear();
     gRefreshing = false;
 }
 
@@ -720,6 +738,24 @@ void BuildSettings(HWND hwnd) {
     if (afterBox + hintWant > inner) {
         inner = afterBox + hintWant;
     }
+    const GamepadList gamepads = SyncGamepads();
+    const int gamepadLabelW = TextWidth(dc, L"Gamepad");
+    int gamepadNameW = TextWidth(dc, kNoGamepad);
+    const int typicalPad = TextWidth(dc, L"Xbox Wireless Controller");
+    if (typicalPad > gamepadNameW) {
+        gamepadNameW = typicalPad;
+    }
+    for (const GamepadChoice& choice : gamepads.items) {
+        const int width = TextWidth(dc, choice.name.c_str());
+        if (width > gamepadNameW) {
+            gamepadNameW = width;
+        }
+    }
+    const int gamepadChrome = GetSystemMetrics(SM_CXVSCROLL) + fontH / 2;
+    const int gamepadRow = kFocusPad + gamepadLabelW + fontH / 2 + gamepadNameW + gamepadChrome;
+    if (gamepadRow > inner) {
+        inner = gamepadRow;
+    }
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
@@ -737,6 +773,18 @@ void BuildSettings(HWND hwnd) {
     const int hintH = WrapHeight(dc, hintText, hintW > 20 ? hintW : 20);
     SelectObject(dc, old);
     ReleaseDC(hwnd, dc);
+
+    gSettingsGroup = group;
+    gGamepadLabelW = gamepadLabelW;
+    gGamepadGap = fontH / 2;
+    gGamepadComboW = inner - kFocusPad - gGamepadLabelW - gGamepadGap;
+    if (gGamepadComboW < 48) {
+        gGamepadComboW = 48;
+    }
+    gGamepadDropH = rowH * 8;
+    if (gGamepadDropH < 160) {
+        gGamepadDropH = 160;
+    }
 
     const int editH = fontH + fontH / 2;
     int y = pad;
@@ -803,6 +851,41 @@ void BuildSettings(HWND hwnd) {
     gChkVignette = MakeCheck(hwnd, inst, IDC_CRT_VIGNETTE, crtParts[3], gCrtNestX, y, gCrtNestW, rowH);
     y += rowH;
     gChkSound = MakeCheck(hwnd, inst, IDC_SOUND, checks[6], x, y, inner, rowH);
+    y += rowH + gSettingsGroup;
+    gPadLabel = CreateWindowExW(0, L"STATIC", L"Gamepad", WS_CHILD | WS_VISIBLE,
+                                x + kFocusPad, y, gGamepadLabelW + 4, fontH, hwnd,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GAMEPAD_LABEL)),
+                                inst, nullptr);
+    SendMessageW(gPadLabel, WM_SETFONT, reinterpret_cast<WPARAM>(UiFont()), FALSE);
+    gPadCombo = CreateWindowExW(
+        0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_CLIPSIBLINGS | CBS_DROPDOWNLIST |
+            CBS_HASSTRINGS | CBS_NOINTEGRALHEIGHT,
+        x + kFocusPad + gGamepadLabelW + gGamepadGap, y, gGamepadComboW, gGamepadDropH, hwnd,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GAMEPAD)), inst, nullptr);
+    if (gPadCombo) {
+        SendMessageW(gPadCombo, WM_SETFONT, reinterpret_cast<WPARAM>(UiFont()), FALSE);
+        SendMessageW(gPadCombo, CB_SETMINVISIBLE, 8, 0);
+        ThemeInput(gPadCombo, true);
+        const int itemH =
+            static_cast<int>(SendMessageW(gPadCombo, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0));
+        int visual = itemH + GetSystemMetrics(SM_CYEDGE) * 2;
+        if (visual < fontH) {
+            visual = fontH + 8;
+        }
+        RECT probe{};
+        GetWindowRect(gPadCombo, &probe);
+        const int createdH = probe.bottom - probe.top;
+        // comctl v6 keeps the closed control at one line and opens the list
+        // in its own window. A tall child would cover the padding under it.
+        if (createdH > 0 && createdH < gGamepadDropH / 2) {
+            gGamepadVisualH = createdH;
+            gGamepadMoveH = createdH;
+        } else {
+            gGamepadVisualH = visual;
+            gGamepadMoveH = gGamepadDropH;
+        }
+    }
     y += rowH + pad;
 
     gSettingsClientW = pad + inner + pad;
@@ -820,7 +903,7 @@ void FitSettingsWindow(HWND hwnd) {
 }
 
 // The four parts sit under Show CRT Filter while that box is on. Off, Sound
-// moves up and the parts leave the tab order.
+// moves up and the parts leave the tab order. The gamepad row stays under Sound.
 void LayoutCrtOptions(HWND settings) {
     if (!gChkSound) {
         return;
@@ -845,7 +928,24 @@ void LayoutCrtOptions(HWND settings) {
     }
     SetWindowPos(gChkSound, nullptr, gSoundX, y, gSoundW, gCrtRowH,
                  SWP_NOZORDER | SWP_NOACTIVATE);
-    y += gCrtRowH + gSettingsPad;
+    y += gCrtRowH;
+    if (gPadLabel && gPadCombo) {
+        y += gSettingsGroup;
+        const int fontH = gBuiltFont > 0 ? gBuiltFont : 16;
+        const int labelY = y + (gCrtRowH - fontH) / 2;
+        SetWindowPos(gPadLabel, nullptr, gSoundX + kFocusPad, labelY, gGamepadLabelW + 4, fontH,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        const int visual = gGamepadVisualH > 0 ? gGamepadVisualH : fontH + 8;
+        int comboY = y + (gCrtRowH - visual) / 2;
+        if (comboY < y) {
+            comboY = y;
+        }
+        const int moveH = gGamepadMoveH > 0 ? gGamepadMoveH : visual;
+        SetWindowPos(gPadCombo, nullptr, gSoundX + kFocusPad + gGamepadLabelW + gGamepadGap, comboY,
+                     gGamepadComboW, moveH, SWP_NOZORDER | SWP_NOACTIVATE);
+        y += gCrtRowH;
+    }
+    y += gSettingsPad;
     gSettingsClientH = y;
     if (settings) {
         FitSettingsWindow(settings);
@@ -867,6 +967,72 @@ void ApplyRoomEdit() {
     gConfig.startRoom = static_cast<int>(value);
 }
 
+bool GamepadComboShows(const GamepadList& list) {
+    if (!gPadCombo || list.items.size() != gPadItems.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < list.items.size(); ++i) {
+        if (list.items[i].id != gPadItems[i].id || list.items[i].name != gPadItems[i].name) {
+            return false;
+        }
+    }
+    const bool wantEnabled = !list.items.empty();
+    if ((IsWindowEnabled(gPadCombo) != FALSE) != wantEnabled) {
+        return false;
+    }
+    if (!wantEnabled) {
+        return true;
+    }
+    return static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0)) == list.active;
+}
+
+void RefreshGamepadCombo() {
+    if (!gPadCombo) {
+        return;
+    }
+    const GamepadList list = SyncGamepads();
+    if (GamepadComboShows(list)) {
+        return;
+    }
+    gRefreshing = true;
+    SendMessageW(gPadCombo, CB_RESETCONTENT, 0, 0);
+    gPadItems = list.items;
+    if (list.items.empty()) {
+        SendMessageW(gPadCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kNoGamepad));
+        SendMessageW(gPadCombo, CB_SETCURSEL, 0, 0);
+        EnableWindow(gPadCombo, FALSE);
+        gRefreshing = false;
+        return;
+    }
+    EnableWindow(gPadCombo, TRUE);
+    int widest = 0;
+    HDC dc = GetDC(gPadCombo);
+    const HFONT old = static_cast<HFONT>(SelectObject(dc, UiFont()));
+    for (const GamepadChoice& choice : list.items) {
+        SendMessageW(gPadCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.name.c_str()));
+        const int width = TextWidth(dc, choice.name.c_str());
+        if (width > widest) {
+            widest = width;
+        }
+    }
+    SelectObject(dc, old);
+    ReleaseDC(gPadCombo, dc);
+    int sel = list.active;
+    if (sel < 0 || sel >= static_cast<int>(list.items.size())) {
+        sel = 0;
+    }
+    SendMessageW(gPadCombo, CB_SETCURSEL, static_cast<WPARAM>(sel), 0);
+    int drop = widest + GetSystemMetrics(SM_CXVSCROLL) + 12;
+    RECT rc{};
+    GetWindowRect(gPadCombo, &rc);
+    const int closedW = rc.right - rc.left;
+    if (drop < closedW) {
+        drop = closedW;
+    }
+    SendMessageW(gPadCombo, CB_SETDROPPEDWIDTH, static_cast<WPARAM>(drop), 0);
+    gRefreshing = false;
+}
+
 void OnSettingCommand(HWND hwnd, int id, int code) {
     if (gRefreshing) {
         return;
@@ -880,6 +1046,14 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
         gRefreshing = true;
         SetRoomText();
         gRefreshing = false;
+        return;
+    }
+    if (code == CBN_SELCHANGE && id == IDC_GAMEPAD) {
+        const int sel = static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
+        if (sel >= 0 && sel < static_cast<int>(gPadItems.size())) {
+            gConfig.gamepad = gPadItems[static_cast<size_t>(sel)].id;
+        }
+        RefreshGamepadCombo();
         return;
     }
     if (code != BN_CLICKED) {
@@ -973,6 +1147,17 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         OnSettingCommand(hwnd, LOWORD(wp), HIWORD(wp));
         return 0;
+    case WM_TIMER:
+        if (wp == kGamepadTimer && gSettingsReady && hwnd == gSettings) {
+            RefreshGamepadCombo();
+        }
+        return 0;
+    case WM_DEVICECHANGE:
+        // A pad can arrive a moment after the notice. The timer catches that.
+        if (gSettingsReady && hwnd == gSettings) {
+            RefreshGamepadCombo();
+        }
+        return TRUE;
     case WM_SETTINGCHANGE:
     case WM_SYSCOLORCHANGE:
     case WM_THEMECHANGED:
@@ -989,6 +1174,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, kGamepadTimer);
         if (hwnd == gSettings) {
             gSettings = nullptr;
             gSettingsReady = false;
@@ -1885,6 +2071,7 @@ void RefreshSettingsDialog() {
     InvalidateCheck(gChkBlur);
     InvalidateCheck(gChkVignette);
     InvalidateCheck(gChkSound);
+    RefreshGamepadCombo();
 }
 
 void ApplyMenuBarBrush(HWND hwnd) {
@@ -1945,6 +2132,7 @@ void ToggleSettings(HWND owner) {
     gSettingsReady = true;
     ShowWindow(hwnd, SW_SHOW);
     SetFocus(gChkLives);
+    SetTimer(hwnd, kGamepadTimer, 250, nullptr);
 }
 
 void CloseSettings() {
@@ -3013,9 +3201,11 @@ void ShowControllerMapping(HWND owner) {
     };
     static constexpr wchar_t note[] =
         L"An Xbox pad uses these names. Menu is the button to the right of the Xbox button, "
-        L"and View is the button to the left. The other buttons are not used. Any other "
-        L"XInput controller uses this same layout. The keyboard keeps working while a pad "
-        L"is connected. The pad is read only while this program is in front.";
+        L"and View is the button to the left. The other buttons are not used. A stick with "
+        L"no button names, and a controller that only shows in the Windows Game Controllers "
+        L"list, uses its stick or hat to move and its buttons to punch. Settings chooses "
+        L"which connected controller is read. The keyboard keeps working. The controller is "
+        L"read only while this program is in front.";
     ShowHelp(owner, L"Controller mapping", L"Control", lines,
              static_cast<int>(sizeof(lines) / sizeof(lines[0])), note);
 }

@@ -42,6 +42,9 @@ struct Config {
     bool crtVignette = true;
     // False leaves the rooms and the options page silent.
     bool sound = true;
+    // Controller id from Settings. Empty, or an id that is not connected,
+    // uses the first gamepad found. Nothing is read when none are connected.
+    std::wstring gamepad;
     // True opens the welcome wizard before the game window. The wizard
     // writes false when it closes.
     bool firstTimeRun = true;
