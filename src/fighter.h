@@ -18,10 +18,12 @@
 
 #pragma once
 
-// The other two fighters. Actor 1 is the Ninja (active flag $81, sprite
-// colors green and black). Actor 2 is Yamo (active flag $41). $2719 forces
-// his sprite color to $F0, so he is drawn black. Both use the same pose
-// numbers as Bruce, including the spawn, strike, and knockdown pictures.
+// The other two fighters. Actor 1 is Yamo, the green fighter (active flag
+// $81, sprite colors green and black). His knockout is 450. Actor 2 is the
+// ninja (active flag $41). $2719 forces his sprite color to $F0, so he is
+// drawn black, and his knockout is 200. The variables and the files
+// ninja.bin and yamo.bin are named the other way around. Both use the same
+// pose numbers as Bruce, including the spawn, strike, and knockdown pictures.
 
 // Read data/ninja.bin and data/yamo.bin. False when either file is missing.
 bool LoadFighters();

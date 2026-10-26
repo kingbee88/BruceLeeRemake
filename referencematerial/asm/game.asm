@@ -75,8 +75,11 @@
 ;                picture, and replaces library $44 with library 8.
 ;   $1A          duck
 ;
-; Actor 1 is the Ninja. spawn_ninja calls wake_actor with A = $80, so active
-; is $81. Actor 2 is Yamo. spawn_yamo passes A = $40, so active is $41.
+; Actor 1 is the green fighter. spawn_ninja calls wake_actor with A = $80,
+; so active is $81. The manual calls him Yamo, and his knockout is 450.
+; Actor 2 is drawn black. spawn_yamo passes A = $40, so active is $41.
+; The manual calls him the ninja, and his knockout is 200. The routine
+; names below use the opposite words.
 ; wake_actor stores $0F in $98,X, and enemy_turn does not read it. With $42CA
 ; set, the second port is stored in $99 and actor 1 is left out of enemy_turn.
 ;   $0F   flinch. A non-Bruce leaves once the timer in Y is below 2.
@@ -119,9 +122,10 @@
 ; $4B, which is 75, and 7 health. Bit 4 is the landing: $32, which is 50,
 ; and 5 health. Bit 7 is set when the attacker is actor 0. The points and
 ; the knockout are skipped when it is clear. Health below 0 pays the
-; knockout on top of the blow. Actor 1, the Ninja, is $01 in byte 1 and
-; $C2 in byte 2, 450. Any other victim is $C8 in byte 2, 200. The printed
-; score card lists those two the other way around, Ninja 200 and Yamo 450.
+; knockout on top of the blow. Actor 1, the green fighter, is $01 in byte 1
+; and $C2 in byte 2, 450. Any other victim is $C8 in byte 2, 200. The manual
+; calls actor 1 Yamo and actor 2 the ninja, so the awards are Yamo 450 and
+; ninja 200.
 ;
 ; A killing landing is an intentional bug in the original. force_knockdown
 ; jumps back to landing_blow while bit 4 is still set, so 50 and the knockout
@@ -130,12 +134,12 @@
 ; a kick that kills takes the same jump, and the landing test continues only
 ; when bit 4 is set.
 ;
-; $5E counts down to the Ninja's wake, $5D to Yamo's. tick_wake_counts
-; subtracts one from each on every logic frame, including while that
+; $5E counts down to actor 1, Yamo. $5D counts down to actor 2, the ninja.
+; tick_wake_counts subtracts one from each on every logic frame, including while that
 ; fighter is on screen. A 0 in the room table wakes him on the first
 ; check. The bytes are $135B and $131F, listed in rooms.asm. A long visit
 ; or a set $40 reloads 3. A middle visit halves the reloaded count. A
-; human opponent ($42CA) reloads the Ninja's count with $30.
+; human opponent ($42CA) reloads Yamo's count with $30.
 ;
 ; Where to start reading
 ;   boot              fill, charset expand, sprite pictures, then start
@@ -6051,20 +6055,21 @@ L_2C23:
 ; $D1 just went negative. Punch, kick, and landing all arrive here.
 ; State $13, timer $0C, so the knockdown plays before check_bruce_down
 ; removes him. Bit 7 of $BC is set when the attacker was actor 0, and
-; the kill score is skipped without it. Actor 1, the Ninja, adds $01
-; through the middle score byte and $C2 through the low byte, 450. Those
-; are two adds, so the extra-fall test runs between them. Any other
-; victim, Yamo included, adds $C8 through the low byte, 200. The printed
-; score card lists the Ninja at 200 and Yamo at 450.
+; the kill score is skipped without it. Actor 1, the green fighter, adds
+; $01 through the middle score byte and $C2 through the low byte, 450.
+; Those are two adds, so the extra-fall test runs between them. Any other
+; victim adds $C8 through the low byte, 200. The manual calls actor 1
+; Yamo and actor 2 the ninja, so Yamo is 450 and the ninja is 200. The
+; knockout_ninja and knockout_yamo labels below use the opposite words.
 ;
 ; Intentional bug in the original. The jump below returns to landing_blow
 ; while bit 4 is still set. A landing that drove the health negative pays
 ; 50, subtracts 5, and comes back here for another knockout, then does
 ; that again. The health is one byte, so it wraps, and the loop stops on
 ; the first result in 0-127. That last pass stores state $1B with timer 8
-; over this knockdown, and the fighter stays up. Yamo on 4 health ends at
-; 125 after 27 landings and 26 knockouts, 6550 points. The Ninja on 4
-; ends at 125 after the same count, 13050 points. Health 5 pays 50 once
+; over this knockdown, and the fighter stays up. The ninja on 4 health ends at
+; 125 after 27 landings and 26 knockouts, 6550 points. Yamo on 4 ends at
+; 125 after the same count, 13050 points. Health 5 pays 50 once
 ; and stops at 0, because 0 is not negative. A killing punch or kick also
 ; jumps back, and the landing test continues only when bit 4 is set.
 force_knockdown:

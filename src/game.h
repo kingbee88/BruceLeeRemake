@@ -75,8 +75,9 @@ extern Game g;
 // The best score, $4388, moves up when this total passes it.
 void AddScoreByte(int slot, int amount);
 
-// $2C2C. X is the victim. Actor 1, the Ninja, is $01 in the middle byte and
-// $C2 in the low byte, 450. Any other fighter is $C8 in the low byte, 200.
+// $2C2C. X is the victim. Kind 1 is the green fighter, Yamo in the manual:
+// $01 in the middle byte and $C2 in the low byte, 450. Any other fighter is
+// $C8 in the low byte, 200. That fighter is the ninja, the one with the stick.
 void AddKnockout(int victimKind);
 
 // $2BF9 for a landing blow. Health is one byte. Each pass adds 50 when the
