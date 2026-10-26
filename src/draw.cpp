@@ -29,34 +29,38 @@
 
 namespace {
 
+// $8C00 is screen code $20 until V copies the line at $4707. A room enter
+// writes $20 again. Room 19's own line owns that row, so the credit stays off.
+bool creditOn = false;
+
 bool SpritePixel(const uint8_t* frame, int x, int y) {
     const uint8_t bits = frame[y * kSpriteRowBytes + x / 8];
     return (bits & static_cast<uint8_t>(0x80 >> (x & 7))) != 0;
 }
 
-// The score line is the ROM charset, copied to $8800 at startup. These are
-// the same shapes: digits, and the words on the room 0 bar.
+// The score line is the ROM charset, copied to $8800 at startup. The bytes
+// are that font: digits, the words on the score bar, and the credit line.
 uint8_t StatusGlyph(char ch, int row) {
     static const uint8_t kDigit[10][8] = {
         {0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00},
-        {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00},
-        {0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x7E, 0x00},
+        {0x18, 0x18, 0x38, 0x18, 0x18, 0x18, 0x7E, 0x00},
+        {0x3C, 0x66, 0x06, 0x0C, 0x30, 0x60, 0x7E, 0x00},
         {0x3C, 0x66, 0x06, 0x1C, 0x06, 0x66, 0x3C, 0x00},
-        {0x0C, 0x1C, 0x3C, 0x6C, 0x7E, 0x0C, 0x0C, 0x00},
+        {0x06, 0x0E, 0x1E, 0x66, 0x7F, 0x06, 0x06, 0x00},
         {0x7E, 0x60, 0x7C, 0x06, 0x06, 0x66, 0x3C, 0x00},
-        {0x3C, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x3C, 0x00},
-        {0x7E, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x00},
+        {0x3C, 0x66, 0x60, 0x7C, 0x66, 0x66, 0x3C, 0x00},
+        {0x7E, 0x66, 0x0C, 0x18, 0x18, 0x18, 0x18, 0x00},
         {0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x3C, 0x00},
-        {0x3C, 0x66, 0x66, 0x3E, 0x06, 0x0C, 0x38, 0x00},
+        {0x3C, 0x66, 0x66, 0x3E, 0x06, 0x66, 0x3C, 0x00},
     };
     static const uint8_t kT[8] = {0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00};
     static const uint8_t kO[8] = {0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00};
     static const uint8_t kP[8] = {0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x00};
-    static const uint8_t kF[8] = {0x7E, 0x60, 0x60, 0x7C, 0x60, 0x60, 0x60, 0x00};
-    static const uint8_t kA[8] = {0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00};
+    static const uint8_t kF[8] = {0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x00};
+    static const uint8_t kA[8] = {0x18, 0x3C, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00};
     static const uint8_t kB[8] = {0x7C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x7C, 0x00};
     static const uint8_t kD[8] = {0x78, 0x6C, 0x66, 0x66, 0x66, 0x6C, 0x78, 0x00};
-    static const uint8_t kE[8] = {0x7E, 0x60, 0x60, 0x7C, 0x60, 0x60, 0x7E, 0x00};
+    static const uint8_t kE[8] = {0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x7E, 0x00};
     static const uint8_t kL[8] = {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00};
     static const uint8_t kS[8] = {0x3C, 0x66, 0x60, 0x3C, 0x06, 0x66, 0x3C, 0x00};
     static const uint8_t kC[8] = {0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00};
@@ -66,6 +70,12 @@ uint8_t StatusGlyph(char ch, int row) {
     static const uint8_t kU[8] = {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00};
     static const uint8_t kI[8] = {0x3C, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00};
     static const uint8_t kStar[8] = {0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00};
+    static const uint8_t kParenL[8] = {0x0C, 0x18, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00};
+    static const uint8_t kParenR[8] = {0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00};
+    static const uint8_t kDot[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00};
+    static const uint8_t kJ[8] = {0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x6C, 0x38, 0x00};
+    static const uint8_t kV[8] = {0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00};
+    static const uint8_t kY[8] = {0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x00};
     const uint8_t* bits = nullptr;
     if (ch >= '0' && ch <= '9') {
         bits = kDigit[ch - '0'];
@@ -103,6 +113,18 @@ uint8_t StatusGlyph(char ch, int row) {
         bits = kI;
     } else if (ch == '*') {
         bits = kStar;
+    } else if (ch == '(') {
+        bits = kParenL;
+    } else if (ch == ')') {
+        bits = kParenR;
+    } else if (ch == '.') {
+        bits = kDot;
+    } else if (ch == 'J') {
+        bits = kJ;
+    } else if (ch == 'V') {
+        bits = kV;
+    } else if (ch == 'Y') {
+        bits = kY;
     }
     return bits != nullptr ? bits[row] : 0;
 }
@@ -129,8 +151,11 @@ void DrawLine(const char* text, int column, int top) {
 void DrawStatus() {
     // hook_frame_19 prints string 4 on row 0, column $0A, every logic frame.
     // The score digits stay on row 1, where init_hardware put them.
+    // $4707 is the other row-0 line. V copies it while the cell is still $20.
     if (g.roomId == 19) {
         DrawLine("** CONGRATULATIONS **", 0x0A, 0);
+    } else if (creditOn) {
+        DrawLine("BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF", 0, 0);
     }
     // timed_caption. The row-0 pointer is $8C00 and the column is $2C, so
     // the word lands at $8C2C: row 1, column 4, on the grey bar. String 1
@@ -176,6 +201,20 @@ void DrawSpark(int index) {
 }
 
 }  // namespace
+
+void ToggleCreditLine() {
+    // Room 19's first cell is 0, not $20, so V fills the row with $20.
+    // The same frame's hook then reprints the congratulations line.
+    if (g.roomId == 19) {
+        creditOn = false;
+        return;
+    }
+    creditOn = !creditOn;
+}
+
+void ClearCreditLine() {
+    creditOn = false;
+}
 
 bool ComposeWelcomeRoom(std::vector<uint32_t>& dest) {
     // Room 1. Its two spawn points are both on screen, so the Ninja and Yamo
@@ -281,15 +320,17 @@ void Compose() {
             // and row 2 stays $08 from the $F8 fill. enter_room starts at
             // $D878, so it never recolors them.
             // Row 0: glyph $20 in the score charset is solid, hires color 0,
-            // so the bar above the score is black. Row 1 is character 0,
-            // an empty glyph, so it shows $D021. raster_irq holds that at
-            // $FC (grey) until raster $40, inside the bottom of this row.
-            // The set bits of the score glyphs are color 0, drawn afterwards.
+            // so the bar above the score is black. V replaces that glyph.
+            // The credit ink is still color 0, and the clear bits show $D021,
+            // which raster_irq holds at $FC (grey) through this row. Row 1 is
+            // character 0, an empty glyph, so it shows that same grey. The
+            // set bits of the score glyphs are color 0, drawn afterwards.
             // hook_enter_19 writes 0 across row 0. Glyph 0 is blank, so that
             // bar is the same grey, and the congratulations line sits on it.
             // Row 2: glyph $06 in the room charset is solid $FF. Color $08
             // is multicolor ink black, so the row above the picture is black.
-            if ((y < 8 && g.roomId != 19) || (y >= 16 && y < 24)) {
+            const bool creditRow = y < 8 && creditOn && g.roomId != 19;
+            if (((y < 8 && g.roomId != 19) || (y >= 16 && y < 24)) && !creditRow) {
                 row[x] = kPalette[0];
             } else if (y < 16) {
                 row[x] = kPalette[0x0C];

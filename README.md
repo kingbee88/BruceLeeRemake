@@ -26,11 +26,13 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 | Left / Right | Walk |
 | Up | Jump. With Left or Right held, jump sideways |
 | Down | Duck. On a ladder, climb down |
-| Space | Punch while standing. Flying kick while moving |
-| P | Pause. Press again to resume |
+| Right Ctrl | Punch while standing. Flying kick while moving |
+| Space | Pause during play. Press again to resume |
+| V | Show the credit line on the top bar, BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF. Press again for the black bar. Entering a room brings the black bar back |
+| S | During play, switch the options tune off or on. Nothing changes until the next options page: it is silent, or the tune starts as soon as that page opens. Press again to switch it back |
+| F1 | Return to the options page. The score, the falls, and the rooms start over. The two option choices stay |
 | Escape | Leave full screen, and close Settings if it is open |
-| Ctrl+R | Restart the game |
-| F1 | Open the game manual |
+| F2 | Open the game manual |
 | Ctrl+F1 | About |
 | Ctrl+, | Settings |
 | F12 | Save a picture of the window as the next free ScreenShotXX.png, in the folder the config file was read from. A camera flash shows in the upper right |
@@ -47,7 +49,7 @@ An Xbox pad, or any other XInput controller, does the same things. The keyboard 
 | D-pad or left stick, up with left or right | Jump sideways |
 | Menu | Pause. Press again to resume |
 | View | Open Settings. Press again to close it |
-| Y | While paused, hold for 2 seconds to restart. A bar under PAUSED fills while Y is held |
+| Y | While paused, hold for 2 seconds to return to the options page. A bar under PAUSED fills while Y is held |
 
 `build.bat` compiles with the Visual Studio C++ tools. `build.bat debug` writes `build\Debug\BruceLee.exe` with optimizations off and a program database beside it. `build.bat release`, or `build.bat` with no argument, writes the optimized `build\Release\BruceLee.exe`. `build.bat all` builds both. In Cursor, with the CodeLLDB extension installed, Ctrl+Shift+B builds Debug and F5 launches it under the debugger. The Run and Debug menu can start Release as well.
 

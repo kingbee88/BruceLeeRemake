@@ -1042,7 +1042,9 @@ void Tick() {
     const bool right = (keys && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0) || pad.right;
     const bool up = (keys && (GetAsyncKeyState(VK_UP) & 0x8000) != 0) || pad.up;
     const bool down = (keys && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0) || pad.down;
-    const bool fire = (keys && (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) || pad.fire;
+    // The joystick button. Right Ctrl is that button on the keyboard.
+    // Space is the in-game pause, handled with the other window keys.
+    const bool fire = (keys && (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0) || pad.fire;
 
     // $40BC runs before the overlap, and a held pose still reaches it.
     // The lamp glyphs flicker in every room. The charset selects the bytes.

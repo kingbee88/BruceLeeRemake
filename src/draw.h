@@ -25,6 +25,11 @@
 // Call after Tick has chosen g.pose and g.x / g.y.
 void Compose();
 
+// $1B68. V swaps row 0 between the solid black bar and the credit line.
+// Entering a room writes the black bar again, as enter_room does.
+void ToggleCreditLine();
+void ClearCreditLine();
+
 // Paint title.bin. It is the multicolor bitmap at $2000. Every cell uses the
 // same four colors from the title snapshot. Light blue along the outer edge
 // is the border color, so it is drawn as the grey field.

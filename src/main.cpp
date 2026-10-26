@@ -87,10 +87,10 @@ bool gAfterFall = false;
 // This loop sleeps three of those, so 106 passes is the same 318.
 constexpr int kGameOverFrames = 106;
 int gGameOverFrames = 0;
-// P, the gamepad menu button, or another program taking the keyboard.
-// Settings is this program, so it does not pause the game. A click on the
-// picture, P, or the menu button clears the pause. Focus coming back does
-// not: the picture stays covered until one of those.
+// Space during play, the gamepad menu button, or another program taking
+// the keyboard. Settings is this program, so it does not pause the game.
+// A click on the picture, Space, or the menu button clears the pause.
+// Focus coming back does not: the picture stays covered until one of those.
 bool gPaused = false;
 // ShowWindow activates the window before the loop. Ignore that, and any
 // activate that arrives while the window is still being created.
@@ -106,6 +106,15 @@ bool gPrevMenu = false;
 // while this program is in front, including while Settings itself is.
 bool gViewArmed = false;
 bool gPrevView = false;
+// $1385. Nonzero skips the options tune. clear_work_ram does not touch it,
+// so F1 and a new game keep the choice made with S.
+bool gSkipOptionsTune = false;
+// $09BB. open_room decrements it once. Below zero, the tune starts and the
+// byte reloads with 4. S and clear_work_ram store 0, so the next options
+// page that is allowed to play starts the tune at once.
+uint8_t gOptionsTuneHold = 0;
+// This visit called start_tune. Turning sound on again restarts that tune.
+bool gOptionsTunePlaying = false;
 // Holding Y while paused. Negative hides the bar under PAUSED.
 constexpr ULONGLONG kRestartHoldMs = 2000;
 ULONGLONG gRestartHoldStart = 0;
@@ -824,11 +833,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_KEYDOWN:
         // Bit 30 is set when the key was already down, so a repeat does not
-        // flip the pause twice. Alt belongs to the menu.
-        if (wp == 'P' && (lp & (1 << 30)) == 0 && (lp & (1 << 29)) == 0 &&
-            !UiOwnsKeyboard() && WindowHasKeyboardFocus(hwnd)) {
-            SetPaused(!gPaused);
-            return 0;
+        // flip the pause or the credit line twice. Alt belongs to the menu.
+        // in_game_key runs before the pause skip, so V, S, and Space still
+        // work while the picture is held.
+        if ((lp & (1 << 30)) == 0 && (lp & (1 << 29)) == 0 && !UiOwnsKeyboard() &&
+            WindowHasKeyboardFocus(hwnd)) {
+            if (wp == 'V' && gStage == Stage::Play) {
+                ToggleCreditLine();
+                if (gPaused) {
+                    Compose();
+                }
+                return 0;
+            }
+            if (wp == 'S' && gStage == Stage::Play) {
+                // $1B4E. Toggle $1385 and clear $09BB. The rooms stay quiet.
+                // The next options page hears the change.
+                gSkipOptionsTune = !gSkipOptionsTune;
+                gOptionsTuneHold = 0;
+                return 0;
+            }
+            if (wp == VK_SPACE && (gStage == Stage::Play || gPaused)) {
+                // $3C toggles $0105 during play. On the title picture Space
+                // is still the fire button, so a pause from focus loss is
+                // cleared here and that press does not also leave the picture.
+                SetPaused(!gPaused);
+                return 0;
+            }
         }
         if (gPaused) {
             return 0;
@@ -868,7 +898,7 @@ void ApplySoundSetting(HWND hwnd, bool on) {
         if (!StartAudio()) {
             gConfig.sound = false;
             MessageBoxW(hwnd, L"Could not read data\\sound.bin.", L"Bruce Lee Remake", MB_ICONERROR);
-        } else if (gStage == Stage::Menu) {
+        } else if (gStage == Stage::Menu && gOptionsTunePlaying) {
             StartMenuMusic();
         }
     } else {
@@ -894,8 +924,21 @@ void BeginPlay() {
 }
 
 void BeginMenu(bool fresh) {
-    // $06DA. The options page starts the tune. The title picture stays silent.
-    StartMenuMusic();
+    // $06BD. $1385 nonzero leaves the page silent. Otherwise $09BB counts
+    // down once per visit. Below zero the tune starts and $09BB reloads
+    // with 4. The title picture is not this page, and it stays silent.
+    gOptionsTunePlaying = false;
+    if (!gSkipOptionsTune) {
+        gOptionsTuneHold = static_cast<uint8_t>(gOptionsTuneHold - 1);
+        if ((gOptionsTuneHold & 0x80) != 0) {
+            gOptionsTuneHold = 4;
+            gOptionsTunePlaying = true;
+            StartMenuMusic();
+        }
+    }
+    if (!gOptionsTunePlaying) {
+        StopMenuMusic();
+    }
     if (fresh) {
         gTwoPlayers = false;
         gHumanOpponent = false;
@@ -940,24 +983,19 @@ void StartAfterGameOver(HWND hwnd) {
     gStage = Stage::Play;
 }
 
-// A new session with the settings as they are now. Start room and the title
-// screen are read here. Top score stays, as it does after game over.
+// F1 is start, the cold start. clear_work_ram, then open_room, the options
+// page. The title picture is only the boot screen before start, so this
+// does not show it. $42CB and $42CC keep the two option choices. The top
+// score stays, as it does after game over. The start room is the port's
+// room 0: play begins there when the options page is left.
 void RestartGame(HWND hwnd) {
-    if (gConfig.showTitleScreen && gTitle.empty()) {
-        gTitle = LoadFile(L"title.bin", 8000);
-        if (gTitle.empty()) {
-            MessageBoxW(hwnd, L"Could not read data\\title.bin.", L"Bruce Lee Remake", MB_ICONERROR);
-            return;
-        }
-    }
+    SetPaused(false);
     StopMenuMusic();
     ClearOutOfLives();
     ResetScore();
     ResetCollectedLamps();
     ResetRoomBonus();
     ResetRun();
-    gTwoPlayers = false;
-    gHumanOpponent = false;
     gTitleStart = false;
     gMenuStart = false;
     gAfterFall = false;
@@ -965,27 +1003,26 @@ void RestartGame(HWND hwnd) {
     gPlayerFrames = 0;
     gPrevF3 = false;
     gPrevF5 = false;
+    // clear_work_ram zeros $09BB before open_room. The tune then starts
+    // at once, unless S has set $1385.
+    gOptionsTuneHold = 0;
     if (!EnterRoom(ClampedStartRoom())) {
         MessageBoxW(hwnd, L"Could not open the start room.", L"Bruce Lee Remake", MB_ICONERROR);
         return;
     }
     gShownRoom = -1;
     SetWindowTextW(hwnd, L"Bruce Lee Remake");
-    if (gConfig.showTitleScreen) {
-        ComposeTitle(gTitle.data());
-        gStage = Stage::Title;
-        return;
-    }
-    GiveStock();
-    PlaceBruce();
-    ResetPlayerCaption();
-    Compose();
-    gStage = Stage::Play;
+    BeginMenu(false);
 }
 
 void ShowPlayerPage(bool afterFall) {
     // $0729 and $0ED0. The PLAYER page resets the tune and clears the SID.
     StopMenuMusic();
+    // clear_work_ram, after the options page and before play. A fall does
+    // not take that path, so $09BB stays as the options page left it.
+    if (!afterFall) {
+        gOptionsTuneHold = 0;
+    }
     gAfterFall = afterFall;
     gPlayerFrames = gTwoPlayers ? 43 : 21;
     gStage = Stage::Player;
@@ -1017,8 +1054,8 @@ void PollMenu() {
     }
 }
 
-// Y held for two seconds while paused starts the game over. Releasing Y
-// clears the bar. The count is wall time, not logic frames.
+// Y held for two seconds while paused returns to the options page.
+// Releasing Y clears the bar. The count is wall time, not logic frames.
 void PollRestartHold(HWND hwnd, bool yDown) {
     if (!gPaused || !yDown) {
         gRestartHolding = false;

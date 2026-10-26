@@ -18,6 +18,7 @@
 
 #include "room.h"
 
+#include "draw.h"
 #include "game.h"
 #include "load.h"
 #include "sound.h"
@@ -191,6 +192,8 @@ bool EnterRoom(int roomId) {
     // enter_room_body pays for the room that was loaded. Room 11's redirect
     // has already replaced that with room 13, so room 11 is not paid then.
     PayRoomBonus(g.roomId);
+    // $09D2 writes screen code $20 across row 0, the solid black bar.
+    ClearCreditLine();
     return true;
 }
 

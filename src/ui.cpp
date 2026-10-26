@@ -714,7 +714,8 @@ void BuildSettings(HWND hwnd) {
     }
     const int roomLabelW = TextWidth(dc, L"Start Room");
     const int editW = TextWidth(dc, L"00") + GetSystemMetrics(SM_CXVSCROLL) + fontH;
-    const wchar_t* hintText = L"Start room and title screen apply on Game Over or Restart.";
+    const wchar_t* hintText =
+        L"Start room applies on Game Over or Restart. The title screen applies at startup and on Game Over.";
     const int hintNatural = TextWidth(dc, hintText);
     const int em = TextWidth(dc, L"M");
     int inner = afterBox + labelW;
@@ -2046,7 +2047,7 @@ HMENU CreateAppMenu() {
     EnsureUiClasses();
     HMENU bar = CreateMenu();
     HMENU file = CreatePopupMenu();
-    AppendMenuW(file, MF_STRING, ID_RESTART, L"&Restart Game\tCtrl+R");
+    AppendMenuW(file, MF_STRING, ID_RESTART, L"&Restart Game\tF1");
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_SAVE, L"&Save game...\tCtrl+S");
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_LOAD, L"&Load game...\tCtrl+O");
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_QUICKSAVE, L"&Quick save\tF6");
@@ -2057,7 +2058,7 @@ HMENU CreateAppMenu() {
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"&File");
 
     HMENU about = CreatePopupMenu();
-    AppendMenuW(about, MF_STRING, ID_MANUAL, L"Game &Manual\tF1");
+    AppendMenuW(about, MF_STRING, ID_MANUAL, L"Game &Manual\tF2");
     AppendMenuW(about, MF_STRING, ID_KEYS, L"&Keyboard shortcuts");
     AppendMenuW(about, MF_STRING, ID_CONTROLLER, L"&Controller mapping");
     AppendMenuW(about, MF_SEPARATOR, 0, nullptr);
@@ -2080,9 +2081,9 @@ HMENU CreateAppMenu() {
 
 HACCEL CreateAppAccelerators() {
     ACCEL keys[] = {
-        {FCONTROL | FVIRTKEY, 'R', ID_RESTART},
-        {FVIRTKEY, VK_F1, ID_MANUAL},
         {FCONTROL | FVIRTKEY, VK_F1, ID_ABOUT},
+        {FVIRTKEY, VK_F1, ID_RESTART},
+        {FVIRTKEY, VK_F2, ID_MANUAL},
         {FCONTROL | FVIRTKEY, VK_OEM_COMMA, ID_SETTINGS},
         {FVIRTKEY, VK_F12, ID_SCREENSHOT},
     };
@@ -3204,8 +3205,14 @@ void ShowKeyboardShortcuts(HWND owner) {
         {L"Left / Right", L"Walk."},
         {L"Up", L"Jump, or climb a ladder. With Left or Right held, jump sideways."},
         {L"Down", L"Duck. On a ladder, climb down."},
-        {L"Space", L"Punch while standing. Flying kick while moving."},
-        {L"P", L"Pause. Press again to resume."},
+        {L"Right Ctrl", L"Punch while standing. Flying kick while moving."},
+        {L"Space", L"Pause during play. Press again to resume."},
+        {L"V",
+         L"Show the credit line on the top bar: BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF. Press again for the black bar. Entering a room brings the black bar back."},
+        {L"S",
+         L"During play, switch the options tune off or on. Nothing changes until the next options page: it is silent, or the tune starts as soon as that page opens. Press again to switch it back."},
+        {L"F1",
+         L"Return to the options page. The score, the falls, and the rooms start over. The two option choices stay."},
         {nullptr, L"Title and options"},
         {L"Space or Enter", L"Leave the title picture."},
         {L"F3", L"On the options page, switch 1 player / 2 players."},
@@ -3213,8 +3220,7 @@ void ShowKeyboardShortcuts(HWND owner) {
         {L"F7", L"Leave the options page."},
         {nullptr, L"Window"},
         {L"Escape", L"Leave full screen, and close Settings if it is open."},
-        {L"Ctrl+R", L"Restart the game."},
-        {L"F1", L"Open the game manual."},
+        {L"F2", L"Open the game manual."},
         {L"Ctrl+F1", L"About."},
         {L"Ctrl+,", L"Settings."},
         {L"F12", L"Save a picture of the window as the next free ScreenShotXX.png, in the folder the config file was read from. A camera flash shows in the upper right."},
@@ -3234,7 +3240,7 @@ void ShowControllerMapping(HWND owner) {
         {L"Menu (Start)", L"Pause. Press again to resume."},
         {L"View (Back)", L"Open Settings. Press again to close it."},
         {L"Y",
-         L"While paused, hold for 2 seconds to restart. A bar under PAUSED fills while Y is held."},
+         L"While paused, hold for 2 seconds to return to the options page. A bar under PAUSED fills while Y is held."},
     };
     static constexpr wchar_t note[] =
         L"An Xbox pad uses these names. Menu is the button to the right of the Xbox button, "
