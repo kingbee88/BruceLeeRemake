@@ -1828,6 +1828,7 @@ HMENU CreateAppMenu() {
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_LOAD, L"&Load game...\tCtrl+O");
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_QUICKSAVE, L"&Quick save\tF6");
     AppendMenuW(file, MF_STRING | MF_GRAYED, ID_QUICKLOAD, L"Quick &Load\tF9");
+    AppendMenuW(file, MF_STRING, ID_SCREENSHOT, L"Take S&creenshot\tF12");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, ID_EXIT, L"E&xit\tAlt+F4");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"&File");
@@ -1860,8 +1861,9 @@ HACCEL CreateAppAccelerators() {
         {FVIRTKEY, VK_F1, ID_MANUAL},
         {FCONTROL | FVIRTKEY, VK_F1, ID_ABOUT},
         {FCONTROL | FVIRTKEY, VK_OEM_COMMA, ID_SETTINGS},
+        {FVIRTKEY, VK_F12, ID_SCREENSHOT},
     };
-    return CreateAcceleratorTableW(keys, 4);
+    return CreateAcceleratorTableW(keys, static_cast<int>(sizeof keys / sizeof keys[0]));
 }
 
 void RefreshSettingsDialog() {
@@ -2990,6 +2992,7 @@ void ShowKeyboardShortcuts(HWND owner) {
         {L"F1", L"Open the game manual."},
         {L"Ctrl+F1", L"About."},
         {L"Ctrl+,", L"Settings."},
+        {L"F12", L"Save a picture of the window as the next free ScreenShotXX.png, in the folder the config file was read from. A camera flash shows in the upper right."},
         {L"Alt+F4", L"Exit."},
     };
     ShowHelp(owner, L"Keyboard shortcuts", L"Key", lines,

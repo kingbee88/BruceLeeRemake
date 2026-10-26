@@ -451,6 +451,17 @@ int ClampedStartRoom() {
     return start;
 }
 
+std::wstring ConfigDirectory() {
+    if (gConfigPath.empty()) {
+        return ExeDirectory();
+    }
+    const size_t slash = gConfigPath.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) {
+        return ExeDirectory();
+    }
+    return gConfigPath.substr(0, slash);
+}
+
 void SaveConfig() {
     if (gConfigPath.empty()) {
         gConfigPath = ExeDirectory() + L"\\config.ini";

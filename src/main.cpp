@@ -20,6 +20,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <dwmapi.h>
+#include <wincodec.h>
 #include <d2d1.h>
 #include <d2d1helper.h>
 
@@ -37,14 +38,19 @@
 #include "ui.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <cwchar>
+#include <new>
+#include <string>
 #include <vector>
 
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace {
 
@@ -192,6 +198,48 @@ void RestorePause(const std::vector<uint32_t>& under) {
     }
 }
 
+bool gFlash = false;
+ULONGLONG gFlashStart = 0;
+
+std::vector<uint32_t> CoverFlash() {
+    std::vector<uint32_t> under;
+    if (!gFlash || g.pixels.size() < static_cast<size_t>(kWidth) * kHeight) {
+        return under;
+    }
+    const int age = static_cast<int>(GetTickCount64() - gFlashStart);
+    if (age < 0 || age >= kCameraFlashMs) {
+        gFlash = false;
+        return under;
+    }
+    under.resize(static_cast<size_t>(kCameraFlashW) * kCameraFlashH);
+    for (int y = 0; y < kCameraFlashH; ++y) {
+        const uint32_t* src = g.pixels.data() + static_cast<size_t>(kCameraFlashY + y) * kWidth + kCameraFlashX;
+        std::memcpy(under.data() + static_cast<size_t>(y) * kCameraFlashW, src,
+                    kCameraFlashW * sizeof(uint32_t));
+    }
+    DrawCameraFlash(age);
+    return under;
+}
+
+void RestoreFlash(const std::vector<uint32_t>& under) {
+    if (under.size() != static_cast<size_t>(kCameraFlashW) * kCameraFlashH) {
+        return;
+    }
+    if (g.pixels.size() < static_cast<size_t>(kWidth) * kHeight) {
+        return;
+    }
+    for (int y = 0; y < kCameraFlashH; ++y) {
+        uint32_t* dst = g.pixels.data() + static_cast<size_t>(kCameraFlashY + y) * kWidth + kCameraFlashX;
+        std::memcpy(dst, under.data() + static_cast<size_t>(y) * kCameraFlashW,
+                    kCameraFlashW * sizeof(uint32_t));
+    }
+}
+
+void StartFlash() {
+    gFlash = true;
+    gFlashStart = GetTickCount64();
+}
+
 std::vector<uint32_t> SavePauseBand() {
     std::vector<uint32_t> under(static_cast<size_t>(kPausedBandHeight) * kWidth);
     for (int y = 0; y < kPausedBandHeight; ++y) {
@@ -199,6 +247,87 @@ std::vector<uint32_t> SavePauseBand() {
         std::memcpy(under.data() + static_cast<size_t>(y) * kWidth, src, kWidth * sizeof(uint32_t));
     }
     return under;
+}
+
+template <class T>
+struct ComPtr {
+    T* p = nullptr;
+    ComPtr() = default;
+    ComPtr(const ComPtr&) = delete;
+    ComPtr& operator=(const ComPtr&) = delete;
+    ~ComPtr() {
+        if (p) {
+            p->Release();
+        }
+    }
+    T* Get() const { return p; }
+    T* operator->() const { return p; }
+    explicit operator bool() const { return p != nullptr; }
+    void Reset() {
+        if (p) {
+            p->Release();
+            p = nullptr;
+        }
+    }
+    // Empty slot for an out-parameter. The caller has not stored a pointer yet.
+    T** Receive() { return &p; }
+};
+
+// CoInitialize on this thread, released after the COM pointers that use it.
+struct ComApartment {
+    bool balance = false;
+    ComApartment() {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        balance = co == S_OK || co == S_FALSE;
+    }
+    ComApartment(const ComApartment&) = delete;
+    ComApartment& operator=(const ComApartment&) = delete;
+    ~ComApartment() {
+        if (balance) {
+            CoUninitialize();
+        }
+    }
+};
+
+// Where the 320 by 200 picture sits in the window. The CRT resample is 1:1
+// in that same rectangle. A filter with every part off keeps the sharp scale.
+struct FramePlace {
+    D2D1_RECT_F sharp{};
+    D2D1_RECT_F crtDest{};
+    UINT crtW = 0;
+    UINT crtH = 0;
+    bool crt = false;
+    CrtOptions options{};
+};
+
+FramePlace PlaceFrame(float cw, float ch) {
+    FramePlace place;
+    place.options = CrtOptions{gConfig.crtCurve, gConfig.crtScanlines, gConfig.crtBlur, gConfig.crtVignette};
+    const float scale = (cw / kWidth < ch / kHeight) ? cw / kWidth : ch / kHeight;
+    const float dw = kWidth * scale;
+    const float dh = kHeight * scale;
+    place.sharp = D2D1::RectF((cw - dw) * 0.5f, (ch - dh) * 0.5f,
+                              (cw - dw) * 0.5f + dw, (ch - dh) * 0.5f + dh);
+    const bool crtParts = place.options.curve || place.options.scanlines || place.options.blur || place.options.vignette;
+    // ShowCRTFilter resamples into the same fitted rectangle. The samples are
+    // already window pixels, so the blit is 1:1. Off, and a filter with every
+    // part turned off, keeps the nearest-neighbor scale of the 320 by 200 picture.
+    if (gConfig.showCrtFilter && crtParts && dw >= 1.f && dh >= 1.f) {
+        place.crtW = static_cast<UINT>(dw);
+        place.crtH = static_cast<UINT>(dh);
+        const float ox = std::floor((cw - static_cast<float>(place.crtW)) * 0.5f);
+        const float oy = std::floor((ch - static_cast<float>(place.crtH)) * 0.5f);
+        place.crtDest = D2D1::RectF(ox, oy, ox + static_cast<float>(place.crtW), oy + static_cast<float>(place.crtH));
+        place.crt = true;
+    }
+    return place;
+}
+
+HRESULT DrawPlaced(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, const D2D1_RECT_F& dest) {
+    target->BeginDraw();
+    target->Clear(kBorderF);
+    target->DrawBitmap(bitmap, dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    return target->EndDraw();
 }
 
 bool EnsureTarget(HWND hwnd) {
@@ -236,53 +365,215 @@ void Paint(HWND hwnd) {
         underPause = SavePauseBand();
         CoverPause();
     }
+    // Same as the pause band: in the picture for this blit, then put back.
+    const std::vector<uint32_t> underFlash = CoverFlash();
     const D2D1_SIZE_F size = gTarget->GetSize();
-    const float cw = size.width;
-    const float ch = size.height;
-    const float scale = (cw / kWidth < ch / kHeight) ? cw / kWidth : ch / kHeight;
-    const float dw = kWidth * scale;
-    const float dh = kHeight * scale;
-    const D2D1_RECT_F sharp = D2D1::RectF((cw - dw) * 0.5f, (ch - dh) * 0.5f,
-                                          (cw - dw) * 0.5f + dw, (ch - dh) * 0.5f + dh);
-
-    // ShowCRTFilter resamples into the same fitted rectangle. The samples are
-    // already window pixels, so the blit is 1:1. Off, and a filter with every
-    // part turned off, keeps the nearest-neighbor scale of the 320 by 200 picture.
-    const CrtOptions crtOptions{gConfig.crtCurve, gConfig.crtScanlines, gConfig.crtBlur, gConfig.crtVignette};
-    const bool crtParts = crtOptions.curve || crtOptions.scanlines || crtOptions.blur || crtOptions.vignette;
+    const FramePlace place = PlaceFrame(size.width, size.height);
     bool crt = false;
-    D2D1_RECT_F crtDest{};
-    if (gConfig.showCrtFilter && crtParts && dw >= 1.f && dh >= 1.f) {
-        const UINT destW = static_cast<UINT>(dw);
-        const UINT destH = static_cast<UINT>(dh);
-        if (EnsureCrtBitmap(destW, destH)) {
-            ApplyCrt(g.pixels.data(), kWidth, kHeight, gCrtPixels.data(),
-                     static_cast<int>(destW), static_cast<int>(destH), crtOptions);
-            gCrtBitmap->CopyFromMemory(nullptr, gCrtPixels.data(),
-                                       destW * static_cast<UINT32>(sizeof(uint32_t)));
-            const float ox = std::floor((cw - static_cast<float>(destW)) * 0.5f);
-            const float oy = std::floor((ch - static_cast<float>(destH)) * 0.5f);
-            crtDest = D2D1::RectF(ox, oy, ox + static_cast<float>(destW), oy + static_cast<float>(destH));
-            crt = true;
-        }
+    if (place.crt && EnsureCrtBitmap(place.crtW, place.crtH)) {
+        ApplyCrt(g.pixels.data(), kWidth, kHeight, gCrtPixels.data(),
+                 static_cast<int>(place.crtW), static_cast<int>(place.crtH), place.options);
+        gCrtBitmap->CopyFromMemory(nullptr, gCrtPixels.data(),
+                                   place.crtW * static_cast<UINT32>(sizeof(uint32_t)));
+        crt = true;
     }
     if (!crt) {
         gBitmap->CopyFromMemory(nullptr, g.pixels.data(), kWidth * sizeof(uint32_t));
     }
-
-    gTarget->BeginDraw();
-    gTarget->Clear(kBorderF);
-    if (crt) {
-        gTarget->DrawBitmap(gCrtBitmap, crtDest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-    } else {
-        gTarget->DrawBitmap(gBitmap, sharp, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-    }
-    const HRESULT hr = gTarget->EndDraw();
+    const HRESULT hr = DrawPlaced(gTarget, crt ? gCrtBitmap : gBitmap, crt ? place.crtDest : place.sharp);
+    RestoreFlash(underFlash);
     RestorePause(underPause);
     if (hr == D2DERR_RECREATE_TARGET) {
         ReleaseTarget();
         InvalidateRect(hwnd, nullptr, FALSE);
     }
+}
+
+bool EncodePng(IWICImagingFactory* factory, IWICBitmap* bitmap, std::vector<uint8_t>& png) {
+    ComPtr<IStream> stream;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, stream.Receive()))) {
+        return false;
+    }
+    ComPtr<IWICBitmapEncoder> encoder;
+    if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.Receive()))) {
+        return false;
+    }
+    if (FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) {
+        return false;
+    }
+    ComPtr<IWICBitmapFrameEncode> frame;
+    if (FAILED(encoder->CreateNewFrame(frame.Receive(), nullptr))) {
+        return false;
+    }
+    if (FAILED(frame->Initialize(nullptr)) || FAILED(frame->WriteSource(bitmap, nullptr)) ||
+        FAILED(frame->Commit()) || FAILED(encoder->Commit())) {
+        return false;
+    }
+    STATSTG stat{};
+    if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) {
+        return false;
+    }
+    if (stat.cbSize.QuadPart < 8 || stat.cbSize.QuadPart > 64ull * 1024ull * 1024ull) {
+        return false;
+    }
+    const ULONG n = static_cast<ULONG>(stat.cbSize.QuadPart);
+    const LARGE_INTEGER zero{};
+    if (FAILED(stream->Seek(zero, STREAM_SEEK_SET, nullptr))) {
+        return false;
+    }
+    png.resize(n);
+    ULONG read = 0;
+    return SUCCEEDED(stream->Read(png.data(), n, &read)) && read == n;
+}
+
+// Same draw as Paint, into a bitmap the size of the render target. The menu
+// bar is outside that target, so it is not in the picture.
+bool RenderWindowPng(std::vector<uint8_t>& png) {
+    const D2D1_SIZE_U pixel = gTarget->GetPixelSize();
+    if (pixel.width == 0 || pixel.height == 0 || pixel.width > 16384 || pixel.height > 16384) {
+        return false;
+    }
+    float dpiX = 96.f;
+    float dpiY = 96.f;
+    gTarget->GetDpi(&dpiX, &dpiY);
+    if (dpiX < 1.f) {
+        dpiX = 96.f;
+    }
+    if (dpiY < 1.f) {
+        dpiY = 96.f;
+    }
+    const D2D1_SIZE_F size = gTarget->GetSize();
+    const FramePlace place = PlaceFrame(size.width, size.height);
+    bool ok = false;
+    {
+        // Declared first so its destructor runs after the COM pointers.
+        ComApartment apartment;
+        ComPtr<IWICImagingFactory> factory;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(factory.Receive())))) {
+            ComPtr<IWICBitmap> wic;
+            if (SUCCEEDED(factory->CreateBitmap(pixel.width, pixel.height, GUID_WICPixelFormat32bppBGR,
+                                                WICBitmapCacheOnDemand, wic.Receive()))) {
+                const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+                    D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+                    dpiX, dpiY);
+                ComPtr<ID2D1Bitmap> picture;
+                bool drew = false;
+                {
+                    ComPtr<ID2D1RenderTarget> shot;
+                    if (SUCCEEDED(gFactory->CreateWicBitmapRenderTarget(wic.Get(), props, shot.Receive()))) {
+                        shot->SetDpi(dpiX, dpiY);
+                        const D2D1_BITMAP_PROPERTIES bitmapProps = D2D1::BitmapProperties(
+                            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), dpiX, dpiY);
+                        const uint64_t crtCount = static_cast<uint64_t>(place.crtW) * place.crtH;
+                        const bool drawCrt = place.crt && crtCount > 0 && crtCount <= 16384ull * 16384ull;
+                        if (drawCrt) {
+                            std::vector<uint32_t> crtPixels(static_cast<size_t>(crtCount));
+                            ApplyCrt(g.pixels.data(), kWidth, kHeight, crtPixels.data(),
+                                     static_cast<int>(place.crtW), static_cast<int>(place.crtH), place.options);
+                            if (SUCCEEDED(shot->CreateBitmap(D2D1::SizeU(place.crtW, place.crtH), crtPixels.data(),
+                                                             place.crtW * static_cast<UINT32>(sizeof(uint32_t)),
+                                                             bitmapProps, picture.Receive())) &&
+                                SUCCEEDED(DrawPlaced(shot.Get(), picture.Get(), place.crtDest))) {
+                                drew = true;
+                            }
+                        }
+                        if (!drew) {
+                            picture.Reset();
+                            if (SUCCEEDED(shot->CreateBitmap(D2D1::SizeU(kWidth, kHeight), g.pixels.data(),
+                                                             kWidth * static_cast<UINT32>(sizeof(uint32_t)),
+                                                             bitmapProps, picture.Receive())) &&
+                                SUCCEEDED(DrawPlaced(shot.Get(), picture.Get(), place.sharp))) {
+                                drew = true;
+                            }
+                        }
+                    }
+                }
+                if (drew) {
+                    ok = EncodePng(factory.Get(), wic.Get(), png);
+                }
+            }
+        }
+    }
+    return ok;
+}
+
+// ScreenShot00.png through ScreenShot99.png. An existing file, of any kind,
+// is left alone and the next number is tried.
+bool WriteScreenshotFile(const std::vector<uint8_t>& png, std::wstring& error) {
+    if (png.empty() || png.size() > 0xFFFFFFFFu) {
+        error = L"Could not take a screenshot.";
+        return false;
+    }
+    const std::wstring dir = ConfigDirectory();
+    for (int n = 0; n < 100; ++n) {
+        wchar_t name[32];
+        swprintf_s(name, L"ScreenShot%02d.png", n);
+        const std::wstring path = dir + L"\\" + name;
+        const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                        FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                continue;
+            }
+            error = L"Could not write " + path;
+            return false;
+        }
+        DWORD written = 0;
+        const BOOL wrote = WriteFile(file, png.data(), static_cast<DWORD>(png.size()), &written, nullptr);
+        CloseHandle(file);
+        if (!wrote || written != png.size()) {
+            error = L"Could not write " + path;
+            return false;
+        }
+        return true;
+    }
+    error = L"ScreenShot00.png through ScreenShot99.png already exist in " + dir + L".";
+    return false;
+}
+
+bool SaveScreenshot(HWND hwnd, std::wstring& error) {
+    if (!EnsureTarget(hwnd) || g.pixels.size() < static_cast<size_t>(kWidth) * kHeight) {
+        error = L"Could not take a screenshot.";
+        return false;
+    }
+    std::vector<uint8_t> png;
+    if (!RenderWindowPng(png)) {
+        error = L"Could not take a screenshot.";
+        return false;
+    }
+    return WriteScreenshotFile(png, error);
+}
+
+void TakeScreenshot(HWND hwnd) {
+    // The band is in the picture the window is showing. Put it back before
+    // this returns, including when the save fails, so the next frame is clean.
+    std::vector<uint32_t> underPause;
+    if (gPaused) {
+        underPause = SavePauseBand();
+        CoverPause();
+    }
+    // A flash already on screen is part of this picture. The one for this
+    // save starts after the file is written, so the file does not contain it.
+    const std::vector<uint32_t> underFlash = CoverFlash();
+    std::wstring error;
+    bool ok = false;
+    try {
+        ok = SaveScreenshot(hwnd, error);
+    } catch (const std::bad_alloc&) {
+        error = L"Could not take a screenshot.";
+    }
+    RestoreFlash(underFlash);
+    RestorePause(underPause);
+    if (ok) {
+        StartFlash();
+        return;
+    }
+    if (error.empty()) {
+        error = L"Could not take a screenshot.";
+    }
+    MessageBoxW(hwnd, error.c_str(), L"Bruce Lee Remake", MB_ICONERROR);
 }
 
 // Borderless, the size of one monitor. The display mode is left alone.
@@ -475,6 +766,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case ID_RESTART:
             RestartGame(hwnd);
+            return 0;
+        case ID_SCREENSHOT:
+            TakeScreenshot(hwnd);
             return 0;
         case ID_EXIT:
             DestroyWindow(hwnd);
@@ -840,6 +1134,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
                 if (gFullScreen) {
                     SetFullScreen(hwnd, false);
                 }
+                continue;
+            }
+            // A held F12 repeats. Each repeat would write another file.
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_F12 && (msg.lParam & (1 << 30)) != 0) {
                 continue;
             }
             if (accel && TranslateAcceleratorW(hwnd, accel, &msg)) {

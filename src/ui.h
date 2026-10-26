@@ -39,6 +39,7 @@ enum AppCommand : UINT {
     ID_SETTINGS,
     ID_KEYS,
     ID_CONTROLLER,
+    ID_SCREENSHOT,
 };
 
 // The Settings window asks the main window to apply these.

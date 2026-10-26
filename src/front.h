@@ -42,3 +42,14 @@ void ComposeGameOver(int score);
 constexpr int kPausedBandTop = 76;
 constexpr int kPausedBandHeight = 48;
 void DrawPausedBanner(float restartProgress);
+
+// A camera in the upper right of the 320 by 200 picture, just under the
+// score bar so FALLS stays visible. Each source dot is drawn two pixels
+// wide, and the edge is red. DrawCameraFlash paints it for ageMs in
+// 0 .. kCameraFlashMs. The picture underneath is the caller's to restore.
+constexpr int kCameraFlashX = 268;
+constexpr int kCameraFlashY = 26;
+constexpr int kCameraFlashW = 48;
+constexpr int kCameraFlashH = 36;
+constexpr int kCameraFlashMs = 700;
+void DrawCameraFlash(int ageMs);

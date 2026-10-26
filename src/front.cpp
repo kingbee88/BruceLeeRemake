@@ -397,3 +397,119 @@ void DrawPausedBanner(float restartProgress) {
     // below it for a 6-pixel bar.
     DrawRestartBar(textX, textX + textW, textY + kLetter + 4, 6, restartProgress);
 }
+
+// Hires, the same single pixels as the score glyphs, in the C64 palette.
+// # and K are the red edge. * and + are the bulb. W is the lens. The body
+// is light grey, grey, and dark grey. Each dot is drawn as a 2 by 2 block.
+namespace {
+
+constexpr int kCameraDotsW = 24;
+constexpr int kCameraDotsH = 18;
+constexpr int kCameraScale = 2;
+static_assert(kCameraFlashW == kCameraDotsW * kCameraScale, "camera flash width");
+static_assert(kCameraFlashH == kCameraDotsH * kCameraScale, "camera flash height");
+
+constexpr char kCameraRows[kCameraDotsH][kCameraDotsW + 1] = {
+    "...........#............",
+    "..........#*#...........",
+    ".........#*+*#..........",
+    "....*...#*+++*#...*.....",
+    ".........#*+*#..........",
+    "..........#*#...........",
+    "...........#............",
+    ".......KKKKKKKK.........",
+    "....KKKKKKKKKKKKKKKK....",
+    "....KLLLLLLLLLLLLLLK....",
+    "....KLGGGGGGGGGGGGKL....",
+    "....KLGGKKKKKKGGGGKL....",
+    "....KLGGKWWWWKGGGGKL....",
+    "....KLGGKWWWWKGGGGKL....",
+    "....KLGGKKKKKKGGGGKL....",
+    "....KLGGGGGGGGGGGGKL....",
+    "....KDDDDDDDDDDDDDDK....",
+    "....KKKKKKKKKKKKKKKK....",
+};
+
+constexpr bool CameraRowsFit() {
+    for (int y = 0; y < kCameraDotsH; ++y) {
+        int n = 0;
+        while (kCameraRows[y][n] != '\0') {
+            ++n;
+        }
+        if (n != kCameraDotsW) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(CameraRowsFit(), "camera flash row width");
+
+// The pop, then a cooler star, then the camera with the lens still lit.
+constexpr int kBurstMs = 180;
+constexpr int kGlowMs = 380;
+static_assert(kGlowMs < kCameraFlashMs, "camera flash phases");
+
+int FlashInk(char mark, int age) {
+    const bool burst = age < kBurstMs;
+    const bool glow = age < kGlowMs;
+    switch (mark) {
+    case '#':
+        return glow ? 2 : -1;
+    case '*':
+        if (burst) {
+            return 1;
+        }
+        return glow ? 7 : -1;
+    case '+':
+        if (burst) {
+            return 7;
+        }
+        return glow ? 8 : -1;
+    case 'W':
+        return burst ? 1 : 7;
+    case 'K':
+        return 2;
+    case 'L':
+        return 15;
+    case 'G':
+        return 12;
+    case 'D':
+        return 11;
+    default:
+        return -1;
+    }
+}
+
+}  // namespace
+
+void DrawCameraFlash(int ageMs) {
+    if (ageMs < 0 || ageMs >= kCameraFlashMs) {
+        return;
+    }
+    if (g.pixels.size() < static_cast<size_t>(kWidth) * kHeight) {
+        return;
+    }
+    for (int y = 0; y < kCameraDotsH; ++y) {
+        for (int x = 0; x < kCameraDotsW; ++x) {
+            const int ink = FlashInk(kCameraRows[y][x], ageMs);
+            if (ink < 0) {
+                continue;
+            }
+            const uint32_t color = kPalette[ink];
+            for (int sy = 0; sy < kCameraScale; ++sy) {
+                const int py = kCameraFlashY + y * kCameraScale + sy;
+                if (py < 0 || py >= kHeight) {
+                    continue;
+                }
+                uint32_t* row = g.pixels.data() + static_cast<size_t>(py) * kWidth;
+                for (int sx = 0; sx < kCameraScale; ++sx) {
+                    const int px = kCameraFlashX + x * kCameraScale + sx;
+                    if (px >= 0 && px < kWidth) {
+                        row[px] = color;
+                    }
+                }
+            }
+        }
+    }
+}

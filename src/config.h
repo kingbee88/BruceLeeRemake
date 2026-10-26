@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <string>
+
 // Settings from config.ini, or from config.local.ini when that file is
 // present, with the command line applied on top.
 struct Config {
@@ -62,3 +64,9 @@ int ClampedStartRoom();
 // Write the live settings to the file LoadConfig opened. Comments and
 // blank lines stay. If no file was opened, write config.ini beside the exe.
 void SaveConfig();
+
+// Folder of the config file LoadConfig opened, with no trailing slash.
+// That file is config.local.ini when it was the one read, and otherwise
+// config.ini. When no file was opened, this is the folder beside the exe,
+// where config.ini would be written.
+std::wstring ConfigDirectory();

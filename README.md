@@ -33,6 +33,7 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 | F1 | Open the game manual |
 | Ctrl+F1 | About |
 | Ctrl+, | Settings |
+| F12 | Save a picture of the window as the next free ScreenShotXX.png, in the folder the config file was read from. A camera flash shows in the upper right |
 | Alt+F4 | Exit |
 
 Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in the settings file, or on the command line, starts in that mode. Beside the exe, then one folder up, then two folders up, `config.local.ini` is used when that file is there, and otherwise `config.ini`. The program writes the settings back to the file it opened when it closes.
