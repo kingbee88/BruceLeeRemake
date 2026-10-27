@@ -104,8 +104,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.infiniteLives);
     } else if (key == L"fixbugsinoriginal") {
         ParseBool(value, gConfig.fixBugsInOriginal);
-    } else if (key == L"enemiescanthityou") {
-        ParseBool(value, gConfig.enemiesCantHitYou);
+    } else if (key == L"enemiescanthitbruce") {
+        ParseBool(value, gConfig.enemiesCantHitBruce);
     } else if (key == L"startroom") {
         ParseInt(value, gConfig.startRoom);
     } else if (key == L"showtitlescreen") {
@@ -126,6 +126,8 @@ void ApplySetting(std::wstring key, std::wstring value) {
         ParseBool(value, gConfig.sound);
     } else if (key == L"gamepad") {
         gConfig.gamepad = CleanGamepadId(value);
+    } else if (key == L"gamepad2") {
+        gConfig.gamepad2 = CleanGamepadId(value);
     } else if (key == L"topscore") {
         ParseInt(value, gConfig.topScore);
     } else if (key == L"firsttimerun") {
@@ -229,7 +231,7 @@ void NoteEncoding(const std::string& bytes) {
 
 const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"infinitelives") return L"InfiniteLives";
-    if (key == L"enemiescanthityou") return L"EnemiesCantHitYou";
+    if (key == L"enemiescanthitbruce") return L"EnemiesCantHitBruce";
     if (key == L"fixbugsinoriginal") return L"FixBugsInOriginal";
     if (key == L"startroom") return L"StartRoom";
     if (key == L"showtitlescreen") return L"ShowTitleScreen";
@@ -241,6 +243,7 @@ const wchar_t* CanonicalKey(const std::wstring& key) {
     if (key == L"crtvignette") return L"CrtVignette";
     if (key == L"sound") return L"Sound";
     if (key == L"gamepad") return L"Gamepad";
+    if (key == L"gamepad2") return L"Gamepad2";
     if (key == L"topscore") return L"TopScore";
     if (key == L"firsttimerun") return L"FirstTimeRun";
     return nullptr;
@@ -261,7 +264,7 @@ int ClampedTopScore() {
 std::wstring ValueOf(const std::wstring& key) {
     const auto boolean = [](bool on) { return std::wstring(on ? L"True" : L"False"); };
     if (key == L"infinitelives") return boolean(gConfig.infiniteLives);
-    if (key == L"enemiescanthityou") return boolean(gConfig.enemiesCantHitYou);
+    if (key == L"enemiescanthitbruce") return boolean(gConfig.enemiesCantHitBruce);
     if (key == L"fixbugsinoriginal") return boolean(gConfig.fixBugsInOriginal);
     if (key == L"startroom") return std::to_wstring(ClampedStartRoom());
     if (key == L"showtitlescreen") return boolean(gConfig.showTitleScreen);
@@ -273,6 +276,7 @@ std::wstring ValueOf(const std::wstring& key) {
     if (key == L"crtvignette") return boolean(gConfig.crtVignette);
     if (key == L"sound") return boolean(gConfig.sound);
     if (key == L"gamepad") return gConfig.gamepad;
+    if (key == L"gamepad2") return gConfig.gamepad2;
     if (key == L"topscore") return std::to_wstring(ClampedTopScore());
     if (key == L"firsttimerun") return boolean(gConfig.firstTimeRun);
     return {};
@@ -296,6 +300,9 @@ std::wstring RewriteLine(const std::wstring& line, const wchar_t*& canon) {
         return line;
     }
     const size_t eq = line.find(L'=');
+    if (Lower(Trim(line.substr(0, eq))) != Lower(std::wstring(canon))) {
+        return std::wstring(canon) + L" = " + ValueOf(key);
+    }
     return line.substr(0, eq + 1) + L" " + ValueOf(key);
 }
 
@@ -305,10 +312,10 @@ std::wstring Newline() {
 
 std::wstring RewriteIni(const std::wstring& text) {
     const wchar_t* order[] = {
-        L"FirstTimeRun", L"InfiniteLives", L"EnemiesCantHitYou", L"StartRoom",
+        L"FirstTimeRun", L"InfiniteLives", L"EnemiesCantHitBruce", L"StartRoom",
         L"ShowTitleScreen", L"FixBugsInOriginal", L"FullScreen", L"ShowCRTFilter",
         L"CrtCurve", L"CrtScanlines", L"CrtBlur", L"CrtVignette", L"Sound",
-        L"Gamepad", L"TopScore",
+        L"Gamepad", L"Gamepad2", L"TopScore",
     };
     constexpr int kSettingCount = sizeof(order) / sizeof(order[0]);
     bool seen[kSettingCount] = {};

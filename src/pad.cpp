@@ -65,34 +65,39 @@ bool gRoOwned = false;
 ComPtr<Wgi::IGamepadStatics> gGamepadStatics;
 ComPtr<Wgi::IRawGameControllerStatics> gRawStatics;
 ComPtr<IDirectInput8W> gDirectInput;
-ComPtr<Wgi::IGamepad> gActiveWgi;
-ComPtr<Wgi::IRawGameController> gActiveRaw;
-int gActiveAxes = 0;
-int gActiveButtons = 0;
-int gActiveSwitches = 0;
-std::vector<int> gActiveLabels;
-// A controller DirectInput knows about and Windows.Gaming.Input does not.
-ComPtr<IDirectInputDevice8W> gActiveDirect;
-bool gActiveDirectOn = false;
-LONG gDirectXMin = 0;
-LONG gDirectXMax = 65535;
-LONG gDirectYMin = 0;
-LONG gDirectYMax = 65535;
-bool gDirectHasY = false;
-int gDirectButtons = 0;
-int gDirectPovs = 0;
-int gActiveXInput = -1;
-std::wstring gActiveId;
-// The pad ReadPad is sampling. Kept when its id string changes, so a
-// DirectInput alias and the later Windows.Gaming.Input id stay one controller.
-UINT16 gBoundVid = 0;
-UINT16 gBoundPid = 0;
-// Set once the saved id has been found. Until then an incomplete list must
-// not replace that id with whichever pad happened to be enumerated first.
-bool gSavedMatched = false;
+
+// One player's bound controller. Player 1 is slot 0, player 2 is slot 1.
+struct BoundPad {
+    ComPtr<Wgi::IGamepad> wgi;
+    ComPtr<Wgi::IRawGameController> raw;
+    int axes = 0;
+    int buttons = 0;
+    int switches = 0;
+    std::vector<int> labels;
+    ComPtr<IDirectInputDevice8W> direct;
+    bool directOn = false;
+    LONG xMin = 0;
+    LONG xMax = 65535;
+    LONG yMin = 0;
+    LONG yMax = 65535;
+    bool hasY = false;
+    int directButtons = 0;
+    int directPovs = 0;
+    int xinput = -1;
+    std::wstring id;
+    // Kept when the id string changes, so a DirectInput alias and the later
+    // Windows.Gaming.Input id stay one controller.
+    UINT16 vid = 0;
+    UINT16 pid = 0;
+    // Set once the saved id has been found. Until then an incomplete list
+    // must not replace that id with whichever pad happened to be first.
+    bool savedMatched = false;
+};
+
+BoundPad gSlot[2];
+bool gSlotCached[2] = {};
+PadInput gSlotInput[2] = {};
 ULONGLONG gNextPadScan = 0;
-bool haveCached = false;
-PadInput cached{};
 
 struct ListedPad {
     std::wstring id;
@@ -338,98 +343,98 @@ void ApplyRawAxes(PadInput& pad, double x, double y, bool hasY) {
     }
 }
 
-void CloseDirectInput() {
-    if (gActiveDirect) {
-        gActiveDirect->Unacquire();
-        gActiveDirect.Reset();
+void CloseDirectInput(BoundPad& slot) {
+    if (slot.direct) {
+        slot.direct->Unacquire();
+        slot.direct.Reset();
     }
-    gActiveDirectOn = false;
-    gDirectHasY = false;
-    gDirectButtons = 0;
-    gDirectPovs = 0;
+    slot.directOn = false;
+    slot.hasY = false;
+    slot.directButtons = 0;
+    slot.directPovs = 0;
 }
 
-bool HasActive() {
-    return gActiveWgi || gActiveRaw || gActiveDirectOn || gActiveXInput >= 0;
+bool HasActive(const BoundPad& slot) {
+    return slot.wgi || slot.raw || slot.directOn || slot.xinput >= 0;
 }
 
-void ClearActive() {
-    gActiveWgi.Reset();
-    gActiveRaw.Reset();
-    gActiveAxes = 0;
-    gActiveButtons = 0;
-    gActiveSwitches = 0;
-    gActiveLabels.clear();
-    CloseDirectInput();
-    gActiveXInput = -1;
-    gActiveId.clear();
+void ClearActive(BoundPad& slot) {
+    slot.wgi.Reset();
+    slot.raw.Reset();
+    slot.axes = 0;
+    slot.buttons = 0;
+    slot.switches = 0;
+    slot.labels.clear();
+    CloseDirectInput(slot);
+    slot.xinput = -1;
+    slot.id.clear();
 }
 
-bool ActiveStillWorks() {
-    if (gActiveWgi) {
+bool ActiveStillWorks(BoundPad& slot) {
+    if (slot.wgi) {
         Wgi::GamepadReading reading{};
-        return SUCCEEDED(gActiveWgi->GetCurrentReading(&reading));
+        return SUCCEEDED(slot.wgi->GetCurrentReading(&reading));
     }
-    if (gActiveRaw) {
+    if (slot.raw) {
         boolean buttons[64] = {};
         Wgi::GameControllerSwitchPosition switches[8] = {};
         double axes[8] = {};
         UINT64 timestamp = 0;
-        const int buttonCount = gActiveButtons < 64 ? gActiveButtons : 64;
-        const int switchCount = gActiveSwitches < 8 ? gActiveSwitches : 8;
-        const int axisCount = gActiveAxes < 8 ? gActiveAxes : 8;
-        return SUCCEEDED(gActiveRaw->GetCurrentReading(
+        const int buttonCount = slot.buttons < 64 ? slot.buttons : 64;
+        const int switchCount = slot.switches < 8 ? slot.switches : 8;
+        const int axisCount = slot.axes < 8 ? slot.axes : 8;
+        return SUCCEEDED(slot.raw->GetCurrentReading(
             static_cast<UINT32>(buttonCount), buttonCount > 0 ? buttons : nullptr,
             static_cast<UINT32>(switchCount), switchCount > 0 ? switches : nullptr,
             static_cast<UINT32>(axisCount), axisCount > 0 ? axes : nullptr, &timestamp));
     }
-    if (gActiveDirectOn && gActiveDirect) {
-        HRESULT hr = gActiveDirect->Poll();
+    if (slot.directOn && slot.direct) {
+        HRESULT hr = slot.direct->Poll();
         if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) {
-            hr = gActiveDirect->Acquire();
+            hr = slot.direct->Acquire();
         }
         if (FAILED(hr) && hr != DI_NOEFFECT) {
             return false;
         }
         DIJOYSTATE2 state{};
-        hr = gActiveDirect->GetDeviceState(sizeof(state), &state);
+        hr = slot.direct->GetDeviceState(sizeof(state), &state);
         if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) {
-            if (FAILED(gActiveDirect->Acquire())) {
+            if (FAILED(slot.direct->Acquire())) {
                 return false;
             }
-            hr = gActiveDirect->GetDeviceState(sizeof(state), &state);
+            hr = slot.direct->GetDeviceState(sizeof(state), &state);
         }
         return SUCCEEDED(hr);
     }
-    if (gActiveXInput >= 0) {
+    if (slot.xinput >= 0) {
         const ULONGLONG now = GetTickCount64();
-        if (now < gXInputQuiet[gActiveXInput]) {
+        if (now < gXInputQuiet[slot.xinput]) {
             return false;
         }
         XINPUT_STATE state{};
-        return XInputGetState(static_cast<DWORD>(gActiveXInput), &state) == ERROR_SUCCESS;
+        return XInputGetState(static_cast<DWORD>(slot.xinput), &state) == ERROR_SUCCESS;
     }
     return false;
 }
 
-bool ReadActiveInto(PadInput& pad) {
-    if (gActiveWgi) {
+bool ReadActiveInto(BoundPad& slot, PadInput& pad) {
+    if (slot.wgi) {
         Wgi::GamepadReading reading{};
-        if (FAILED(gActiveWgi->GetCurrentReading(&reading))) {
+        if (FAILED(slot.wgi->GetCurrentReading(&reading))) {
             return false;
         }
         ApplyWgi(pad, reading);
         return true;
     }
-    if (gActiveRaw) {
+    if (slot.raw) {
         boolean buttons[64] = {};
         Wgi::GameControllerSwitchPosition switches[8] = {};
         double axes[8] = {};
         UINT64 timestamp = 0;
-        const int buttonCount = gActiveButtons < 64 ? gActiveButtons : 64;
-        const int switchCount = gActiveSwitches < 8 ? gActiveSwitches : 8;
-        const int axisCount = gActiveAxes < 8 ? gActiveAxes : 8;
-        if (FAILED(gActiveRaw->GetCurrentReading(
+        const int buttonCount = slot.buttons < 64 ? slot.buttons : 64;
+        const int switchCount = slot.switches < 8 ? slot.switches : 8;
+        const int axisCount = slot.axes < 8 ? slot.axes : 8;
+        if (FAILED(slot.raw->GetCurrentReading(
                 static_cast<UINT32>(buttonCount), buttonCount > 0 ? buttons : nullptr,
                 static_cast<UINT32>(switchCount), switchCount > 0 ? switches : nullptr,
                 static_cast<UINT32>(axisCount), axisCount > 0 ? axes : nullptr, &timestamp))) {
@@ -439,7 +444,7 @@ bool ReadActiveInto(PadInput& pad) {
             if (!buttons[i]) {
                 continue;
             }
-            const int label = i < static_cast<int>(gActiveLabels.size()) ? gActiveLabels[static_cast<size_t>(i)] : 0;
+            const int label = i < static_cast<int>(slot.labels.size()) ? slot.labels[static_cast<size_t>(i)] : 0;
             if (label == Wgi::GameControllerButtonLabel_None) {
                 pad.fire = true;
             } else {
@@ -454,18 +459,18 @@ bool ReadActiveInto(PadInput& pad) {
         }
         return true;
     }
-    if (gActiveDirectOn && gActiveDirect) {
-        HRESULT hr = gActiveDirect->Poll();
+    if (slot.directOn && slot.direct) {
+        HRESULT hr = slot.direct->Poll();
         if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) {
-            hr = gActiveDirect->Acquire();
+            hr = slot.direct->Acquire();
         }
         DIJOYSTATE2 state{};
-        hr = gActiveDirect->GetDeviceState(sizeof(state), &state);
+        hr = slot.direct->GetDeviceState(sizeof(state), &state);
         if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) {
-            if (FAILED(gActiveDirect->Acquire())) {
+            if (FAILED(slot.direct->Acquire())) {
                 return false;
             }
-            hr = gActiveDirect->GetDeviceState(sizeof(state), &state);
+            hr = slot.direct->GetDeviceState(sizeof(state), &state);
         }
         if (FAILED(hr)) {
             return false;
@@ -487,7 +492,7 @@ bool ReadActiveInto(PadInput& pad) {
         bool highX = false;
         bool lowY = false;
         bool highY = false;
-        tilt(state.lX, gDirectXMin, gDirectXMax, lowX, highX);
+        tilt(state.lX, slot.xMin, slot.xMax, lowX, highX);
         if (lowX) {
             pad.left = true;
         }
@@ -495,8 +500,8 @@ bool ReadActiveInto(PadInput& pad) {
             pad.right = true;
         }
         // Low Y is up, matching the usual DirectInput stick.
-        if (gDirectHasY) {
-            tilt(state.lY, gDirectYMin, gDirectYMax, lowY, highY);
+        if (slot.hasY) {
+            tilt(state.lY, slot.yMin, slot.yMax, lowY, highY);
             if (lowY) {
                 pad.up = true;
             }
@@ -504,7 +509,7 @@ bool ReadActiveInto(PadInput& pad) {
                 pad.down = true;
             }
         }
-        for (int i = 0; i < gDirectPovs; ++i) {
+        for (int i = 0; i < slot.directPovs; ++i) {
             const DWORD pov = state.rgdwPOV[i];
             if (pov == 0xFFFFFFFF) {
                 continue;
@@ -522,17 +527,17 @@ bool ReadActiveInto(PadInput& pad) {
                 pad.left = true;
             }
         }
-        for (int i = 0; i < gDirectButtons; ++i) {
+        for (int i = 0; i < slot.directButtons; ++i) {
             if ((state.rgbButtons[i] & 0x80) != 0) {
                 pad.fire = true;
             }
         }
         return true;
     }
-    if (gActiveXInput >= 0) {
+    if (slot.xinput >= 0) {
         XINPUT_STATE state{};
-        if (XInputGetState(static_cast<DWORD>(gActiveXInput), &state) != ERROR_SUCCESS) {
-            gXInputQuiet[gActiveXInput] = GetTickCount64() + 1000;
+        if (XInputGetState(static_cast<DWORD>(slot.xinput), &state) != ERROR_SUCCESS) {
+            gXInputQuiet[slot.xinput] = GetTickCount64() + 1000;
             return false;
         }
         Take(pad, state.Gamepad);
@@ -792,14 +797,14 @@ void AddDirectInputOnly(EnumResult& result) {
     }
 }
 
-void ReadAxisRange(DWORD offset, LONG& low, LONG& high) {
+void ReadAxisRange(BoundPad& slot, DWORD offset, LONG& low, LONG& high) {
     DIPROPRANGE range{};
     range.diph.dwSize = sizeof(range);
     range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
     range.diph.dwObj = offset;
     range.diph.dwHow = DIPH_BYOFFSET;
-    if (!gActiveDirect ||
-        FAILED(gActiveDirect->GetProperty(DIPROP_RANGE, &range.diph)) ||
+    if (!slot.direct ||
+        FAILED(slot.direct->GetProperty(DIPROP_RANGE, &range.diph)) ||
         range.lMin >= range.lMax) {
         low = 0;
         high = 65535;
@@ -809,36 +814,36 @@ void ReadAxisRange(DWORD offset, LONG& low, LONG& high) {
     high = range.lMax;
 }
 
-bool OpenDirectInput(const GUID& instance) {
-    CloseDirectInput();
+bool OpenDirectInput(BoundPad& slot, const GUID& instance) {
+    CloseDirectInput(slot);
     if (!EnsureDirectInput()) {
         return false;
     }
-    if (FAILED(gDirectInput->CreateDevice(instance, gActiveDirect.GetAddressOf(), nullptr))) {
+    if (FAILED(gDirectInput->CreateDevice(instance, slot.direct.GetAddressOf(), nullptr))) {
         return false;
     }
-    if (FAILED(gActiveDirect->SetDataFormat(&c_dfDIJoystick2))) {
-        gActiveDirect.Reset();
+    if (FAILED(slot.direct->SetDataFormat(&c_dfDIJoystick2))) {
+        slot.direct.Reset();
         return false;
     }
-    gActiveDirect->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+    slot.direct->SetCooperativeLevel(GetDesktopWindow(), DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
     DIDEVCAPS caps{};
     caps.dwSize = sizeof(caps);
-    if (SUCCEEDED(gActiveDirect->GetCapabilities(&caps))) {
-        gDirectButtons = static_cast<int>(caps.dwButtons);
-        if (gDirectButtons > 128) {
-            gDirectButtons = 128;
+    if (SUCCEEDED(slot.direct->GetCapabilities(&caps))) {
+        slot.directButtons = static_cast<int>(caps.dwButtons);
+        if (slot.directButtons > 128) {
+            slot.directButtons = 128;
         }
-        gDirectPovs = static_cast<int>(caps.dwPOVs);
-        if (gDirectPovs > 4) {
-            gDirectPovs = 4;
+        slot.directPovs = static_cast<int>(caps.dwPOVs);
+        if (slot.directPovs > 4) {
+            slot.directPovs = 4;
         }
-        gDirectHasY = caps.dwAxes >= 2;
+        slot.hasY = caps.dwAxes >= 2;
     }
-    ReadAxisRange(DIJOFS_X, gDirectXMin, gDirectXMax);
-    ReadAxisRange(DIJOFS_Y, gDirectYMin, gDirectYMax);
-    gActiveDirect->Acquire();
-    gActiveDirectOn = true;
+    ReadAxisRange(slot, DIJOFS_X, slot.xMin, slot.xMax);
+    ReadAxisRange(slot, DIJOFS_Y, slot.yMin, slot.yMax);
+    slot.direct->Acquire();
+    slot.directOn = true;
     return true;
 }
 
@@ -1016,35 +1021,36 @@ EnumResult Enumerate() {
     return EnumXInput();
 }
 
-void Bind(const std::vector<ListedPad>& items, int active) {
+void Bind(BoundPad& slot, const std::vector<ListedPad>& items, int active) {
     if (active < 0 || active >= static_cast<int>(items.size())) {
-        ClearActive();
+        ClearActive(slot);
         return;
     }
     const ListedPad& item = items[static_cast<size_t>(active)];
-    gBoundVid = item.vid;
-    gBoundPid = item.pid;
-    if (item.id == gActiveId && ActiveStillWorks()) {
+    slot.vid = item.vid;
+    slot.pid = item.pid;
+    if (item.id == slot.id && ActiveStillWorks(slot)) {
         return;
     }
-    ClearActive();
-    gActiveId = item.id;
+    ClearActive(slot);
+    slot.id = item.id;
     if (item.directInput) {
-        OpenDirectInput(item.instance);
+        OpenDirectInput(slot, item.instance);
         return;
     }
-    gActiveWgi = item.gamepad;
-    gActiveRaw = item.gamepad ? nullptr : item.raw;
-    gActiveAxes = item.axisCount;
-    gActiveButtons = item.buttonCount;
-    gActiveSwitches = item.switchCount;
-    gActiveLabels = item.labels;
-    gActiveXInput = item.xinput;
+    slot.wgi = item.gamepad;
+    slot.raw = item.gamepad ? nullptr : item.raw;
+    slot.axes = item.axisCount;
+    slot.buttons = item.buttonCount;
+    slot.switches = item.switchCount;
+    slot.labels = item.labels;
+    slot.xinput = item.xinput;
 }
 
-GamepadList ToList(const std::vector<ListedPad>& items, int active) {
+GamepadList ToList(const std::vector<ListedPad>& items, int active, int active2) {
     GamepadList list;
     list.active = active;
+    list.active2 = active2;
     list.items.reserve(items.size());
     for (const ListedPad& item : items) {
         GamepadChoice choice;
@@ -1055,11 +1061,82 @@ GamepadList ToList(const std::vector<ListedPad>& items, int active) {
     return list;
 }
 
+bool GamepadIsNone(const std::wstring& id) {
+    return id == kGamepadNone;
+}
+
+// How one saved id lines up with the pads connected right now.
+struct PadResolve {
+    int index = -1;
+    bool matched = false;
+    bool rewriteId = false;
+    bool waiting = false;
+    bool fallback = false;
+};
+
+PadResolve MatchPlayer(const EnumResult& enumerated, const std::wstring& saved, const BoundPad& slot) {
+    PadResolve found;
+    const std::vector<ListedPad>& items = enumerated.items;
+    if (GamepadIsNone(saved)) {
+        return found;
+    }
+    if (!saved.empty()) {
+        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+            if (items[static_cast<size_t>(i)].id == saved) {
+                found.index = i;
+                found.matched = true;
+                return found;
+            }
+        }
+        for (size_t i = 0; i < enumerated.aliasIds.size() && i < enumerated.aliasOf.size(); ++i) {
+            const int index = enumerated.aliasOf[i];
+            if (enumerated.aliasIds[i] != saved || index < 0 || index >= static_cast<int>(items.size())) {
+                continue;
+            }
+            found.index = index;
+            found.matched = true;
+            found.rewriteId = true;
+            return found;
+        }
+        if (slot.savedMatched && (slot.vid != 0 || slot.pid != 0)) {
+            for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+                const ListedPad& item = items[static_cast<size_t>(i)];
+                if (item.vid == slot.vid && item.pid == slot.pid) {
+                    found.index = i;
+                    found.matched = true;
+                    found.rewriteId = true;
+                    return found;
+                }
+            }
+        }
+        if (!slot.savedMatched) {
+            // The saved pad has not been seen. Leave its id alone.
+            found.waiting = true;
+            return found;
+        }
+        found.fallback = true;
+        return found;
+    }
+    found.fallback = true;
+    return found;
+}
+
+int FirstFree(const std::vector<char>& taken) {
+    for (int i = 0; i < static_cast<int>(taken.size()); ++i) {
+        if (!taken[static_cast<size_t>(i)]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void ReleasePadRuntime() {
-    ClearActive();
-    gBoundVid = 0;
-    gBoundPid = 0;
-    gSavedMatched = false;
+    for (BoundPad& slot : gSlot) {
+        ClearActive(slot);
+        slot.vid = 0;
+        slot.pid = 0;
+        slot.savedMatched = false;
+    }
     gGamepadStatics.Reset();
     gRawStatics.Reset();
     gDirectInput.Reset();
@@ -1085,7 +1162,8 @@ PadSession::~PadSession() {
 }
 
 void BeginPadFrame() {
-    haveCached = false;
+    gSlotCached[0] = false;
+    gSlotCached[1] = false;
 }
 
 GamepadList SyncGamepads() {
@@ -1094,82 +1172,88 @@ GamepadList SyncGamepads() {
         return gShown;
     }
     const std::vector<ListedPad>& items = enumerated.items;
-    int active = -1;
-    bool matchedSaved = false;
-    if (!gConfig.gamepad.empty()) {
-        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-            if (items[static_cast<size_t>(i)].id == gConfig.gamepad) {
-                active = i;
-                matchedSaved = true;
-                break;
-            }
+    std::wstring* ids[2] = {&gConfig.gamepad, &gConfig.gamepad2};
+    PadResolve resolved[2];
+    for (int player = 0; player < 2; ++player) {
+        resolved[player] = MatchPlayer(enumerated, *ids[player], gSlot[player]);
+    }
+    // Both configs named one pad. Player 1 keeps it.
+    if (resolved[0].matched && resolved[1].matched && resolved[0].index == resolved[1].index) {
+        resolved[1].matched = false;
+        resolved[1].rewriteId = false;
+        resolved[1].index = -1;
+        resolved[1].fallback = true;
+    }
+    std::vector<char> taken(items.size(), 0);
+    for (int player = 0; player < 2; ++player) {
+        if (resolved[player].matched && resolved[player].index >= 0) {
+            taken[static_cast<size_t>(resolved[player].index)] = 1;
         }
     }
-    // The same pad is often listed as a DirectInput device before Windows
-    // Gaming Input has its id. That DirectInput id is kept as an alias.
-    if (active < 0 && !gConfig.gamepad.empty()) {
-        for (size_t i = 0; i < enumerated.aliasIds.size() && i < enumerated.aliasOf.size(); ++i) {
-            const int index = enumerated.aliasOf[i];
-            if (enumerated.aliasIds[i] != gConfig.gamepad || index < 0 ||
-                index >= static_cast<int>(items.size())) {
-                continue;
-            }
-            active = index;
-            gConfig.gamepad = items[static_cast<size_t>(index)].id;
-            matchedSaved = true;
-            break;
+    for (int player = 0; player < 2; ++player) {
+        PadResolve& found = resolved[player];
+        if (!found.fallback) {
+            continue;
+        }
+        const int pick = FirstFree(taken);
+        if (pick >= 0) {
+            found.index = pick;
+            found.matched = true;
+            found.rewriteId = true;
+            taken[static_cast<size_t>(pick)] = 1;
+            gSlot[player].savedMatched = true;
+        } else if (!ids[player]->empty() && !GamepadIsNone(*ids[player])) {
+            *ids[player] = kGamepadNone;
+            gSlot[player].savedMatched = false;
+            found.index = -1;
         }
     }
-    // The pad we already matched can come back under a new id string.
-    if (active < 0 && gSavedMatched && (gBoundVid != 0 || gBoundPid != 0)) {
-        for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-            const ListedPad& item = items[static_cast<size_t>(i)];
-            if (item.vid == gBoundVid && item.pid == gBoundPid) {
-                active = i;
-                gConfig.gamepad = item.id;
-                matchedSaved = true;
-                break;
-            }
+    for (int player = 0; player < 2; ++player) {
+        PadResolve& found = resolved[player];
+        if (!found.waiting) {
+            continue;
+        }
+        const int pick = FirstFree(taken);
+        if (pick >= 0) {
+            found.index = pick;
+            taken[static_cast<size_t>(pick)] = 1;
         }
     }
-    if (active < 0 && !items.empty()) {
-        active = 0;
-        // Leave a saved id alone until that pad has been seen. The first
-        // list in a session is often only the DirectInput alias, and
-        // replacing the id here makes the next list bind the first pad.
-        if (gConfig.gamepad.empty() || gSavedMatched) {
-            gConfig.gamepad = items[0].id;
-            matchedSaved = true;
+    for (int player = 0; player < 2; ++player) {
+        const PadResolve& found = resolved[player];
+        if (found.rewriteId && found.index >= 0) {
+            *ids[player] = items[static_cast<size_t>(found.index)].id;
         }
+        if (found.matched) {
+            gSlot[player].savedMatched = true;
+        }
+        Bind(gSlot[player], items, found.index);
     }
-    if (matchedSaved) {
-        gSavedMatched = true;
-    }
-    Bind(items, active);
-    gShown = ToList(items, active);
+    gShown = ToList(items, resolved[0].index, resolved[1].index);
     gNextPadScan = GetTickCount64() + 1000;
     return gShown;
 }
 
-PadInput ReadPad() {
-    if (haveCached) {
-        return cached;
+PadInput ReadPadSlot(int player) {
+    if (gSlotCached[player]) {
+        return gSlotInput[player];
     }
-    haveCached = true;
-    cached = {};
+    gSlotCached[player] = true;
+    gSlotInput[player] = {};
     // Another program is in front. Leave the sticks with that program.
     if (!ForegroundIsOurs()) {
-        return cached;
+        return gSlotInput[player];
     }
-    if (HasActive()) {
-        if (!ReadActiveInto(cached)) {
+    BoundPad& slot = gSlot[player];
+    if (HasActive(slot)) {
+        if (!ReadActiveInto(slot, gSlotInput[player])) {
             // The chosen pad is gone. Pick it again if it is still there,
-            // otherwise the first one that is.
-            ClearActive();
+            // otherwise the first one that player can take.
+            ClearActive(slot);
             SyncGamepads();
-            cached = {};
-            ReadActiveInto(cached);
-        } else if (!gSavedMatched) {
+            gSlotInput[player] = {};
+            ReadActiveInto(gSlot[player], gSlotInput[player]);
+        } else if (!slot.savedMatched) {
             // The first list can be a DirectInput alias of the saved pad.
             // Look again until that saved id shows up, and keep reading this
             // pad in the meantime.
@@ -1178,12 +1262,20 @@ PadInput ReadPad() {
                 SyncGamepads();
             }
         }
-        return cached;
+        return gSlotInput[player];
     }
     const ULONGLONG now = GetTickCount64();
     if (now >= gNextPadScan) {
         SyncGamepads();
-        ReadActiveInto(cached);
+        ReadActiveInto(gSlot[player], gSlotInput[player]);
     }
-    return cached;
+    return gSlotInput[player];
+}
+
+PadInput ReadPad() {
+    return ReadPadSlot(0);
+}
+
+PadInput ReadPad2() {
+    return ReadPadSlot(1);
 }

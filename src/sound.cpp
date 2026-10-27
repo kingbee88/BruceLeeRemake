@@ -157,8 +157,16 @@ struct Voice {
             return;
         }
         rateCounter = 0;
+        // The sustain state keeps comparing. A lower sustain written while
+        // the gate is still held continues the decay. The gate is left as
+        // it was. Effect $8A's long pulse is sustain 0 after the envelope
+        // has already reached sustain 15, so that tone decays.
         if (state == Env::Sustain) {
-            return;
+            const int level = (sustain << 4) | sustain;
+            if (env <= level) {
+                return;
+            }
+            state = Env::Decay;
         }
         if (state == Env::Attack) {
             if (env < 255) {

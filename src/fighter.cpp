@@ -90,6 +90,8 @@ struct Fighter {
     int carryMark = 0;   // $AA. Set while state $17 runs. A step shifts it to 0.
     int repeat = 6;      // $CB. A walk burst is two xpos, or three once this hits 0.
     int prevAction = 0;  // $C2. The state release_hold saw last frame.
+    int hold = 0;        // $0106. A human climb waits 3, a duck waits 1.
+    int fallSlide = 0;   // $B0. One sideways nudge on the second falling frame.
     int hist[kStepGens][4] = {};
     const uint8_t* frames = nullptr;
 };
@@ -622,9 +624,13 @@ void CarryFighter(Fighter& f) {
     // shifted it back to 0.
     f.carryMark = 1;
     const int dir = f.facing < 0 ? -1 : 1;
+    // $2191. Facing replaces the stick only when $42CA is clear. While a
+    // human opponent is on, this fighter's stick stays the $0F the ride
+    // stored, so he takes no step of his own. The surface shove still runs.
+    const bool ownStep = !(gHumanOpponent && !gOpponentYielded);
     if (f.carryDelay > 0) {
         f.carryDelay -= 1;
-    } else {
+    } else if (ownStep) {
         StepX(f, dir);
         StepX(f, dir);
         // $21EB. The same blip as Bruce's own step on the ladder.
@@ -780,6 +786,8 @@ void Wake(Fighter& f) {
     f.carryMark = 0;
     f.repeat = 6;
     f.prevAction = 0;
+    f.hold = 0;
+    f.fallSlide = 0;
     for (int gen = 0; gen < kStepGens; ++gen) {
         for (int d = 0; d < 4; ++d) {
             f.hist[gen][d] = 0;
@@ -811,12 +819,26 @@ int RoomDelay(int kind) {
     return kind == 1 ? kNinjaDelay[room] : kYamoDelay[room];
 }
 
+// Yamo is actor 1. The variable is named ninja because that is the file.
+bool HumanYamo(const Fighter& f) {
+    return f.kind == 1 && gHumanOpponent && !gOpponentYielded;
+}
+
+void ArmDelay(Fighter& f) {
+    // A human opponent reloads Yamo with $30. The room table is the computer.
+    if (HumanYamo(f)) {
+        f.delay = 0x30;
+        return;
+    }
+    f.delay = RoomDelay(f.kind);
+}
+
 void Bury(Fighter& f) {
     f.on = false;
     f.action = 0;
     f.actionTimer = 0;
     // $3001 jumps to $0D42, which reloads this fighter's wait.
-    f.delay = RoomDelay(f.kind);
+    ArmDelay(f);
 }
 
 void Spawn(Fighter& f) {
@@ -824,7 +846,7 @@ void Spawn(Fighter& f) {
         return;
     }
     Wake(f);
-    f.delay = RoomDelay(f.kind);
+    ArmDelay(f);
 }
 
 struct Who {
@@ -942,7 +964,7 @@ bool Open(int action) {
 bool Hurt(Who& victim, const Who& attacker, int blow) {
     // $29E2 and $29F7. The trainer skips the ORA into Bruce's hit byte.
     // The swing is already chosen, so the Ninja and Yamo still attack.
-    if (victim.kind == 0 && gConfig.enemiesCantHitYou && attacker.kind != 0) {
+    if (victim.kind == 0 && gConfig.enemiesCantHitBruce && attacker.kind != 0) {
         return false;
     }
     // $2A91 is the strike. $2E29 is a punch, a kick, or a landing.
@@ -1078,6 +1100,452 @@ bool Resolve() {
     return false;
 }
 
+void SetHumanState(Fighter& f, int state, int timer) {
+    f.action = state;
+    f.actionTimer = timer;
+    f.hold = 0;
+    if (state == kClimbUp || state == kClimbDown) {
+        f.hold = 3;
+    } else if (state == kDuck) {
+        f.hold = 1;
+    }
+}
+
+void LandHuman(Fighter& f) {
+    SetHumanState(f, 0, 0);
+}
+
+Contact ProbeAt(const Fighter& f, int x, int y) {
+    Bind(f);
+    const Contact hit = Probe(x, y);
+    ClearActorView();
+    return hit;
+}
+
+Contact ProbeUpperAt(const Fighter& f, int x, int y) {
+    Bind(f);
+    const Contact hit = ProbeUpper(x, y);
+    ClearActorView();
+    return hit;
+}
+
+Contact ProbePoseAt(const Fighter& f, int pose, int x, int y) {
+    SetActorView(f.frames, f.action, f.facing, pose);
+    const Contact hit = ProbePose(pose, x, y);
+    ClearActorView();
+    return hit;
+}
+
+bool TryStepHuman(Fighter& f, int dir) {
+    if (dir < 0) {
+        if (f.x < kMinX || ProbeAt(f, f.x - 2, f.y).wall) {
+            return false;
+        }
+        f.x -= 2;
+        f.hist[0][kStepLeft] += 1;
+        return true;
+    }
+    if (f.x >= kMaxX || ProbeAt(f, f.x + 2, f.y).wall) {
+        return false;
+    }
+    f.x += 2;
+    f.hist[0][kStepRight] += 1;
+    return true;
+}
+
+void RiseHuman(Fighter& f, int pixels) {
+    for (int i = 0; i < pixels; ++i) {
+        if (f.y < kMinY || ProbeAt(f, f.x, f.y - 1).wall) {
+            return;
+        }
+        f.y -= 1;
+        f.hist[0][kStepUp] += 1;
+    }
+}
+
+void DropHuman(Fighter& f, int pixels) {
+    for (int i = 0; i < pixels && f.y < kMaxY; ++i) {
+        f.y += 1;
+        f.hist[0][kStepDown] += 1;
+    }
+}
+
+void StartFlyHuman(Fighter& f, int dir) {
+    f.facing = dir;
+    SetHumanState(f, dir < 0 ? kFlyLeft : kFlyRight, 0x0C);
+}
+
+void WalkHuman(Fighter& f, int dir, bool fire) {
+    const int walk = dir < 0 ? kWalkLeft : kWalkRight;
+    if ((dir < 0 && f.x < kMinX) || (dir > 0 && f.x >= kMaxX)) {
+        LandHuman(f);
+        return;
+    }
+    PlayEffect(0x80);
+    if (f.prevAction != walk) {
+        f.step = 0;
+    }
+    // $1E70. Two steps, or three once $CB has reached 0. Fire during a walk
+    // whose repeat is below 4 replaces that step with the flying kick.
+    const auto one = [&]() -> bool {
+        if (f.prevAction == walk && f.repeat < 4 && fire) {
+            StartFlyHuman(f, dir);
+            return true;
+        }
+        if ((dir < 0 && f.x < kMinX) || (dir > 0 && f.x >= kMaxX)) {
+            LandHuman(f);
+            return false;
+        }
+        StepX(f, dir);
+        SetHumanState(f, walk, 0);
+        return false;
+    };
+    if (f.repeat == 0 && one()) {
+        return;
+    }
+    if (one()) {
+        return;
+    }
+    one();
+}
+
+void ClimbHuman(Fighter& f, int dir) {
+    const int n = f.repeat == 0 ? 4 : 3;
+    for (int i = 0; i < n; ++i) {
+        if (dir < 0) {
+            if (f.y < kMinY) {
+                LandHuman(f);
+                continue;
+            }
+            f.y -= 1;
+            f.hist[0][kStepUp] += 1;
+            SetHumanState(f, kClimbUp, 0);
+        } else {
+            if (f.y >= kMaxY) {
+                LandHuman(f);
+                continue;
+            }
+            f.y += 1;
+            f.hist[0][kStepDown] += 1;
+            SetHumanState(f, kClimbDown, 0);
+        }
+    }
+}
+
+void DuckHuman(Fighter& f, int facing) {
+    if (facing < 0 && f.x >= 300) {
+        LandHuman(f);
+        return;
+    }
+    if (facing > 0 && f.x < 8) {
+        LandHuman(f);
+        return;
+    }
+    f.facing = facing;
+    SetHumanState(f, kDuck, 0);
+}
+
+void StartFallHuman(Fighter& f) {
+    f.fallSlide = 2;
+    DropHuman(f, 1);
+    if (f.prevAction == kStuck) {
+        for (int i = 0; i < kSpriteRows; ++i) {
+            const Contact arms = ProbePoseAt(f, kPoseArms, f.x, f.y);
+            const Contact legs = ProbePoseAt(f, kPoseLegs, f.x, f.y);
+            if (!arms.wall || legs.wall || legs.ground) {
+                break;
+            }
+            const int y = f.y;
+            DropHuman(f, 1);
+            if (f.y == y) {
+                break;
+            }
+        }
+    }
+    SetHumanState(f, kFall, 0);
+}
+
+void ContinueFallHuman(Fighter& f) {
+    const Contact upper = ProbeUpperAt(f, f.x, f.y);
+    const Contact here = ProbeAt(f, f.x, f.y);
+    if (upper.ground) {
+        f.fallSlide >>= 1;
+        if (f.fallSlide != 0) {
+            TryStepHuman(f, f.facing);
+        }
+        DropHuman(f, 2);
+        SetHumanState(f, kFall, 0);
+    } else if (here.ground || here.ladder) {
+        LandHuman(f);
+    } else {
+        DropHuman(f, 2);
+        SetHumanState(f, kFall, 0);
+    }
+}
+
+void HumanScript(Fighter& f, const Contact& here) {
+    const int t = f.actionTimer;
+    if (f.action == kJump) {
+        if (here.ladder) {
+            LandHuman(f);
+            return;
+        }
+        if (t < 0x0D && t >= 2) {
+            if (t >= 8) {
+                RiseHuman(f, t == 0x0C ? 4 : 2);
+            } else if (here.ground) {
+                LandHuman(f);
+                return;
+            } else {
+                DropHuman(f, 2);
+            }
+        }
+        f.actionTimer -= 1;
+        return;
+    }
+    if (f.action == kSideLeft || f.action == kSideRight) {
+        if (here.ladder) {
+            LandHuman(f);
+            return;
+        }
+        const int dir = f.action == kSideLeft ? -1 : 1;
+        if (t > 0x0A) {
+            StepY(f, -1);
+            StepY(f, -1);
+        } else if (t == 0x0A) {
+            StepY(f, -1);
+        } else if (t < 7) {
+            if (here.ground) {
+                LandHuman(f);
+                return;
+            }
+            StepX(f, dir);
+            StepX(f, dir);
+            StepY(f, 1);
+            if (t != 6) {
+                StepY(f, 1);
+            }
+            f.actionTimer -= 1;
+            return;
+        }
+        StepX(f, dir);
+        StepX(f, dir);
+        f.actionTimer -= 1;
+        return;
+    }
+    if (f.action == kFlyLeft || f.action == kFlyRight) {
+        if (here.ladder || here.wall) {
+            LandHuman(f);
+            return;
+        }
+        if (t == 0x0C) {
+            PlayEffect(0x84);
+        }
+        const int dir = f.action == kFlyLeft ? -1 : 1;
+        if (t >= 0x0A) {
+            RiseHuman(f, 1);
+            TryStepHuman(f, dir);
+        } else if (t >= 3) {
+            TryStepHuman(f, dir);
+        } else if (here.ground) {
+            LandHuman(f);
+            return;
+        } else {
+            DropHuman(f, 1);
+            TryStepHuman(f, dir);
+        }
+        f.actionTimer -= 1;
+        return;
+    }
+    if (f.action == kPunch) {
+        if (here.ladder || here.wall) {
+            LandHuman(f);
+            return;
+        }
+        if (t == 1) {
+            f.action = 0;
+            f.actionTimer = 3;
+            f.hold = 0;
+            return;
+        }
+        f.actionTimer -= 1;
+        return;
+    }
+    if (f.actionTimer > 0) {
+        f.actionTimer -= 1;
+    }
+}
+
+void OnGroundHuman(Fighter& f, int stick, bool fire, const Contact& here) {
+    if (stick == 0x0E) {
+        if (f.y < kMinY) {
+            LandHuman(f);
+        } else {
+            PlayEffect(0x80);
+            if (here.ladder) {
+                ClimbHuman(f, -1);
+            } else if (here.wall) {
+                LandHuman(f);
+            } else {
+                SetHumanState(f, kJump, 0x0F);
+            }
+        }
+    } else if (stick == 0x0D) {
+        if (here.ladder) {
+            if (f.y < kMaxY) {
+                PlayEffect(0x80);
+            }
+            ClimbHuman(f, 1);
+        } else if (here.ground) {
+            DuckHuman(f, f.facing);
+        }
+    } else if (stick == 0x0B) {
+        WalkHuman(f, -1, fire);
+    } else if (stick == 0x07) {
+        WalkHuman(f, 1, fire);
+    } else if (stick == 0x0A || stick == 0x06) {
+        if (here.ladder) {
+            LandHuman(f);
+        } else {
+            PlayEffect(0x80);
+            const int dir = stick == 0x0A ? -1 : 1;
+            f.facing = dir;
+            SetHumanState(f, dir < 0 ? kSideLeft : kSideRight, 0x0F);
+        }
+    } else if (stick == 0x09 || stick == 0x05) {
+        if (here.ladder) {
+            LandHuman(f);
+        } else if (here.ground) {
+            DuckHuman(f, stick == 0x09 ? -1 : 1);
+        }
+    } else if (stick == 0x0F && fire && !here.ladder) {
+        SetHumanState(f, kPunch, 4);
+    } else {
+        LandHuman(f);
+    }
+}
+
+void HumanMove(Fighter& f, int stick, bool fire, const Contact& here) {
+    if (f.actionTimer > 0) {
+        HumanScript(f, here);
+    } else if (f.action == kFall) {
+        ContinueFallHuman(f);
+    } else if (here.ground || here.ladder) {
+        OnGroundHuman(f, stick, fire, here);
+    } else {
+        StartFallHuman(f);
+    }
+}
+
+int JumpPoseHuman(const Fighter& f) {
+    const int t = f.actionTimer;
+    if (t >= 0x0F || t <= 0) {
+        return kPoseLegs;
+    }
+    if (t >= 0x0C || t == 1) {
+        return 7;
+    }
+    return kPoseArms;
+}
+
+void HumanChoose(Fighter& f, const Contact& here) {
+    const bool climbNow = f.action == kClimbUp || f.action == kClimbDown ||
+                          ((f.action == kWalkLeft || f.action == kWalkRight) && here.ladder) ||
+                          (f.action == 0 && here.ladder);
+    if (f.action != kWalkLeft && f.action != kWalkRight) {
+        f.step = 0;
+    }
+    if (f.action == kPunch) {
+        f.pose = f.facing < 0 ? kPosePunchLeft : kPosePunchRight;
+    } else if (f.action == kFlyLeft || f.action == kFlyRight) {
+        const bool tucked = f.actionTimer >= 0x0A;
+        f.pose = f.action == kFlyLeft ? (tucked ? 15 : 16) : (tucked ? 17 : 18);
+    } else if (f.action == kSideLeft || f.action == kSideRight) {
+        const bool tucked = f.actionTimer >= 0x0C || f.actionTimer < 3;
+        if (f.action == kSideLeft) {
+            f.pose = tucked ? 9 : 10;
+        } else {
+            f.pose = tucked ? 11 : 12;
+        }
+    } else if (f.action == kJump) {
+        f.pose = JumpPoseHuman(f);
+    } else if (f.action == kDuck) {
+        f.pose = f.facing < 0 ? kPoseDuckLeft : kPoseDuckRight;
+    } else if (f.action == kFall) {
+        f.pose = here.wall ? kPoseLegs : kPoseArms;
+    } else if (climbNow) {
+        const bool stepping = f.action == kClimbUp || f.action == kClimbDown || f.action == kWalkLeft ||
+                              f.action == kWalkRight;
+        if (stepping) {
+            f.pose = f.pose == kPoseClimb0 ? kPoseClimb1 : kPoseClimb0;
+        } else if (f.pose != kPoseClimb0 && f.pose != kPoseClimb1) {
+            f.pose = kPoseClimb0;
+        }
+        f.step = 0;
+    } else if (f.action == kWalkLeft || f.action == kWalkRight) {
+        const int stride = f.step & 1;
+        f.pose = f.facing < 0 ? (2 + stride) : (4 + stride);
+        f.step += 1;
+    } else if (f.action == kStuck) {
+        if (f.pose == kPoseArms) {
+            f.pose = kPoseLegs;
+        }
+    } else {
+        f.pose = f.facing < 0 ? 1 : 0;
+    }
+}
+
+// $2187 for a human opponent. The stick is kept. A pure direction steps two
+// pixels. Diagonals do not. Up and down are allowed, which a computer
+// fighter never stores.
+void HumanCarry(Fighter& f, int stick) {
+    bool stepped = false;
+    if (f.carryDelay > 0) {
+        f.carryDelay -= 1;
+    } else if (stick == 0x0E) {
+        StepY(f, -1);
+        StepY(f, -1);
+        stepped = true;
+    } else if (stick == 0x0D) {
+        StepY(f, 1);
+        StepY(f, 1);
+        stepped = true;
+    } else if (stick == 0x0B) {
+        StepX(f, -1);
+        StepX(f, -1);
+        stepped = true;
+    } else if (stick == 0x07) {
+        StepX(f, 1);
+        StepX(f, 1);
+        stepped = true;
+    }
+    if (stepped) {
+        f.carryDelay = 4;
+        f.pose = f.pose == kPoseClimb0 ? kPoseClimb1 : kPoseClimb0;
+        PlayEffect(0x80);
+    }
+    const int shove = SurfaceShove();
+    if (shove < 0) {
+        StepY(f, -1);
+        StepY(f, -1);
+    } else if (shove > 0) {
+        StepY(f, 1);
+        StepY(f, 1);
+    }
+    f.action = kCarry;
+}
+
+// A human Yamo's walk and climb pictures. Spawn, flinch, knock, and stomp
+// stay on the shared chooser.
+void ShowPose(Fighter& f, bool human) {
+    if (human && f.action != kFlinch && f.action != kKnock && f.action != kStomp && f.action != 0x10 &&
+        f.action != 0x12) {
+        HumanChoose(f, At(f));
+        return;
+    }
+    Choose(f);
+}
+
 // $1C9D. State 0, or a state that just changed, reloads the burst count.
 void NoteState(Fighter& f) {
     if (f.action == 0 || f.action != f.prevAction) {
@@ -1099,9 +1567,20 @@ bool StepFighter(Fighter& f) {
         Bury(f);
         return false;
     }
+    const bool human = HumanYamo(f);
+    if (f.action == kFlinch || f.action == kKnock || f.action == kStomp) {
+        f.hold = 0;
+    }
+    // $0106. Climb and duck skip the stick for a few frames. A blow has
+    // already cleared the hold above.
+    if (human && f.hold > 0) {
+        f.hold -= 1;
+        return false;
+    }
     // enemy_turn runs before release_hold. State 0 with a finished stand
-    // becomes the chase, and NoteState has to see that new state.
-    if (f.action == 0 && f.actionTimer == 0) {
+    // becomes the chase, and NoteState has to see that new state. $42CA set
+    // leaves actor 1 out of that test, so a human Yamo keeps his own stick.
+    if (!human && f.action == 0 && f.actionTimer == 0) {
         const Contact ground = At(f);
         if (ground.ground || ground.ladder) {
             f.action = 0x14;
@@ -1121,23 +1600,42 @@ bool StepFighter(Fighter& f) {
         } else {
             PushOut(f, shown);
         }
-        Choose(f);
+        ShowPose(f, human);
         return false;
     }
     if (shown.wall) {
         PushOut(f, shown);
-        Choose(f);
+        ShowPose(f, human);
         return false;
     }
     if (f.action == kStuck) {
         f.action = 0;
         f.actionTimer = 0;
-        Choose(f);
+        ShowPose(f, human);
         return false;
     }
     if (f.action == kCarry) {
-        CarryFighter(f);
-        Choose(f);
+        if (human) {
+            int stick = 0x0F;
+            bool fire = false;
+            ReadPlayerStick(1, stick, fire);
+            HumanCarry(f, stick);
+        } else {
+            CarryFighter(f);
+            Choose(f);
+        }
+        return false;
+    }
+    // Spawn, flinch, knock, and stomp stay on the shared actor path. Every
+    // other state of a human Yamo is the same stick table Bruce uses.
+    if (human && f.action != kFlinch && f.action != kKnock && f.action != kStomp && f.action != 0x10 &&
+        f.action != 0x12) {
+        int stick = 0x0F;
+        bool fire = false;
+        ReadPlayerStick(1, stick, fire);
+        const Contact here = At(f);
+        HumanMove(f, stick, fire, here);
+        HumanChoose(f, here);
         return false;
     }
     Act(f);
@@ -1224,11 +1722,14 @@ void ResetFighters() {
     ninja.on = false;
     ninja.action = 0;
     ninja.actionTimer = 0;
-    ninja.delay = RoomDelay(1);
+    // enter_room stores 8 in Yamo's wake count when a human opponent is on.
+    ninja.delay = HumanYamo(ninja) ? 8 : RoomDelay(1);
     ninja.carryDelay = 0;
     ninja.carryMark = 0;
     ninja.repeat = 6;
     ninja.prevAction = 0;
+    ninja.hold = 0;
+    ninja.fallSlide = 0;
     yamo.on = false;
     yamo.action = 0;
     yamo.actionTimer = 0;
@@ -1237,11 +1738,47 @@ void ResetFighters() {
     yamo.carryMark = 0;
     yamo.repeat = 6;
     yamo.prevAction = 0;
+    yamo.hold = 0;
+    yamo.fallSlide = 0;
+}
+
+int gOpponentIdle = 0;
+
+void ResetOpponentIdle() {
+    gOpponentIdle = 0;
 }
 
 bool TickFighters() {
     if (ninja.frames == nullptr) {
         return false;
+    }
+    // The original IRQ counts while Yamo's stick is neutral and his button
+    // is up. Seven wraps of a byte, once per screen, is 1792 screens. This
+    // port's logic frame is three PAL screens, so 3 is one screen's worth.
+    // At the end $42CA clears for this game only, effect $8A plays, and
+    // five falls come off, clamped at 0. The options page keeps OPPONENT.
+    if (gHumanOpponent && !gOpponentYielded) {
+        int stick = 0x0F;
+        bool fire = false;
+        ReadPlayerStick(1, stick, fire);
+        if (stick != 0x0F || fire) {
+            gOpponentIdle = 0;
+        } else {
+            gOpponentIdle += 3;
+            if (gOpponentIdle >= 1792) {
+                gOpponentIdle = 0;
+                gOpponentYielded = true;
+                PlayEffect(0x8A);
+                if (!gConfig.infiniteLives) {
+                    g.lives -= 5;
+                    if (g.lives < 0) {
+                        g.lives = 0;
+                    }
+                }
+            }
+        }
+    } else {
+        gOpponentIdle = 0;
     }
     // $2E39 before $1C23. The catch is state $17, and a blow after that can
     // replace it before anyone moves.

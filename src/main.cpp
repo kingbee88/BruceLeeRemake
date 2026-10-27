@@ -52,6 +52,9 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
+bool gHumanOpponent = false;  // $42CA. F5. Clear is COMPUTER.
+bool gOpponentYielded = false;
+
 namespace {
 
 constexpr D2D1_COLOR_F kBorderF{0.f, 0.f, 0.f, 1.f};
@@ -73,7 +76,6 @@ Stage gStage = Stage::Play;
 bool gTitleStart = false;
 bool gMenuStart = false;
 bool gTwoPlayers = false;     // $42C9. F3. Clear is 1 PLAYER.
-bool gHumanOpponent = false;  // $42CA. F5. Clear is COMPUTER.
 bool gPrevF3 = false;
 bool gPrevF5 = false;
 // between_rooms counts $48 from $40, or $80 when two players are selected.
@@ -920,6 +922,8 @@ void GiveStock() {
     // clear_work_ram writes 4 falls for the computer and 9 for a human opponent.
     g.lifeStock = gHumanOpponent ? 9 : 4;
     g.lives = g.lifeStock;
+    gOpponentYielded = false;
+    ResetOpponentIdle();
 }
 
 void BeginPlay() {
@@ -1042,7 +1046,9 @@ void PollMenu() {
     const bool f3 = KeyDown(VK_F3);
     const bool f5 = KeyDown(VK_F5);
     // title_loop accepts F7, and the joystick button on $DC01.
-    const bool start = KeyDown(VK_F7) || ReadPad().fire;
+    const PadInput pads = ReadPad();
+    const PadInput pads2 = ReadPad2();
+    const bool start = KeyDown(VK_F7) || pads.fire || pads2.fire;
     if (f3 && !gPrevF3) {
         gTwoPlayers = !gTwoPlayers;
         ComposeMenu(gTwoPlayers, gHumanOpponent);
@@ -1234,7 +1240,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
         // it there. Another program in front leaves the pad unread.
         bool restartY = false;
         if (gameFocus || UiOwnsKeyboard()) {
-            const PadInput pad = ReadPad();
+            PadInput pad = ReadPad();
+            const PadInput pad2 = ReadPad2();
+            pad.menu = pad.menu || pad2.menu;
+            pad.view = pad.view || pad2.view;
+            pad.y = pad.y || pad2.y;
+            pad.fire = pad.fire || pad2.fire;
             if (gameFocus) {
                 // A fresh press pauses, and the next one resumes. The click
                 // path only resumes.
@@ -1262,7 +1273,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
             if (gStage == Stage::Title) {
                 const bool space = KeyDown(VK_SPACE);
                 const bool enter = KeyDown(VK_RETURN);
-                const bool fire = space || enter || ReadPad().fire;
+                const bool fire = space || enter || ReadPad().fire || ReadPad2().fire;
                 if (fire) {
                     gTitleStart = true;
                 }

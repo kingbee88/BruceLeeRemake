@@ -118,3 +118,8 @@ void PlaceBruce();
 // One original logic frame. The window waits 60ms between calls, which is
 // three PAL screens, the delay the game counts down in $48.
 void Tick();
+
+// Player 0 is Bruce: the arrows and Right Ctrl, or his gamepad.
+// Player 1 is Yamo: W A S D and Left Ctrl, or his gamepad.
+// stick is the $98 nibble. fire is the button held down.
+void ReadPlayerStick(int player, int& stick, bool& fire);

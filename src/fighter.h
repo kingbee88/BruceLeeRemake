@@ -41,6 +41,10 @@ void RestoreFighters();
 // hit spent one of Bruce's falls. The room is already the one he respawned in.
 bool TickFighters();
 
+// A new game. Yamo is human again when the options page says OPPONENT,
+// and the idle countdown starts over.
+void ResetOpponentIdle();
+
 // Paint whichever of them is in the room. Bruce is drawn after this, so he
 // stays in front. That is sprites 0 and 1 above sprites 2-4.
 void DrawFighters();

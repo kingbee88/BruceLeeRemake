@@ -128,23 +128,24 @@
 ; 1A 18 30 20 94 22 86 1C 14 12 34 40 18 98 18 1C 18 18 18 12
 ; C4 62 C4 C0 B4 51 B3 44 46 C6 8C 4C 5C 32 5C C3 5C B4 C6 95
 ;
-; The same two bytes are the main spot for the Ninja and for Yamo.
+; The same two bytes are the main spot for Yamo and for the ninja.
 ; alt_spawn reads $4BD6 xpos and $4BEA ypos:
 ; 9F 95 96 38 96 28 81 1F 00 00 96 00 70 00 92 7A 81 00 00 00
 ; 62 92 C4 C4 B4 C2 72 74 00 00 5C 00 5C 00 BE C4 8E 00 00 00
 ;
-; Wake counts, rooms 0-19. $135B is the Ninja ($5E), $131F is Yamo ($5D).
+; Wake counts, rooms 0-19. $135B is Yamo ($5E), $131F is the ninja ($5D).
 ; tick_wake_counts subtracts one each logic frame. 0 wakes on the first
 ; check. load_wake_counts reloads both on entry and the one who just left
 ; after retire_actor. A long visit or a set $40 stores 3. A middle visit
-; halves the byte. $42CA stores $30 over the Ninja's count.
+; halves the byte. $42CA stores 8 over Yamo's count on entry, and $30
+; when he is woken or knocked out.
 ; EE EE EE 00 EE 60 EE C0 00 00 30 00 20 EE 30 50 30 EE 00 00
 ; A0 A0 A0 00 70 0C 30 18 00 00 0C 00 04 08 08 08 08 08 00 00
 ;
-; Side flags, rooms 0-19. $136F is the Ninja, $1333 is Yamo. 0, or a noise
+; Side flags, rooms 0-19. $136F is Yamo, $1333 is the ninja. 0, or a noise
 ; byte of $C0 or more, is a fresh coin toss. Otherwise bit 7 set is the
-; alternate spot. Yamo's own byte only decides whether he tosses. When it
-; holds, the sign he follows is the Ninja's $136F.
+; alternate spot. The ninja's own byte only decides whether he tosses. When it
+; holds, the sign he follows is Yamo's $136F.
 ; 80 80 00 00 80 02 00 80 00 00 80 00 80 00 00 00 02 00 00 00
 ; 02 02 00 00 80 80 02 02 00 00 02 00 80 00 02 00 80 00 00 00
 
@@ -314,11 +315,12 @@
 ; bit 7 set. Only the $62 cells catch a fighter. $61 and $63 scroll with
 ; them and do not. match_special masks bit 7, so the shadow's $E2 catches
 ; too. catch_surface in game.asm is the whole test, tile $62 and hit bit
-; 2, for every actor except state $19. The Ninja and Yamo ride it by that
+; 2, for every actor except state $19. Yamo and the ninja ride it by that
 ; catch. They do not jump onto it, and chase does not climb after it.
-; ride_surface walks them the way they are facing, two xpos every fifth
-; frame, and moves them two pixels with the surface on the frame before
-; a copy.
+; ride_surface walks a computer fighter the way he is facing, two xpos
+; every fifth frame. $42CA set leaves Yamo on the second joystick, and
+; the ninja takes no step of his own. Both still move two pixels with
+; the surface on the frame before a copy.
 ;
 ; The column just left of that ladder is a wall, and the ladder is not.
 ; Character column 15 is tile $32 on the rows above the lower platform

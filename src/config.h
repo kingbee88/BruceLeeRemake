@@ -25,8 +25,9 @@
 struct Config {
     // True keeps FALLS on the full starting count for the whole game.
     bool infiniteLives = false;
-    // True: the Ninja and Yamo still attack, and those blows never land.
-    bool enemiesCantHitYou = false;
+    // True: the Ninja and Yamo still attack. A blow from either one never
+    // lands on Bruce.
+    bool enemiesCantHitBruce = false;
     // Off keeps the original landing loop. On pays 50 once, and one knockout.
     bool fixBugsInOriginal = false;
     int startRoom = 0;
@@ -42,9 +43,13 @@ struct Config {
     bool crtVignette = true;
     // False leaves the rooms and the options page silent.
     bool sound = true;
-    // Controller id from Settings. Empty, or an id that is not connected,
-    // uses the first gamepad found. Nothing is read when none are connected.
+    // Player 1's controller id from Settings. Empty uses the first gamepad
+    // found. The word none is no controller. Nothing is read when that pad
+    // is not connected and no other pad is free.
     std::wstring gamepad;
+    // Player 2's controller, Yamo when the options page is set to Opponent.
+    // Empty uses the second gamepad. The word none is no controller.
+    std::wstring gamepad2;
     // $4388. The best score, shown as TOP. Written with the other settings
     // when the program closes. 0 until a score passes it.
     int topScore = 0;

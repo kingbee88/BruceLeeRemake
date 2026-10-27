@@ -66,6 +66,8 @@ constexpr int IDC_CRT_VIGNETTE = 214;
 constexpr int IDC_GAMEPAD = 215;
 constexpr int IDC_GAMEPAD_LABEL = 216;
 constexpr int IDC_RESET_TOP = 217;
+constexpr int IDC_GAMEPAD2 = 218;
+constexpr int IDC_GAMEPAD2_LABEL = 219;
 constexpr UINT_PTR kGamepadTimer = 1;
 constexpr wchar_t kNoGamepad[] = L"<no gamepad found>";
 constexpr int IDC_WIZ_MODERN = 220;
@@ -108,6 +110,8 @@ HWND gChkVignette = nullptr;
 HWND gChkSound = nullptr;
 HWND gPadLabel = nullptr;
 HWND gPadCombo = nullptr;
+HWND gPad2Label = nullptr;
+HWND gPad2Combo = nullptr;
 HWND gResetTop = nullptr;
 int gResetTopW = 0;
 int gResetTopH = 0;
@@ -610,7 +614,7 @@ bool CheckValue(int id) {
     case IDC_LIVES:
         return gConfig.infiniteLives;
     case IDC_ENEMIES:
-        return gConfig.enemiesCantHitYou;
+        return gConfig.enemiesCantHitBruce;
     case IDC_TITLE:
         return gConfig.showTitleScreen;
     case IDC_FIX:
@@ -677,6 +681,8 @@ void DestroySettingsChildren(HWND hwnd) {
     gChkSound = nullptr;
     gPadLabel = nullptr;
     gPadCombo = nullptr;
+    gPad2Label = nullptr;
+    gPad2Combo = nullptr;
     gResetTop = nullptr;
     gPadItems.clear();
     gRefreshing = false;
@@ -703,7 +709,7 @@ void BuildSettings(HWND hwnd) {
 
     const wchar_t* checks[] = {
         L"Infinite Lives",
-        L"Enemies cannot hit you",
+        L"Enemies cannot hit Bruce",
         L"Show Title Screen at Start",
         L"Fix Bugs in Original",
         L"Enable Full Screen",
@@ -745,7 +751,11 @@ void BuildSettings(HWND hwnd) {
         inner = afterBox + hintWant;
     }
     const GamepadList gamepads = SyncGamepads();
-    const int gamepadLabelW = TextWidth(dc, L"Gamepad");
+    int gamepadLabelW = TextWidth(dc, L"Player 1");
+    const int player2LabelW = TextWidth(dc, L"Player 2");
+    if (player2LabelW > gamepadLabelW) {
+        gamepadLabelW = player2LabelW;
+    }
     int gamepadNameW = TextWidth(dc, kNoGamepad);
     const int typicalPad = TextWidth(dc, L"Xbox Wireless Controller");
     if (typicalPad > gamepadNameW) {
@@ -877,7 +887,7 @@ void BuildSettings(HWND hwnd) {
     y += rowH;
     gChkSound = MakeCheck(hwnd, inst, IDC_SOUND, checks[6], x, y, inner, rowH);
     y += rowH + gSettingsGroup;
-    gPadLabel = CreateWindowExW(0, L"STATIC", L"Gamepad", WS_CHILD | WS_VISIBLE,
+    gPadLabel = CreateWindowExW(0, L"STATIC", L"Player 1", WS_CHILD | WS_VISIBLE,
                                 x + kFocusPad, y, gGamepadLabelW + 4, fontH, hwnd,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GAMEPAD_LABEL)),
                                 inst, nullptr);
@@ -911,6 +921,22 @@ void BuildSettings(HWND hwnd) {
             gGamepadMoveH = gGamepadDropH;
         }
     }
+    gPad2Label = CreateWindowExW(0, L"STATIC", L"Player 2", WS_CHILD | WS_VISIBLE,
+                                 x + kFocusPad, y, gGamepadLabelW + 4, fontH, hwnd,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GAMEPAD2_LABEL)),
+                                 inst, nullptr);
+    SendMessageW(gPad2Label, WM_SETFONT, reinterpret_cast<WPARAM>(UiFont()), FALSE);
+    gPad2Combo = CreateWindowExW(
+        0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_CLIPSIBLINGS | CBS_DROPDOWNLIST |
+            CBS_HASSTRINGS | CBS_NOINTEGRALHEIGHT,
+        x + kFocusPad + gGamepadLabelW + gGamepadGap, y, gGamepadComboW, gGamepadDropH, hwnd,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_GAMEPAD2)), inst, nullptr);
+    if (gPad2Combo) {
+        SendMessageW(gPad2Combo, WM_SETFONT, reinterpret_cast<WPARAM>(UiFont()), FALSE);
+        SendMessageW(gPad2Combo, CB_SETMINVISIBLE, 8, 0);
+        ThemeInput(gPad2Combo, true);
+    }
     gResetTop = CreateWindowExW(0, L"BUTTON", L"Reset Top Score",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                 x + kFocusPad, y, gResetTopW, gResetTopH, hwnd,
@@ -934,8 +960,8 @@ void FitSettingsWindow(HWND hwnd) {
 }
 
 // The four parts sit under Show CRT Filter while that box is on. Off, Sound
-// moves up and the parts leave the tab order. The gamepad row stays under
-// Sound, and Reset Top Score stays under the gamepad.
+// moves up and the parts leave the tab order. The two gamepad rows stay under
+// Sound, and Reset Top Score stays under them.
 void LayoutCrtOptions(HWND settings) {
     if (!gChkSound) {
         return;
@@ -961,11 +987,16 @@ void LayoutCrtOptions(HWND settings) {
     SetWindowPos(gChkSound, nullptr, gSoundX, y, gSoundW, gCrtRowH,
                  SWP_NOZORDER | SWP_NOACTIVATE);
     y += gCrtRowH;
-    if (gPadLabel && gPadCombo) {
+    HWND padLabels[] = {gPadLabel, gPad2Label};
+    HWND padCombos[] = {gPadCombo, gPad2Combo};
+    for (int row = 0; row < 2; ++row) {
+        if (!padLabels[row] || !padCombos[row]) {
+            continue;
+        }
         y += gSettingsGroup;
         const int fontH = gBuiltFont > 0 ? gBuiltFont : 16;
         const int labelY = y + (gCrtRowH - fontH) / 2;
-        SetWindowPos(gPadLabel, nullptr, gSoundX + kFocusPad, labelY, gGamepadLabelW + 4, fontH,
+        SetWindowPos(padLabels[row], nullptr, gSoundX + kFocusPad, labelY, gGamepadLabelW + 4, fontH,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         const int visual = gGamepadVisualH > 0 ? gGamepadVisualH : fontH + 8;
         int comboY = y + (gCrtRowH - visual) / 2;
@@ -973,10 +1004,10 @@ void LayoutCrtOptions(HWND settings) {
             comboY = y;
         }
         const int moveH = gGamepadMoveH > 0 ? gGamepadMoveH : visual;
-        SetWindowPos(gPadCombo, nullptr, gSoundX + kFocusPad + gGamepadLabelW + gGamepadGap, comboY,
+        SetWindowPos(padCombos[row], nullptr, gSoundX + kFocusPad + gGamepadLabelW + gGamepadGap, comboY,
                      gGamepadComboW, moveH, SWP_NOZORDER | SWP_NOACTIVATE);
         int used = gCrtRowH;
-        // A closed list taller than the row would cover the button under it.
+        // A closed list taller than the row would cover the control under it.
         if (moveH > used && moveH < gGamepadDropH / 2) {
             used = moveH;
         }
@@ -1010,8 +1041,55 @@ void ApplyRoomEdit() {
     gConfig.startRoom = static_cast<int>(value);
 }
 
-bool GamepadComboShows(const GamepadList& list) {
-    if (!gPadCombo || list.items.size() != gPadItems.size()) {
+constexpr wchar_t kPadNone[] = L"None";
+
+bool ComboOpen(HWND combo) {
+    return combo && SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != 0;
+}
+
+// The row under the pointer while the list is open. CB_GETCURSEL stays on
+// the controller that was current when the list opened, until it closes.
+int ComboHighlight(HWND combo) {
+    COMBOBOXINFO info{};
+    info.cbSize = sizeof(info);
+    if (combo && GetComboBoxInfo(combo, &info) && info.hwndList) {
+        const LRESULT cur = SendMessageW(info.hwndList, LB_GETCURSEL, 0, 0);
+        if (cur != LB_ERR) {
+            return static_cast<int>(cur);
+        }
+    }
+    if (!combo) {
+        return -1;
+    }
+    return static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+}
+
+int PadSelection(int active, int count) {
+    if (count <= 0) {
+        return 0;
+    }
+    if (active < 0 || active >= count) {
+        return 0;
+    }
+    return active + 1;
+}
+
+bool OnePadComboShows(HWND combo, int active, int count) {
+    if (!combo) {
+        return false;
+    }
+    const bool wantEnabled = count > 0;
+    if ((IsWindowEnabled(combo) != FALSE) != wantEnabled) {
+        return false;
+    }
+    if (!wantEnabled) {
+        return true;
+    }
+    return static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0)) == PadSelection(active, count);
+}
+
+bool GamepadCombosShow(const GamepadList& list) {
+    if (list.items.size() != gPadItems.size()) {
         return false;
     }
     for (size_t i = 0; i < list.items.size(); ++i) {
@@ -1019,87 +1097,66 @@ bool GamepadComboShows(const GamepadList& list) {
             return false;
         }
     }
-    const bool wantEnabled = !list.items.empty();
-    if ((IsWindowEnabled(gPadCombo) != FALSE) != wantEnabled) {
-        return false;
-    }
-    if (!wantEnabled) {
-        return true;
-    }
-    return static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0)) == list.active;
+    const int count = static_cast<int>(list.items.size());
+    return OnePadComboShows(gPadCombo, list.active, count) &&
+           OnePadComboShows(gPad2Combo, list.active2, count);
 }
 
-bool GamepadListOpen() {
-    return gPadCombo && SendMessageW(gPadCombo, CB_GETDROPPEDSTATE, 0, 0) != 0;
-}
-
-// The row under the pointer while the list is open. CB_GETCURSEL stays on
-// the controller that was current when the list opened, until it closes.
-int GamepadHighlight() {
-    COMBOBOXINFO info{};
-    info.cbSize = sizeof(info);
-    if (gPadCombo && GetComboBoxInfo(gPadCombo, &info) && info.hwndList) {
-        const LRESULT cur = SendMessageW(info.hwndList, LB_GETCURSEL, 0, 0);
-        if (cur != LB_ERR) {
-            return static_cast<int>(cur);
-        }
-    }
-    if (!gPadCombo) {
-        return -1;
-    }
-    return static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
-}
-
-void RefreshGamepadCombo() {
-    if (!gPadCombo) {
+void FillPadCombo(HWND combo, int active) {
+    if (!combo) {
         return;
     }
-    // The dropped list highlights the row under the pointer. Rebuilding it,
-    // or CB_SETCURSEL, puts that highlight back on the closed selection.
-    // A pad that arrives while the list is open is picked up once it closes.
-    if (GamepadListOpen()) {
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    if (gPadItems.empty()) {
+        SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kNoGamepad));
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        EnableWindow(combo, FALSE);
         return;
     }
-    const GamepadList list = SyncGamepads();
-    if (GamepadComboShows(list)) {
-        return;
-    }
-    gRefreshing = true;
-    SendMessageW(gPadCombo, CB_RESETCONTENT, 0, 0);
-    gPadItems = list.items;
-    if (list.items.empty()) {
-        SendMessageW(gPadCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kNoGamepad));
-        SendMessageW(gPadCombo, CB_SETCURSEL, 0, 0);
-        EnableWindow(gPadCombo, FALSE);
-        gRefreshing = false;
-        return;
-    }
-    EnableWindow(gPadCombo, TRUE);
-    int widest = 0;
-    HDC dc = GetDC(gPadCombo);
+    EnableWindow(combo, TRUE);
+    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kPadNone));
+    HDC dc = GetDC(combo);
     const HFONT old = static_cast<HFONT>(SelectObject(dc, UiFont()));
-    for (const GamepadChoice& choice : list.items) {
-        SendMessageW(gPadCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.name.c_str()));
+    int widest = TextWidth(dc, kPadNone);
+    for (const GamepadChoice& choice : gPadItems) {
+        SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(choice.name.c_str()));
         const int width = TextWidth(dc, choice.name.c_str());
         if (width > widest) {
             widest = width;
         }
     }
     SelectObject(dc, old);
-    ReleaseDC(gPadCombo, dc);
-    int sel = list.active;
-    if (sel < 0 || sel >= static_cast<int>(list.items.size())) {
-        sel = 0;
-    }
-    SendMessageW(gPadCombo, CB_SETCURSEL, static_cast<WPARAM>(sel), 0);
+    ReleaseDC(combo, dc);
+    SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(PadSelection(active, static_cast<int>(gPadItems.size()))),
+                 0);
     int drop = widest + GetSystemMetrics(SM_CXVSCROLL) + 12;
     RECT rc{};
-    GetWindowRect(gPadCombo, &rc);
+    GetWindowRect(combo, &rc);
     const int closedW = rc.right - rc.left;
     if (drop < closedW) {
         drop = closedW;
     }
-    SendMessageW(gPadCombo, CB_SETDROPPEDWIDTH, static_cast<WPARAM>(drop), 0);
+    SendMessageW(combo, CB_SETDROPPEDWIDTH, static_cast<WPARAM>(drop), 0);
+}
+
+void RefreshGamepadCombo() {
+    if (!gPadCombo && !gPad2Combo) {
+        return;
+    }
+    // The dropped list highlights the row under the pointer. Rebuilding it,
+    // or CB_SETCURSEL, puts that highlight back on the closed selection.
+    // A pad that arrives while a list is open is picked up once it closes.
+    if (ComboOpen(gPadCombo) || ComboOpen(gPad2Combo)) {
+        return;
+    }
+    const GamepadList list = SyncGamepads();
+    if (GamepadCombosShow(list)) {
+        return;
+    }
+    gRefreshing = true;
+    gPadItems = list.items;
+    FillPadCombo(gPadCombo, list.active);
+    FillPadCombo(gPad2Combo, list.active2);
     gRefreshing = false;
 }
 
@@ -1118,21 +1175,43 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
         gRefreshing = false;
         return;
     }
-    if (id == IDC_GAMEPAD) {
+    if (id == IDC_GAMEPAD || id == IDC_GAMEPAD2) {
         // While the list is open, CBN_SELCHANGE follows the pointer and
         // CB_GETCURSEL is still the controller the box had when it opened.
         // Writing that id and refreshing snaps the highlight to the first
         // row. The click, or Enter, is CBN_SELENDOK. Arrow keys on the
         // closed box send CBN_SELCHANGE with the list shut.
-        const bool choose = code == CBN_SELENDOK || (code == CBN_SELCHANGE && !GamepadListOpen());
-        if (choose) {
-            const int sel = GamepadListOpen()
-                                ? GamepadHighlight()
-                                : static_cast<int>(SendMessageW(gPadCombo, CB_GETCURSEL, 0, 0));
-            if (sel >= 0 && sel < static_cast<int>(gPadItems.size())) {
-                gConfig.gamepad = gPadItems[static_cast<size_t>(sel)].id;
-                SyncGamepads();
+        HWND combo = id == IDC_GAMEPAD ? gPadCombo : gPad2Combo;
+        const bool choose = code == CBN_SELENDOK || (code == CBN_SELCHANGE && !ComboOpen(combo));
+        if (choose && !gPadItems.empty()) {
+            const int sel = ComboOpen(combo) ? ComboHighlight(combo)
+                                             : static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+            const int player = id == IDC_GAMEPAD ? 0 : 1;
+            std::wstring chosen = kGamepadNone;
+            if (sel > 0 && sel <= static_cast<int>(gPadItems.size())) {
+                chosen = gPadItems[static_cast<size_t>(sel - 1)].id;
             }
+            std::wstring& mine = player == 0 ? gConfig.gamepad : gConfig.gamepad2;
+            std::wstring& other = player == 0 ? gConfig.gamepad2 : gConfig.gamepad;
+            // The pad just chosen leaves the other player. He takes the first
+            // remaining controller, or none when that was the only one.
+            if (chosen != kGamepadNone && other == chosen) {
+                std::wstring fallback = kGamepadNone;
+                for (const GamepadChoice& choice : gPadItems) {
+                    if (choice.id != chosen) {
+                        fallback = choice.id;
+                        break;
+                    }
+                }
+                other = fallback;
+            }
+            mine = chosen;
+            gRefreshing = true;
+            const GamepadList list = SyncGamepads();
+            gPadItems = list.items;
+            FillPadCombo(gPadCombo, list.active);
+            FillPadCombo(gPad2Combo, list.active2);
+            gRefreshing = false;
         }
         return;
     }
@@ -1146,7 +1225,7 @@ void OnSettingCommand(HWND hwnd, int id, int code) {
         InvalidateCheck(gChkLives);
         break;
     case IDC_ENEMIES:
-        gConfig.enemiesCantHitYou = !gConfig.enemiesCantHitYou;
+        gConfig.enemiesCantHitBruce = !gConfig.enemiesCantHitBruce;
         InvalidateCheck(gChkEnemies);
         break;
     case IDC_TITLE:
@@ -2765,7 +2844,7 @@ WizardLayout LayoutWizard(HDC dc, HFONT bold, HFONT large, int maxW, int maxH) {
     const int afterBox = kFocusPad + box + (box >= 18 ? 10 : 8);
     const int labelNeed = afterBox + Larger(TextWidth(dc, kModernExperience), TextWidth(dc, kAuthenticExperience));
     const int noteNeed = afterBox + Larger(TextWidth(dc, kModernNote), TextWidth(dc, kAuthenticNote));
-    const int checksNeed = afterBox + Larger(TextWidth(dc, L"Infinite Lives"), TextWidth(dc, L"Enemies cannot hit you"));
+    const int checksNeed = afterBox + Larger(TextWidth(dc, L"Infinite Lives"), TextWidth(dc, L"Enemies cannot hit Bruce"));
     // A column narrower than the 320-wide picture makes the television hard to
     // see. The fit below shrinks it when the work area cannot hold two.
     int colWant = Larger(labelNeed, noteNeed);
@@ -3083,7 +3162,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (id == IDC_ENEMIES) {
-            gConfig.enemiesCantHitYou = !gConfig.enemiesCantHitYou;
+            gConfig.enemiesCantHitBruce = !gConfig.enemiesCantHitBruce;
             InvalidateRect(reinterpret_cast<HWND>(lp), nullptr, FALSE);
             return 0;
         }
@@ -3222,7 +3301,7 @@ bool ShowIntroWizard(HWND owner) {
     AddLabel(dlg, kTrainersHeading, SS_NOPREFIX, layout.pad, layout.trainersY, layout.contentW, layout.trainersH,
              headingFont, 0);
     MakeCheck(dlg, inst, IDC_LIVES, L"Infinite Lives", layout.pad, layout.checksY, layout.checksW, layout.rowH);
-    MakeCheck(dlg, inst, IDC_ENEMIES, L"Enemies cannot hit you", layout.pad, layout.checksY + layout.rowH,
+    MakeCheck(dlg, inst, IDC_ENEMIES, L"Enemies cannot hit Bruce", layout.pad, layout.checksY + layout.rowH,
               layout.checksW, layout.rowH);
     HWND advice = CreateWindowExW(0, L"STATIC", kPadAdvice, WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
                                   layout.adviceX, layout.adviceY, layout.adviceW, layout.adviceH, dlg,
@@ -3253,10 +3332,12 @@ bool ShowIntroWizard(HWND owner) {
 void ShowKeyboardShortcuts(HWND owner) {
     static constexpr HelpLine lines[] = {
         {nullptr, L"Playing"},
-        {L"Left / Right", L"Walk."},
-        {L"Up", L"Jump, or climb a ladder. With Left or Right held, jump sideways."},
-        {L"Down", L"Duck. On a ladder, climb down."},
-        {L"Right Ctrl", L"Punch while standing. Flying kick while moving."},
+        {L"Left / Right", L"Player 1 walks."},
+        {L"Up", L"Player 1 jumps, or climbs a ladder. With Left or Right held, jump sideways."},
+        {L"Down", L"Player 1 ducks. On a ladder, climb down."},
+        {L"Right Ctrl", L"Player 1 punches while standing. Flying kick while moving."},
+        {L"W A S D", L"Player 2 walks, jumps, and ducks. Yamo, when the options page is set to Opponent. W is up, A is left, S is down, and D is right."},
+        {L"Left Ctrl", L"Player 2 punches while standing. Flying kick while moving."},
         {L"Space", L"Pause during play. Press again to resume."},
         {L"V",
          L"Show the credit line on the top bar: BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF. Press again for the black bar. Entering a room brings the black bar back."},
@@ -3298,8 +3379,11 @@ void ShowControllerMapping(HWND owner) {
         L"and View is the button to the left. The other buttons are not used. A stick with "
         L"no button names, and a controller that only shows in the Windows Game Controllers "
         L"list, uses its stick or hat to move and its buttons to punch. Settings chooses "
-        L"which connected controller is read. The keyboard keeps working. The controller is "
-        L"read only while this program is in front.";
+        L"a controller for each player. Player 1 starts on the first one, and player 2 "
+        L"on the second. Yamo uses player 2 when the options page is set to Opponent. "
+        L"Either controller's A button leaves the title and the options page, and either "
+        L"Menu, View, or Y button does what that button does above. The keyboard keeps "
+        L"working. A controller is read only while this program is in front.";
     ShowHelp(owner, L"Controller mapping", L"Control", lines,
              static_cast<int>(sizeof(lines) / sizeof(lines[0])), note);
 }

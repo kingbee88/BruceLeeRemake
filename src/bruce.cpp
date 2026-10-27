@@ -1026,6 +1026,49 @@ void ResumeAfterFall() {
     Compose();
 }
 
+void ReadPlayerStick(int player, int& stick, bool& fire) {
+    const PadInput pad = player == 0 ? ReadPad() : ReadPad2();
+    const bool keys = !UiOwnsKeyboard();
+    const auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    bool left = false;
+    bool right = false;
+    bool up = false;
+    bool downKey = false;
+    bool button = false;
+    if (player == 0) {
+        left = keys && down(VK_LEFT);
+        right = keys && down(VK_RIGHT);
+        up = keys && down(VK_UP);
+        downKey = keys && down(VK_DOWN);
+        button = keys && down(VK_RCONTROL);
+    } else {
+        left = keys && down('A');
+        right = keys && down('D');
+        up = keys && down('W');
+        downKey = keys && down('S');
+        button = keys && down(VK_LCONTROL);
+    }
+    left = left || pad.left;
+    right = right || pad.right;
+    up = up || pad.up;
+    downKey = downKey || pad.down;
+    button = button || pad.fire;
+    stick = 0x0F;
+    if (up && !downKey) {
+        stick &= ~0x01;
+    }
+    if (downKey && !up) {
+        stick &= ~0x02;
+    }
+    if (left && !right) {
+        stick &= ~0x04;
+    }
+    if (right && !left) {
+        stick &= ~0x08;
+    }
+    fire = button;
+}
+
 void Tick() {
     // $1BEB. Before the room hook, and skipped in the original while $0105
     // is negative. This Tick is itself skipped while the port is paused.
@@ -1036,15 +1079,9 @@ void Tick() {
     const bool treasure = g.roomId == 19;
     const int treasureStick = treasure ? Room19Stick() : 0;
 
-    const PadInput pad = ReadPad();
-    const bool keys = !UiOwnsKeyboard();
-    const bool left = (keys && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0) || pad.left;
-    const bool right = (keys && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0) || pad.right;
-    const bool up = (keys && (GetAsyncKeyState(VK_UP) & 0x8000) != 0) || pad.up;
-    const bool down = (keys && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0) || pad.down;
-    // The joystick button. Right Ctrl is that button on the keyboard.
-    // Space is the in-game pause, handled with the other window keys.
-    const bool fire = (keys && (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0) || pad.fire;
+    int stick = 0x0F;
+    bool fire = false;
+    ReadPlayerStick(0, stick, fire);
 
     // $40BC runs before the overlap, and a held pose still reaches it.
     // The lamp glyphs flicker in every room. The charset selects the bytes.
@@ -1097,19 +1134,6 @@ void Tick() {
         return;
     }
 
-    int stick = 0x0F;
-    if (up && !down) {
-        stick &= ~0x01;
-    }
-    if (down && !up) {
-        stick &= ~0x02;
-    }
-    if (left && !right) {
-        stick &= ~0x04;
-    }
-    if (right && !left) {
-        stick &= ~0x08;
-    }
     // Room 19. $98 becomes $0E while $88 is below 2, so he jumps or climbs
     // with no say in it, and $0F after that. $9B, fire, is left as pressed.
     if (treasure) {

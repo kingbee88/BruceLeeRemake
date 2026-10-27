@@ -187,8 +187,8 @@ copy_game_byte:
 
 ; "Opponents can't hit you??" N skips. Y writes $09 over the branch offsets
 ; at $29E2 and $29F7. Each branch then lands past the ORA into $B3 and on
-; the ORA into $B4 or $B5, so Bruce's hit byte is missed and the Ninja's
-; and Yamo's bytes are still updated. Their attack poses are chosen before
+; the ORA into $B4 or $B5, so Bruce's hit byte is missed and Yamo's
+; and the ninja's bytes are still updated. Their attack poses are chosen before
 ; this register is read, so they still swing. Bruce never records the contact.
 ask_hits:
         JSR ask_trainer                 ; $C59B

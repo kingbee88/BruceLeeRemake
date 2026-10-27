@@ -68,6 +68,14 @@ struct Game {
 
 extern Game g;
 
+// $42CA. F5 on the options page. Clear is the computer. Set is a human
+// opponent on Yamo, actor 1. The menu copy stays set when an idle Yamo is
+// handed back to the computer for the rest of that game.
+extern bool gHumanOpponent;
+// Set for the rest of a game when Yamo's stick stays neutral long enough.
+// The options page still shows OPPONENT.
+extern bool gOpponentYielded;
+
 // $3175. Add amount to one score byte, then $312C. Slot 0 is $41, the high
 // byte, and slot 2 is $43. The sum wraps at 24 bits. When every score byte
 // is at least the mark in $4392, $28 gains one fall and the mark grows by

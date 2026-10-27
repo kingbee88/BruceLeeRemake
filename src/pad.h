@@ -48,27 +48,37 @@ struct GamepadChoice {
     std::wstring name;
 };
 
+// Stored in Gamepad and Gamepad2 when that player has chosen no controller.
+// An empty value still means the default pad for that player.
+inline constexpr wchar_t kGamepadNone[] = L"none";
+
 // items is every connected game controller. Xbox-style pads come first, then
 // other controllers Windows.Gaming.Input reports, then controllers that only
-// appear in the Windows Game Controllers list. The first Xbox-style pad is
-// the primary. active is the one ReadPad samples, or -1 when items is empty.
+// appear in the Windows Game Controllers list. active is player 1's pad in
+// that list, and active2 is player 2's. -1 means that player has no pad.
 struct GamepadList {
     std::vector<GamepadChoice> items;
     int active = -1;
+    int active2 = -1;
 };
 
-// The next ReadPad polls the device. Further calls in the same logic frame
-// reuse that sample, so a disconnected slot is not polled twice.
+// The next ReadPad and ReadPad2 poll their devices. Further calls in the
+// same logic frame reuse that sample, so a disconnected slot is not polled twice.
 void BeginPadFrame();
+// Player 1. Arrows and Right Ctrl are read separately.
 PadInput ReadPad();
+// Player 2. W A S D and Left Ctrl are read separately.
+PadInput ReadPad2();
 
-// Match the saved controller id. When it is connected, ReadPad samples it.
-// A DirectInput id and a Windows.Gaming.Input id for the same pad are one
-// controller. The first list in a session often has only the DirectInput
+// Match each saved controller id. When it is connected, that player samples
+// it. A DirectInput id and a Windows.Gaming.Input id for the same pad are
+// one controller. The first list in a session often has only the DirectInput
 // name, so a saved id that is missing from that list is left unchanged.
-// Once the saved controller has been found, and it is later absent, ReadPad
-// samples the first connected controller and the saved id becomes that one.
-// With none connected, the saved id is left unchanged.
+// Once a saved controller has been found, and it is later absent, that
+// player takes the first connected controller the other player is not
+// using, or none when every connected pad is taken. An empty id is the
+// default: player 1 gets the first pad, player 2 the second. The word none
+// stays unassigned.
 GamepadList SyncGamepads();
 
 // Gamepad names come from the Windows Runtime. Construct this on the main
