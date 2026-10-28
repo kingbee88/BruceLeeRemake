@@ -4,9 +4,11 @@ This project recreates the original *Bruce Lee* on the Commodore 64, written nat
 
 No copyright is claimed over the original game, its pictures, sound, room data, manual, disk image, or box art, and those files are not relicensed by this grant. The Commodore 64 game is copyright 1984 Datasoft, Inc. It was made by Ron J. Fortier, with graphics by Kelly Day and music by John A. Fitzpatrick. This Windows port is copyright Jacob Marner.
 
-This is still a work in progress. 
+This is still a work in progress. The game is now fully feature complete - I just need to fix some bugs before v1.0 release.
 
-Latest release: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.2-alpha/BruceLeeRemakev0.2.zip)
+Latest release v0.9-beta: (https://github.com/kingbee88/BruceLeeRemake/releases/download/v0.9-beta/BruceLeeRemakev0.9.zip)
+
+You can find the original game manual from within the game in the About menu.
 
 ![The first room, with Bruce standing by the lamp](cover.jpg)
 
@@ -40,9 +42,9 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 | F12 | Save a picture of the window as the next free ScreenShotXX.png, in the folder the config file was read from. A camera flash shows in the upper right |
 | Alt+F4 | Exit |
 
-Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in the settings file, or on the command line, starts in that mode. Beside the exe, then one folder up, then two folders up, `config.local.ini` is used when that file is there, and otherwise `config.ini`. The program writes the settings back to the file it opened when it closes.
+Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. 
 
-An Xbox pad, or any other XInput controller, does the same things. Settings chooses a controller for each player. Player 1 starts on the first connected controller, and player 2 on the second. F3 on the options page selects two players. They take turns as Bruce. A lost life hands Bruce to the other player, and that player's score, falls, and rooms stay his. The line shows 1UP or 2UP for whoever is Bruce. F5 still chooses the computer or a human Yamo. The human Yamo is whichever stick is not Bruce: player 2 while player 1 is Bruce, and player 1 while player 2 is Bruce. Either controller's A button leaves the title and the options page, and either Menu, View, or Y button does what that row says. The keyboard keeps working while a pad is connected.
+You can change settings in `config.ini` or in the settings menu. The program writes the settings back to the file it opened when it closes.
 
 | Xbox control | Action |
 | --- | --- |
@@ -52,10 +54,6 @@ An Xbox pad, or any other XInput controller, does the same things. Settings choo
 | Menu | Pause. Press again to resume |
 | View | Open Settings. Press again to close it |
 | Y | While paused, hold for 2 seconds to return to the options page. A bar under PAUSED fills while Y is held |
-
-`build.bat` compiles with the Visual Studio C++ tools. `build.bat debug` writes `build\Debug\BruceLee.exe` with optimizations off and a program database beside it. `build.bat release`, or `build.bat` with no argument, writes the optimized `build\Release\BruceLee.exe`. `build.bat all` builds both. In Cursor, with the CodeLLDB extension installed, Ctrl+Shift+B builds Debug and F5 launches it under the debugger. The Run and Debug menu can start Release as well.
-
-`DESIGN.md` describes how a frame runs, how the character cells and sprite poses are stored, and how collision decides wall and floor.
 
 ## Scoring rules
 
@@ -85,24 +83,9 @@ After completing the game, you will restart in room 0 again. After you complete 
 * The Room 13 electric floors moves differently.
 * The time to spawn for Ninja and Yamo is reduced.
 
-
-## Current state
-
-* All 20 room added and feature complete
-* All animation of Bruce, Yamo and Ninja and their behaviors are in.
-* Gamepad support
-* Scoring complete - added option to correct a fix in the original scoring.
-* Game over screen
-* Full screen support
-* Infinite Lives and Invulnerability support
-* Two players, taking turns as Bruce against the computer or a human Yamo
-* Original sound: the effects during play, and the tune on the options page
-* CRT filter, from ShowCRTFilter. Curve, scanlines, blur, and vignette can each be turned off
-
 ## TODO before v1.0
 
 * Bug fixing
-
 
 ## TODO after v1.0
 
@@ -111,3 +94,9 @@ After completing the game, you will restart in room 0 again. After you complete 
 * Record/Replay gameplay - set gamespeed
 * A level editor
 * Option to play with improved graphics/audio
+
+## Building the Source code
+
+`build.bat` compiles with the Visual Studio C++ tools. `build.bat debug` writes `build\Debug\BruceLee.exe` with optimizations off and a program database beside it. `build.bat release`, or `build.bat` with no argument, writes the optimized `build\Release\BruceLee.exe`. `build.bat all` builds both. In Cursor, with the CodeLLDB extension installed, Ctrl+Shift+B builds Debug and F5 launches it under the debugger. The Run and Debug menu can start Release as well.
+
+`DESIGN.md` describes how a frame runs, how the character cells and sprite poses are stored, and how collision decides wall and floor.
