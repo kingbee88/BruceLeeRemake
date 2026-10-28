@@ -19,6 +19,7 @@
 #include "game.h"
 
 #include "config.h"
+#include "room.h"
 
 #include <cstdint>
 
@@ -32,10 +33,19 @@ const uint32_t kPalette[16] = {
 
 Game g;
 
+// $03. Player 1 is Bruce until a two-player fall flips it.
+int gBrucePlayer = 0;
+
 namespace {
 
 // $4392. clear_work_ram copies $438B, which is 00 9C 40.
+// $4395 is the other player's mark, swapped with it in between_lives.
 int lifeMark = 0x009C40;
+int waitingMark = 0x009C40;
+// $439F, $41, and $29 of the waiting player. Falls below zero means he is out.
+int waitingLives = 4;
+int waitingScore = 0;
+int waitingRoom = 0;
 // $438E. Added into the mark after each extra fall. 00 75 30.
 constexpr int kLifeStep = 0x007530;
 // $43BD. $10 is the state init_hardware leaves, with the word showing.
@@ -72,6 +82,70 @@ void SyncLives() {
 void ResetScore() {
     g.score = 0;
     lifeMark = 0x009C40;
+}
+
+namespace {
+
+// $1781. A byte already negative is the player who is out. Subtracting would
+// still leave the sign bit set, so the count stays negative. A smaller
+// non-negative count becomes 0, which is still a life.
+void TakeIdleFalls(int& lives, int count) {
+    if (lives < 0 || count <= 0) {
+        return;
+    }
+    if (lives < count) {
+        lives = 0;
+        return;
+    }
+    lives -= count;
+}
+
+}  // namespace
+
+void SnapshotWaitingPlayer() {
+    waitingLives = g.lives;
+    waitingScore = g.score;
+    waitingRoom = g.roomId;
+    waitingMark = lifeMark;
+    CopyCollectedLamps();
+    CopyDifficulty();
+}
+
+bool PartnerStillIn() {
+    return gTwoPlayers && waitingLives >= 0;
+}
+
+bool HandTurn() {
+    if (!PartnerStillIn()) {
+        return false;
+    }
+    gBrucePlayer ^= 1;
+    return true;
+}
+
+void SwapWaitingPlayer() {
+    if (!PartnerStillIn()) {
+        return;
+    }
+    const int lives = g.lives;
+    g.lives = waitingLives;
+    waitingLives = lives;
+    const int score = g.score;
+    g.score = waitingScore;
+    waitingScore = score;
+    const int room = g.roomId;
+    g.roomId = waitingRoom;
+    waitingRoom = room;
+    const int mark = lifeMark;
+    lifeMark = waitingMark;
+    waitingMark = mark;
+    ExchangeCollectedLamps();
+    ExchangeDifficulty();
+}
+
+void PenalizeBothFalls(int count) {
+    TakeIdleFalls(g.lives, count);
+    TakeIdleFalls(waitingLives, count);
 }
 
 int TopScore() {

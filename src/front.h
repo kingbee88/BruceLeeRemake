@@ -31,9 +31,10 @@ void ComposeMenu(bool twoPlayers, bool humanOpponent);
 // Blue page from between_rooms. player 0 is PLAYER 1, player 1 is PLAYER 2.
 void ComposePlayerUp(int player);
 
-// $188E. Blue screen, the GAME OVER glyphs, PLAYER 1, and the big score.
-// score is the 24-bit total. The low 6 decimal digits are drawn.
-void ComposeGameOver(int score);
+// $188E. Blue screen, the GAME OVER glyphs, the PLAYER digit for whoever
+// just ran out, and the big score. score is the 24-bit total. The low 6
+// decimal digits are drawn.
+void ComposeGameOver(int player, int score);
 
 // A full-width blue band across the middle of the playfield. PAUSED is
 // drawn in it with the PLAYER 1 glyphs. The band covers kPausedBandTop

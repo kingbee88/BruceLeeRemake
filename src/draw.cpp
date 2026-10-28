@@ -159,10 +159,10 @@ void DrawStatus() {
     }
     // timed_caption. The row-0 pointer is $8C00 and the column is $2C, so
     // the word lands at $8C2C: row 1, column 4, on the grey bar. String 1
-    // is "1UP". String 2 is "2UP" when $03 is 1. This port leaves $03 at 0.
-    // String 0 is three spaces, the off phase, and the grey bar shows through.
+    // is "1UP". String 2 is "2UP" when $03 is 1. String 0 is three spaces,
+    // the off phase, and the grey bar shows through.
     if (PlayerCaptionOn()) {
-        DrawLine("1UP", 4, 8);
+        DrawLine(gBrucePlayer == 0 ? "1UP" : "2UP", 4, 8);
     }
     char text[40];
     char falls[3];

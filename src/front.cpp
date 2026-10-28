@@ -211,7 +211,7 @@ void ComposePlayerUp(int player) {
     DrawPlayerLines(player, 7, -1);
 }
 
-void ComposeGameOver(int score) {
+void ComposeGameOver(int player, int score) {
     // $42CD and $42DF, eighteen codes each. Bit 7 selects the upper half of
     // charset $8000. Row 1 and row 2, column 11.
     static const uint8_t kTop[18] = {
@@ -230,7 +230,8 @@ void ComposeGameOver(int score) {
         DrawCell(LogoCharset(), kBottom[i] | 0x80, 11 + i, 2, true, kLightGrey);
     }
     // $8CD4 and $8CFC. Same PLAYER lines as between_rooms, one row higher.
-    DrawPlayerLines(0, 5, kLightGrey);
+    // $03 still names the player who just reached a negative fall count.
+    DrawPlayerLines(player, 5, kLightGrey);
     // draw_digit. Six nibbles from $439C, each a 2x2 glyph block on rows 8 and 9.
     int shown = score % 1000000;
     if (shown < 0) {

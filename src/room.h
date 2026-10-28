@@ -63,6 +63,11 @@ int LampsLeft(int room);
 // copy_room_defaults and L_33CA. A finished game puts the lamps back.
 void ResetCollectedLamps();
 
+// The waiting player's copy of the lamp counts and taken flags. Snapshot
+// copies the live tables. Between lives, L_0FED exchanges them.
+void CopyCollectedLamps();
+void ExchangeCollectedLamps();
+
 // clear_work_ram's visit flags. The next room entry arms them again.
 void ResetRoomBonus();
 
@@ -73,6 +78,11 @@ void RearmRoomBonus();
 // clear_work_ram and the hardware init that follows game over. Difficulty,
 // the room 16 lanterns, the scroll, and the visit clock go back to a cold start.
 void ResetRun();
+
+// $40 sits in the block between_lives swaps. The waiting player's copy is
+// the difficulty he will meet on his next life.
+void CopyDifficulty();
+void ExchangeDifficulty();
 
 // True when (col, row) is an untaken lamp in the current room. The mount
 // tile is returned and the lamp stays taken if the room is entered again.

@@ -55,10 +55,17 @@ struct RoomInfo {
 
 // One flag per record in the room's list at $4CE2. Cleared for a new game.
 bool lampTaken[kRoomCount][13] = {};
+// L_0FED. The waiting player's taken flags, traded with lampTaken between lives.
+bool waitingTaken[kRoomCount][13] = {};
 
 // $4CCE, copied to $2A. claim_lamp decrements the byte for the room in $29.
 // $2A, $2B, and $2C are rooms 0, 1, and 2. $30 is room 6.
 uint8_t lampLeft[kRoomCount] = {
+    0x06, 0x06, 0x0A, 0x02, 0x02, 0x0A, 0x08, 0x0D, 0x04, 0x05,
+    0x03, 0x03, 0x03, 0x00, 0x04, 0x06, 0x02, 0x02, 0x01, 0x00,
+};
+// $2A of the waiting player. Same opening counts until a turn copies or swaps.
+uint8_t waitingLeft[kRoomCount] = {
     0x06, 0x06, 0x0A, 0x02, 0x02, 0x0A, 0x08, 0x0D, 0x04, 0x05,
     0x03, 0x03, 0x03, 0x00, 0x04, 0x06, 0x02, 0x02, 0x01, 0x00,
 };
@@ -122,7 +129,7 @@ static void PayRoomBonus(int roomId) {
     if (roomId < 0 || roomId >= kRoomCount) {
         return;
     }
-    const int index = roomId * 2;
+    const int index = roomId * 2 + (gBrucePlayer & 1);
     if (roomBonus[index] == 0) {
         return;
     }
@@ -133,10 +140,13 @@ static void PayRoomBonus(int roomId) {
 
 void RearmRoomBonus() {
     roomBonusLive = true;
-    for (int i = 38; i >= 0; i -= 2) {
+    // $10E0. $03 * 1 + $26, then every other byte down. The other player's
+    // flags stay as they are. Room 0 of this player is cleared again.
+    const int player = gBrucePlayer & 1;
+    for (int i = 38 + player; i >= 0; i -= 2) {
         roomBonus[i] = 1;
     }
-    roomBonus[0] = 0;
+    roomBonus[player] = 0;
 }
 
 bool EnterRoom(int roomId) {
@@ -336,6 +346,28 @@ void ResetCollectedLamps() {
         lampLeft[room] = kLampLeft0[room];
         for (int i = 0; i < 13; ++i) {
             lampTaken[room][i] = false;
+        }
+    }
+}
+
+void CopyCollectedLamps() {
+    for (int room = 0; room < kRoomCount; ++room) {
+        waitingLeft[room] = lampLeft[room];
+        for (int i = 0; i < 13; ++i) {
+            waitingTaken[room][i] = lampTaken[room][i];
+        }
+    }
+}
+
+void ExchangeCollectedLamps() {
+    for (int room = 0; room < kRoomCount; ++room) {
+        const uint8_t left = lampLeft[room];
+        lampLeft[room] = waitingLeft[room];
+        waitingLeft[room] = left;
+        for (int i = 0; i < 13; ++i) {
+            const bool taken = lampTaken[room][i];
+            lampTaken[room][i] = waitingTaken[room][i];
+            waitingTaken[room][i] = taken;
         }
     }
 }

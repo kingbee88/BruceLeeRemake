@@ -76,6 +76,33 @@ extern bool gHumanOpponent;
 // The options page still shows OPPONENT.
 extern bool gOpponentYielded;
 
+// $42C9. F3 on the options page. Clear is one player. Set is two, and a
+// lost life hands Bruce to the other player.
+extern bool gTwoPlayers;
+// $03. 0 is player 1, 1 is player 2. The PLAYER page, "1UP" / "2UP", and
+// which stick is Bruce all follow this. A new game forces 0.
+extern int gBrucePlayer;
+
+// clear_work_ram copies $28 through $43 into $439F once both players have
+// the opening stock, room, score, and lamps. A fall does not call this.
+void SnapshotWaitingPlayer();
+
+// between_lives, before the PLAYER page. Two players and the saved fall
+// byte still zero or more: $03 flips. Otherwise the same player stays Bruce.
+bool HandTurn();
+
+// between_lives, after that page. The same test, then the live block trades
+// with $439F: falls, score, room, lamps, difficulty, and the extra-life mark.
+void SwapWaitingPlayer();
+
+// $42C9 set and $439F still zero or more. game_over continues with him.
+bool PartnerStillIn();
+
+// $1774. Five falls off $28 and off $439F. A count already below zero stays
+// there, so a player who is out is not brought back. Otherwise the result
+// is clamped at 0.
+void PenalizeBothFalls(int count);
+
 // $3175. Add amount to one score byte, then $312C. Slot 0 is $41, the high
 // byte, and slot 2 is $43. The sum wraps at 24 bits. When every score byte
 // is at least the mark in $4392, $28 gains one fall and the mark grows by

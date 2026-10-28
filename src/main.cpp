@@ -54,6 +54,7 @@
 
 bool gHumanOpponent = false;  // $42CA. F5. Clear is COMPUTER.
 bool gOpponentYielded = false;
+bool gTwoPlayers = false;     // $42C9. F3. Clear is 1 PLAYER.
 
 namespace {
 
@@ -75,7 +76,6 @@ enum class Stage { Title, Menu, Player, Play, GameOver };
 Stage gStage = Stage::Play;
 bool gTitleStart = false;
 bool gMenuStart = false;
-bool gTwoPlayers = false;     // $42C9. F3. Clear is 1 PLAYER.
 bool gPrevF3 = false;
 bool gPrevF5 = false;
 // between_rooms counts $48 from $40, or $80 when two players are selected.
@@ -85,10 +85,14 @@ int gPlayerFrames = 0;
 // A fall, rather than the opening page. The countdown then returns to the
 // room instead of starting a new game.
 bool gAfterFall = false;
-// game_over waits $FE raster counts, then $40 more. 254 + 64 PAL frames.
-// This loop sleeps three of those, so 106 passes is the same 318.
-constexpr int kGameOverFrames = 106;
+// game_over waits $FE raster counts, then either between_lives or $40 more.
+// 254 PAL frames is 85 passes of this three-frame sleep (255). The extra
+// $40 is 21 passes (63). Together they are the 106 used when nobody is left.
+constexpr int kGameOverLong = 85;
+constexpr int kGameOverShort = 21;
 int gGameOverFrames = 0;
+// Set once the $FE wait has finished and the partner is already out.
+bool gGameOverTail = false;
 // Space during play, the gamepad menu button, or another program taking
 // the keyboard. Settings is this program, so it does not pause the game.
 // A click on the picture, Space, or the menu button clears the pause.
@@ -928,6 +932,9 @@ void GiveStock() {
 
 void BeginPlay() {
     GiveStock();
+    // $0722 and clear_work_ram. Player 1 is Bruce, and $439F matches him.
+    gBrucePlayer = 0;
+    SnapshotWaitingPlayer();
     gStage = Stage::Play;
     PlaceBruce();
     // init_hardware, after the PLAYER page. The word starts showing.
@@ -965,9 +972,11 @@ void BeginMenu(bool fresh) {
 
 void ShowGameOver(HWND hwnd) {
     ClearOutOfLives();
-    gGameOverFrames = kGameOverFrames;
+    gGameOverTail = false;
+    gGameOverFrames = kGameOverLong;
     gStage = Stage::GameOver;
-    ComposeGameOver(g.score);
+    // $03 and the live score, before between_lives flips either of them.
+    ComposeGameOver(gBrucePlayer, g.score);
     SetWindowTextW(hwnd, L"Bruce Lee Remake");
 }
 
@@ -989,6 +998,8 @@ void StartAfterGameOver(HWND hwnd) {
         return;
     }
     GiveStock();
+    gBrucePlayer = 0;
+    SnapshotWaitingPlayer();
     PlaceBruce();
     ResetPlayerCaption();
     Compose();
@@ -1012,6 +1023,7 @@ void RestartGame(HWND hwnd) {
     gMenuStart = false;
     gAfterFall = false;
     gGameOverFrames = 0;
+    gGameOverTail = false;
     gPlayerFrames = 0;
     gPrevF3 = false;
     gPrevF5 = false;
@@ -1038,8 +1050,14 @@ void ShowPlayerPage(bool afterFall) {
     gAfterFall = afterFall;
     gPlayerFrames = gTwoPlayers ? 43 : 21;
     gStage = Stage::Player;
-    // $03 stays 0. This port plays as one Bruce, so the page says PLAYER 1.
-    ComposePlayerUp(0);
+    // A new game is player 1. A fall flips $03 first when the partner is
+    // still in, and the page names whoever will play next.
+    if (!afterFall) {
+        gBrucePlayer = 0;
+    } else {
+        HandTurn();
+    }
+    ComposePlayerUp(gBrucePlayer);
 }
 
 void PollMenu() {
@@ -1299,8 +1317,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR commandLine, int show) {
             } else if (gStage == Stage::GameOver) {
                 gGameOverFrames--;
                 if (gGameOverFrames <= 0) {
-                    gShownRoom = -1;
-                    StartAfterGameOver(hwnd);
+                    if (!gGameOverTail && PartnerStillIn()) {
+                        ShowPlayerPage(true);
+                    } else if (!gGameOverTail) {
+                        gGameOverTail = true;
+                        gGameOverFrames = kGameOverShort;
+                    } else {
+                        gShownRoom = -1;
+                        StartAfterGameOver(hwnd);
+                    }
                 }
             } else {
                 Tick();

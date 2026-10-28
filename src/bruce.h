@@ -93,7 +93,8 @@ bool BetweenLives();
 bool OutOfLives();
 void ClearOutOfLives();
 
-// The PLAYER page has finished. Same room, health reloaded in PlaceBruce.
+// The PLAYER page has finished. Two players may have swapped rooms.
+// PlaceBruce reloads health on the spawn of whoever is Bruce now.
 void ResumeAfterFall();
 
 // The stand picture for g.facing.
@@ -119,7 +120,8 @@ void PlaceBruce();
 // three PAL screens, the delay the game counts down in $48.
 void Tick();
 
-// Player 0 is Bruce: the arrows and Right Ctrl, or his gamepad.
-// Player 1 is Yamo: W A S D and Left Ctrl, or his gamepad.
+// Port 0 is player 1: the arrows and Right Ctrl, or gamepad 1.
+// Port 1 is player 2: W A S D and Left Ctrl, or gamepad 2.
+// Bruce reads gBrucePlayer. A human Yamo reads the other port.
 // stick is the $98 nibble. fire is the button held down.
 void ReadPlayerStick(int player, int& stick, bool& fire);

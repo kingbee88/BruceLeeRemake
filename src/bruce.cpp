@@ -1019,7 +1019,9 @@ void ClearOutOfLives() {
 void ResumeAfterFall() {
     awaitingLife = false;
     // between_lives calls init_hardware, which restarts the player word.
+    // The swap is after the PLAYER page, so $29 is the incoming player's room.
     ResetPlayerCaption();
+    SwapWaitingPlayer();
     if (EnterRoom(g.roomId)) {
         PlaceBruce();
     }
@@ -1081,7 +1083,8 @@ void Tick() {
 
     int stick = 0x0F;
     bool fire = false;
-    ReadPlayerStick(0, stick, fire);
+    // $16A2. Port 1 while $03 is 0, port 2 while $03 is 1.
+    ReadPlayerStick(gBrucePlayer, stick, fire);
 
     // $40BC runs before the overlap, and a held pose still reaches it.
     // The lamp glyphs flicker in every room. The charset selects the bytes.

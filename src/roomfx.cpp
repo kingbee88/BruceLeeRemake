@@ -76,11 +76,15 @@ struct Crumble {
 };
 Crumble crumb[3];
 
-// $4E95. Room 16 spends one per matching cell. It is not put back on a win.
-int extraLives = 5;
+// $4E95 and $4E96. Room 16 spends the counter for the player who is Bruce.
+// It is not put back on a win, and it is not a gate: the fall is given
+// every time. Entering the room prints the caption once that counter is 0.
+int extraLives[2] = {5, 5};
 
-// $40. A finished game increments it. Room 13's movers read it.
+// $40. A finished game increments the live byte. Room 13's movers read it.
+// waitingDifficulty is the other player's $40, swapped with this between lives.
 int difficulty = 0;
+int waitingDifficulty = 0;
 
 // $014B. Eight $01 bytes. Player 0 uses the first three height bands.
 uint8_t bandBonus[8] = {1, 1, 1, 1, 1, 1, 1, 1};
@@ -521,8 +525,13 @@ void HeightBonus() {
     } else if (ypos >= 0xB6) {
         band = 2;
     }
-    if (band >= 0 && bandBonus[band] != 0) {
-        bandBonus[band] = static_cast<uint8_t>(bandBonus[band] - 1);
+    if (band < 0) {
+        return;
+    }
+    // $014B + player * 4. The other player's three flags are the next group.
+    const int slot = (gBrucePlayer & 1) * 4 + band;
+    if (bandBonus[slot] != 0) {
+        bandBonus[slot] = static_cast<uint8_t>(bandBonus[slot] - 1);
         // $3EAF. $01 in the middle byte and $F4 in the low byte, 500.
         AddScoreByte(1, 0x01);
         AddScoreByte(2, 0xF4);
@@ -533,8 +542,10 @@ void WinGame() {
     difficulty += 1;
     ResetCollectedLamps();
     RearmRoomBonus();
-    for (int i = 0; i < 8; ++i) {
-        bandBonus[i] = 1;
+    // hook_frame_19 writes 1 into this player's four bytes only.
+    const int base = (gBrucePlayer & 1) * 4;
+    for (int i = 0; i < 4; ++i) {
+        bandBonus[base + i] = 1;
     }
     EnterRoom(0);
     PlaceBruce();
@@ -1056,7 +1067,7 @@ void Enter16() {
     for (int cell : kCells) {
         PaintColor(cell, 0xFF);
     }
-    if (extraLives == 0) {
+    if (extraLives[gBrucePlayer & 1] == 0) {
         PrintString(0x56, 0x0A, 0x24);
         PrintString(0x56, 0x0B, 0x24);
     }
@@ -1098,7 +1109,9 @@ void ResetRun() {
     // $40, $4E95, and $014B. A win leaves difficulty raised and does not
     // call this. Game over does, because open_room runs clear_work_ram.
     difficulty = 0;
-    extraLives = 5;
+    waitingDifficulty = 0;
+    extraLives[0] = 5;
+    extraLives[1] = 5;
     for (int i = 0; i < 8; ++i) {
         bandBonus[i] = 1;
     }
@@ -1126,6 +1139,16 @@ void ResetRun() {
         mover[i] = {};
     }
     ResetBolts();
+}
+
+void CopyDifficulty() {
+    waitingDifficulty = difficulty;
+}
+
+void ExchangeDifficulty() {
+    const int saved = difficulty;
+    difficulty = waitingDifficulty;
+    waitingDifficulty = saved;
 }
 
 int Room19Stick() {
@@ -1212,7 +1235,7 @@ void TouchRoomTile(int tile, int col, int row, bool prize, bool ladder) {
         g.hold = 0;
     }
     if ((tile == 0x2D || tile == 0x2E) && g.roomId == 16 && g.y + 21 >= 0xA0) {
-        extraLives -= 1;
+        extraLives[gBrucePlayer & 1] -= 1;
         // $2FE5. The count is not checked. INC $28 wraps as one byte.
         GrantLife();
         // $2FEA. The ying-yang, not a score extra life.

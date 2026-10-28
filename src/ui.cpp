@@ -3332,12 +3332,12 @@ bool ShowIntroWizard(HWND owner) {
 void ShowKeyboardShortcuts(HWND owner) {
     static constexpr HelpLine lines[] = {
         {nullptr, L"Playing"},
-        {L"Left / Right", L"Player 1 walks."},
-        {L"Up", L"Player 1 jumps, or climbs a ladder. With Left or Right held, jump sideways."},
-        {L"Down", L"Player 1 ducks. On a ladder, climb down."},
-        {L"Right Ctrl", L"Player 1 punches while standing. Flying kick while moving."},
-        {L"W A S D", L"Player 2 walks, jumps, and ducks. Yamo, when the options page is set to Opponent. W is up, A is left, S is down, and D is right."},
-        {L"Left Ctrl", L"Player 2 punches while standing. Flying kick while moving."},
+        {L"Left / Right", L"Player 1 walks. On player 2's turn as Bruce, with Opponent selected, these move Yamo."},
+        {L"Up", L"Player 1 jumps, or climbs a ladder. With Left or Right held, jump sideways. On player 2's turn as Bruce, with Opponent selected, this moves Yamo."},
+        {L"Down", L"Player 1 ducks. On a ladder, climb down. On player 2's turn as Bruce, with Opponent selected, this moves Yamo."},
+        {L"Right Ctrl", L"Player 1 punches while standing. Flying kick while moving. On player 2's turn as Bruce, with Opponent selected, this is Yamo."},
+        {L"W A S D", L"Player 2. On that player's turn these move Bruce. While player 1 is Bruce and the options page is set to Opponent, they move Yamo. W is up, A is left, S is down, and D is right."},
+        {L"Left Ctrl", L"Player 2 punches while standing. Flying kick while moving. On that player's turn this is Bruce. While player 1 is Bruce and Opponent is selected, this is Yamo."},
         {L"Space", L"Pause during play. Press again to resume."},
         {L"V",
          L"Show the credit line on the top bar: BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF. Press again for the black bar. Entering a room brings the black bar back."},
@@ -3380,7 +3380,8 @@ void ShowControllerMapping(HWND owner) {
         L"no button names, and a controller that only shows in the Windows Game Controllers "
         L"list, uses its stick or hat to move and its buttons to punch. Settings chooses "
         L"a controller for each player. Player 1 starts on the first one, and player 2 "
-        L"on the second. Yamo uses player 2 when the options page is set to Opponent. "
+        L"on the second. With two players, each pad is that player: on his turn it moves Bruce. "
+        L"With Opponent selected, the pad that is not Bruce moves Yamo. "
         L"Either controller's A button leaves the title and the options page, and either "
         L"Menu, View, or Y button does what that button does above. The keyboard keeps "
         L"working. A controller is read only while this program is in front.";

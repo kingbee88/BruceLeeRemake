@@ -1618,7 +1618,7 @@ bool StepFighter(Fighter& f) {
         if (human) {
             int stick = 0x0F;
             bool fire = false;
-            ReadPlayerStick(1, stick, fire);
+            ReadPlayerStick(gBrucePlayer ^ 1, stick, fire);
             HumanCarry(f, stick);
         } else {
             CarryFighter(f);
@@ -1632,7 +1632,7 @@ bool StepFighter(Fighter& f) {
         f.action != 0x12) {
         int stick = 0x0F;
         bool fire = false;
-        ReadPlayerStick(1, stick, fire);
+        ReadPlayerStick(gBrucePlayer ^ 1, stick, fire);
         const Contact here = At(f);
         HumanMove(f, stick, fire, here);
         HumanChoose(f, here);
@@ -1756,11 +1756,13 @@ bool TickFighters() {
     // is up. Seven wraps of a byte, once per screen, is 1792 screens. This
     // port's logic frame is three PAL screens, so 3 is one screen's worth.
     // At the end $42CA clears for this game only, effect $8A plays, and
-    // five falls come off, clamped at 0. The options page keeps OPPONENT.
+    // five falls come off $28 and off $439F. A count already below zero
+    // stays there. The stick is the port that is not Bruce. The options
+    // page keeps OPPONENT.
     if (gHumanOpponent && !gOpponentYielded) {
         int stick = 0x0F;
         bool fire = false;
-        ReadPlayerStick(1, stick, fire);
+        ReadPlayerStick(gBrucePlayer ^ 1, stick, fire);
         if (stick != 0x0F || fire) {
             gOpponentIdle = 0;
         } else {
@@ -1770,10 +1772,7 @@ bool TickFighters() {
                 gOpponentYielded = true;
                 PlayEffect(0x8A);
                 if (!gConfig.infiniteLives) {
-                    g.lives -= 5;
-                    if (g.lives < 0) {
-                        g.lives = 0;
-                    }
+                    PenalizeBothFalls(5);
                 }
             }
         }

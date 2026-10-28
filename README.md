@@ -23,11 +23,11 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 | F3 | On the options page, switch 1 player / 2 players |
 | F5 | On the options page, switch computer / opponent |
 | F7 | Leave the options page |
-| Left / Right | Player 1 walks |
+| Left / Right | Player 1 walks. On player 2's turn as Bruce, with Opponent selected, these move Yamo |
 | Up | Player 1 jumps. With Left or Right held, jump sideways |
 | Down | Player 1 ducks. On a ladder, climb down |
 | Right Ctrl | Player 1 punches while standing. Flying kick while moving |
-| W A S D | Player 2, Yamo, when the options page is set to Opponent. W is up, A is left, S is down, and D is right |
+| W A S D | Player 2. On that player's turn these move Bruce. While player 1 is Bruce and the options page is set to Opponent, they move Yamo. W is up, A is left, S is down, and D is right |
 | Left Ctrl | Player 2 punches while standing. Flying kick while moving |
 | Space | Pause during play. Press again to resume |
 | V | Show the credit line on the top bar, BRUCE LEE (C) 1984 DATASOFT REV.2 BY RJF. Press again for the black bar. Entering a room brings the black bar back |
@@ -42,7 +42,7 @@ The `referencematerial/` contains a copy of the C64 floppy disk image, and a dis
 
 Double-click anywhere in the window to toggle a borderless full screen. The maximize button turns it on. The Settings window does the same, and Escape leaves full screen. The display mode stays as it is. `FullScreen=True` in the settings file, or on the command line, starts in that mode. Beside the exe, then one folder up, then two folders up, `config.local.ini` is used when that file is there, and otherwise `config.ini`. The program writes the settings back to the file it opened when it closes.
 
-An Xbox pad, or any other XInput controller, does the same things. Settings chooses a controller for each player. Player 1 starts on the first connected controller, and player 2 on the second. Yamo uses player 2 when the options page is set to Opponent. Either controller's A button leaves the title and the options page, and either Menu, View, or Y button does what that row says. The keyboard keeps working while a pad is connected.
+An Xbox pad, or any other XInput controller, does the same things. Settings chooses a controller for each player. Player 1 starts on the first connected controller, and player 2 on the second. F3 on the options page selects two players. They take turns as Bruce. A lost life hands Bruce to the other player, and that player's score, falls, and rooms stay his. The line shows 1UP or 2UP for whoever is Bruce. F5 still chooses the computer or a human Yamo. The human Yamo is whichever stick is not Bruce: player 2 while player 1 is Bruce, and player 1 while player 2 is Bruce. Either controller's A button leaves the title and the options page, and either Menu, View, or Y button does what that row says. The keyboard keeps working while a pad is connected.
 
 | Xbox control | Action |
 | --- | --- |
@@ -79,7 +79,7 @@ The original game has a bug in a landing that drives the health byte negative. I
 
 ## Trivia 
 
-Room 16 has a ying-yang symbol. Picking it up with add an extra life. It will reappear if you leave the room and re-enter. You can get up to 5 extra lives this way. This counter does not reset when completing the game, so it is 5 lives max for the entire session.
+Room 16 has a ying-yang symbol. Picking it up with add an extra life. It will reappear if you leave the room and re-enter. You can get up to 5 extra lives this way. Each player has his own counter. It does not reset when completing the game, so it is 5 lives max for that player for the session.
 
 After completing the game, you will restart in room 0 again. After you complete the game the following will change:
 * The Room 13 electric floors moves differently.
@@ -95,12 +95,12 @@ After completing the game, you will restart in room 0 again. After you complete 
 * Game over screen
 * Full screen support
 * Infinite Lives and Invulnerability support
+* Two players, taking turns as Bruce against the computer or a human Yamo
 * Original sound: the effects during play, and the tune on the options page
 * CRT filter, from ShowCRTFilter. Curve, scanlines, blur, and vignette can each be turned off
 
 ## TODO before v1.0
 
-* 2 player support
 * Bug fixing
 
 
